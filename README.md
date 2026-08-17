@@ -36,7 +36,7 @@ Edit `.env` (API key and Discord webhooks), `config/playlists.yaml`, and `config
 | [`config/playlists.yaml`](config/playlists.yaml) | `playlist_id`, `username`, `password`, `discord_id` | `test discord` and real swaps later |
 | [`config/urls.yaml`](config/urls.yaml) | `available` list of standby portal URLs | URL checks, failover preview, dashboard |
 
-`current_dns` is the live portal (host + optional port), e.g. `http://line.provider.com:8080`. Standby URLs in `urls.yaml` are the pool we would swap to. Leave example hosts in place only if you want to see guaranteed DNS failures.
+`current_dns` is the live portal URL exactly as EPGenius expects it, e.g. `http://cf.business-cdn-8k.com` (no port unless the portal actually uses a non-default one). Standby URLs in `urls.yaml` use the same shape. Leave example hosts in place only if you want to see guaranteed DNS failures.
 
 None of the dry-run commands call EPGenius or rewrite `current_dns`.
 

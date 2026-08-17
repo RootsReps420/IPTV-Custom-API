@@ -2,6 +2,7 @@
 #
 # For a URL-check dry run you only need current_dns (and name).
 # playlist_id / username / password are required for Discord swap tests and live failovers.
+# current_dns should be the portal URL as EPGenius takes it (usually no port).
 
 playlists:
   - name: account-1
@@ -9,4 +10,4 @@ playlists:
     playlist_id: "your-playlist-id"
     username: "your-username"
     password: "your-password"
-    current_dns: "http://your-live-portal.example:8080"
+    current_dns: "http://your-live-portal.example"

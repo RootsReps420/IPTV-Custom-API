@@ -4,4 +4,4 @@
 
 available:
   - "http://your-standby-1.example"
-  - "http://your-standby-2.example:8080"
+  - "http://your-standby-2.example"
