@@ -80,6 +80,10 @@ function renderList(el, countEl, items, emptyText) {
 }
 
 function renderPlaylists(items) {
+  const playlistCount = document.getElementById("playlist-count");
+  if (playlistCount) {
+    playlistCount.textContent = items.length ? `${items.length} loaded` : "none";
+  }
   if (!items.length) {
     playlistBody.innerHTML = `<tr><td colspan="5">No playlists loaded. Add entries in config/playlists.yaml — they appear within one check cycle.</td></tr>`;
     return;

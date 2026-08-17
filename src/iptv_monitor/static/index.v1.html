@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=4" />
+  <link rel="stylesheet" href="/static/styles.css?v=2" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -42,10 +42,26 @@
   </header>
   <div id="alerts" class="alerts" hidden></div>
 
+  <main>
+    <section>
+      <div class="section-head">
+        <h2>Live</h2>
+        <span id="live-count" class="count"></span>
+      </div>
+      <div id="live-list" class="cards"></div>
+    </section>
+    <section>
+      <div class="section-head">
+        <h2>Standby</h2>
+        <span id="avail-count" class="count"></span>
+      </div>
+      <div id="avail-list" class="cards"></div>
+    </section>
+  </main>
+
   <section class="playlists">
     <div class="section-head">
       <h2>Playlists</h2>
-      <span id="playlist-count" class="count"></span>
     </div>
     <div class="table-wrap">
       <table>
@@ -63,22 +79,6 @@
     </div>
   </section>
 
-  <section class="current">
-    <div class="section-head">
-      <h2>Current DNS</h2>
-      <span id="live-count" class="count"></span>
-    </div>
-    <div id="live-list" class="cards"></div>
-  </section>
-
-  <section class="pool">
-    <div class="section-head">
-      <h2>Available URL pool</h2>
-      <span id="avail-count" class="count"></span>
-    </div>
-    <div id="avail-list" class="cards cards-grid"></div>
-  </section>
-
   <section class="events">
     <div class="section-head">
       <h2>Recent events</h2>
@@ -86,6 +86,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=4"></script>
+  <script src="/static/app.js?v=2"></script>
 </body>
 </html>
