@@ -119,6 +119,7 @@ def _url_view(
         "dns_ok": bool(result.dns_ok) if result else False,
         "tcp_ok": bool(result.tcp_ok) if result else False,
         "http_ok": result.http_ok if result else None,
+        "stream_ok": result.stream_ok if result else None,
         "fail_reason": result.fail_reason if result else "not_checked",
         "resolved_ips": list(result.resolved_ips) if result else [],
         "nameserver": result.nameserver if result else None,
@@ -177,7 +178,8 @@ class Monitor:
 
         live_keys = [normalize_url(item.current_dns) for item in cfg.playlists]
         available_keys = [normalize_url(url) for url in cfg.available_urls]
-        results = await check_urls(live_keys + available_keys, settings)
+        credentials = [(item.username, item.password) for item in cfg.playlists]
+        results = await check_urls(live_keys + available_keys, settings, credentials)
 
         live_set = set(live_keys)
         available_set = set(available_keys)
@@ -532,8 +534,8 @@ class Monitor:
         by_url = {row["url"]: row for row in self.shared.available}
         by_url.update({row["url"]: row for row in self.shared.live})
         lines = [
-            f"{'URL':<48} {'ROLE':<10} {'DNS':<6} {'TCP':<6} {'NS':<12} {'FAILS':<6} {'REASON'}",
-            "-" * 108,
+            f"{'URL':<48} {'ROLE':<10} {'DNS':<6} {'TCP':<6} {'TS':<6} {'NS':<12} {'FAILS':<6} {'REASON'}",
+            "-" * 116,
         ]
         for url in all_urls:
             row = by_url.get(url)
@@ -542,10 +544,12 @@ class Monitor:
             ns = row.get("nameserver") or ""
             if row.get("cloudflare_proxied"):
                 ns = f"{ns}+proxy" if ns else "cf-proxy"
+            ts = row.get("stream_ok")
+            ts_flag = "ok" if ts else ("skip" if ts is None else "FAIL")
             lines.append(
                 f"{row['url']:<48} {row['role']:<10} "
                 f"{_flag(row['dns_ok']):<6} {_flag(row['tcp_ok']):<6} "
-                f"{ns:<12} {row['consecutive_failures']:<6} {row['fail_reason'] or ''}"
+                f"{ts_flag:<6} {ns:<12} {row['consecutive_failures']:<6} {row['fail_reason'] or ''}"
             )
         if len(lines) == 2:
             lines.append("(no URLs checked)")

@@ -38,6 +38,9 @@ function secondsUntilNext(iso, interval) {
 }
 
 function flag(label, ok) {
+  if (ok === null || ok === undefined) {
+    return `<span class="flag">${label} skip</span>`;
+  }
   const cls = ok ? "ok" : "bad";
   const value = ok ? "ok" : "fail";
   return `<span class="flag ${cls}">${label} ${value}</span>`;
@@ -86,6 +89,7 @@ function card(item) {
       <div class="flags">
         ${flag("dns", item.dns_ok)}
         ${flag("tcp", item.tcp_ok)}
+        ${flag("ts", item.stream_ok)}
         ${fails}
         ${reason}
         ${ips}

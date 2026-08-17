@@ -12,9 +12,13 @@ dns_check_enabled: true
 tcp_check_enabled: true
 http_check_enabled: false
 
+# Xtream HTTP MPEG-TS sample (what players actually pull). Failures count toward failover.
+stream_check_enabled: true
+
 dns_timeout_seconds: 5
 tcp_timeout_seconds: 5
 http_timeout_seconds: 10
+stream_timeout_seconds: 10
 
 # Many IPTV portals use invalid TLS certs; only used if http_check_enabled is true
 allow_insecure_tls: true

@@ -16,9 +16,11 @@ class Settings(BaseModel):
     dns_check_enabled: bool = True
     tcp_check_enabled: bool = True
     http_check_enabled: bool = False
+    stream_check_enabled: bool = True
     dns_timeout_seconds: float = 5
     tcp_timeout_seconds: float = 5
     http_timeout_seconds: float = 10
+    stream_timeout_seconds: float = 10
     allow_insecure_tls: bool = True
     dashboard_host: str = "127.0.0.1"
     dashboard_port: int = 8787

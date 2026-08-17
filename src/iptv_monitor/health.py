@@ -14,6 +14,7 @@ import httpx
 
 from iptv_monitor.config import Settings
 from iptv_monitor.nameserver import classify_ns_hosts, ip_is_cloudflare, lookup_ns_hosts
+from iptv_monitor.stream import Credentials, check_xtream_mpegts
 
 logger = logging.getLogger("iptv_monitor.health")
 
@@ -26,6 +27,7 @@ class HealthResult:
     dns_ok: bool
     tcp_ok: bool
     http_ok: bool | None
+    stream_ok: bool | None = None
     resolved_ips: list[str] = field(default_factory=list)
     nameserver: str | None = None
     nameserver_hosts: list[str] = field(default_factory=list)
@@ -146,7 +148,11 @@ async def _check_http(url: str, timeout: float, insecure: bool) -> tuple[bool, s
         return False, "http_error", str(exc)
 
 
-async def check_url(raw_url: str, settings: Settings) -> HealthResult:
+async def check_url(
+    raw_url: str,
+    settings: Settings,
+    credentials: Credentials | None = None,
+) -> HealthResult:
     try:
         url, host, port = parse_endpoint(raw_url)
     except ValueError as exc:
@@ -165,6 +171,7 @@ async def check_url(raw_url: str, settings: Settings) -> HealthResult:
     dns_ok = True
     tcp_ok = True
     http_ok: bool | None = None
+    stream_ok: bool | None = None
     resolved_ips: list[str] = []
     fail_reason: str | None = None
     error_detail: str | None = None
@@ -197,6 +204,17 @@ async def check_url(raw_url: str, settings: Settings) -> HealthResult:
             if not http_ok:
                 fail_reason = http_reason
                 error_detail = http_detail
+
+        if fail_reason is None and settings.stream_check_enabled and credentials:
+            stream_ok, stream_reason, stream_detail = await check_xtream_mpegts(
+                url,
+                credentials,
+                settings.stream_timeout_seconds,
+                settings.allow_insecure_tls,
+            )
+            if stream_ok is False:
+                fail_reason = stream_reason
+                error_detail = stream_detail
     finally:
         nameserver_hosts: list[str] = []
         if ns_task is not None:
@@ -219,6 +237,7 @@ async def check_url(raw_url: str, settings: Settings) -> HealthResult:
         dns_ok=dns_ok,
         tcp_ok=tcp_ok,
         http_ok=http_ok,
+        stream_ok=stream_ok,
         resolved_ips=resolved_ips,
         nameserver=nameserver,
         nameserver_hosts=nameserver_hosts,
@@ -229,7 +248,11 @@ async def check_url(raw_url: str, settings: Settings) -> HealthResult:
     )
 
 
-async def check_urls(urls: list[str], settings: Settings) -> dict[str, HealthResult]:
+async def check_urls(
+    urls: list[str],
+    settings: Settings,
+    credentials: Credentials | None = None,
+) -> dict[str, HealthResult]:
     unique: list[str] = []
     seen: set[str] = set()
     for raw in urls:
@@ -242,7 +265,7 @@ async def check_urls(urls: list[str], settings: Settings) -> dict[str, HealthRes
             unique.append(raw)
 
     results = await asyncio.gather(
-        *(check_url(url, settings) for url in unique),
+        *(check_url(url, settings, credentials) for url in unique),
         return_exceptions=True,
     )
     mapped: dict[str, HealthResult] = {}
