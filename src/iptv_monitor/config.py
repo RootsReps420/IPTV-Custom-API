@@ -1,3 +1,9 @@
+"""Load settings, playlists, standby URLs, and secrets.
+
+YAML is re-read every monitor cycle, so edits to playlists / urls / settings
+apply without a restart. Python code changes still need the process restarted.
+"""
+
 from __future__ import annotations
 
 import os
@@ -10,8 +16,11 @@ from ruamel.yaml import YAML
 
 
 class Settings(BaseModel):
+    """Knobs from config/settings.yaml."""
+
     check_interval_seconds: int = 30
     consecutive_failures_to_swap: int = 3
+    # Prefer a standby that has been healthy this many cycles; otherwise any healthy one.
     min_consecutive_successes_for_swap: int = 2
     dns_check_enabled: bool = True
     tcp_check_enabled: bool = True
@@ -27,6 +36,8 @@ class Settings(BaseModel):
 
 
 class Playlist(BaseModel):
+    """One EPGenius playlist / IPTV account."""
+
     name: str
     discord_id: str
     playlist_id: str
@@ -60,6 +71,7 @@ class AppConfig(BaseModel):
 
 
 def _yaml() -> YAML:
+    """Round-trip YAML so we can rewrite current_dns without scrambling the file."""
     yaml = YAML()
     yaml.preserve_quotes = True
     yaml.default_flow_style = False
@@ -84,7 +96,7 @@ def resolve_paths(root: Path | None = None) -> Paths:
 
 
 def ensure_runtime_configs(paths: Paths) -> None:
-    """Create gitignored playlists.yaml / urls.yaml from examples on first run."""
+    """On first run, copy the example playlists/urls files into the gitignored copies."""
     pairs = (
         (paths.playlists, paths.config_dir / "playlists.example.yaml"),
         (paths.urls, paths.config_dir / "urls.example.yaml"),
@@ -106,9 +118,18 @@ def load_playlists(path: Path) -> list[Playlist]:
 
 
 def load_available_urls(path: Path) -> list[str]:
+    """Standby pool, de-duplicated, same order as the file."""
     data = _safe_yaml().load(path.read_text(encoding="utf-8")) or {}
     urls = data.get("available") or []
-    return [str(url).strip() for url in urls if str(url).strip()]
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in urls:
+        value = str(item).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return unique
 
 
 def load_secrets(env_path: Path) -> Secrets:
@@ -156,6 +177,7 @@ def load_config(root: Path | None = None) -> AppConfig:
 
 
 def update_playlist_dns(playlists_path: Path, playlist_id: str, new_dns: str) -> None:
+    """Write the new live URL into playlists.yaml after EPGenius accepts the swap."""
     yaml = _yaml()
     with playlists_path.open(encoding="utf-8") as handle:
         data = yaml.load(handle)

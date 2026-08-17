@@ -1,3 +1,5 @@
+"""Local FastAPI dashboard. Polls SharedState; does not run checks itself."""
+
 from __future__ import annotations
 
 import logging

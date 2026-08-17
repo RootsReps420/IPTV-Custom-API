@@ -1,8 +1,8 @@
 # Copy to playlists.yaml (gitignored) and fill in real values.
 #
-# For a URL-check dry run you only need current_dns (and name).
-# playlist_id / username / password are required for Discord swap tests and live failovers.
-# current_dns should be the portal URL as EPGenius takes it (usually no port).
+# name + current_dns are enough for URL checks and the dashboard.
+# playlist_id / username / password / discord_id are required for live swaps and Discord tests.
+# current_dns is the portal URL as EPGenius takes it (usually no port).
 
 playlists:
   - name: account-1

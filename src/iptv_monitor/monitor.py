@@ -1,3 +1,5 @@
+"""Main loop: probe URLs, count failures, swap via EPGenius, feed the dashboard."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,6 +22,7 @@ from iptv_monitor.notify import (
 
 logger = logging.getLogger("iptv_monitor.monitor")
 
+# Only used by `test dashboard --demo-down` so the red banner can be reviewed.
 DEMO_DOWN_URL = "http://dry-run-demo.invalid"
 
 
@@ -39,11 +42,13 @@ class FailoverPlan:
     threshold: int
     playlists: list[Playlist]
     candidate: str | None
-    status: str
+    status: str  # waiting | swap | no_standby
 
 
 @dataclass
 class SharedState:
+    """Snapshot the dashboard polls. Keep passwords off this object."""
+
     last_cycle_at: datetime | None = None
     check_interval_seconds: int = 30
     live: list[dict[str, Any]] = field(default_factory=list)
@@ -84,13 +89,6 @@ class SharedState:
                 "available_up": avail_up,
                 "available_total": len(self.available),
                 "playlists": len(self.playlists),
-                "cloudflare": len(
-                    {
-                        row["url"]
-                        for row in [*self.live, *self.available]
-                        if row.get("cloudflare")
-                    }
-                ),
             },
         }
 
@@ -105,6 +103,15 @@ def _role(url: str, live: set[str], available: set[str]) -> str:
     return "available"
 
 
+def _cloudflare_flag(result: HealthResult | None) -> tuple[bool, bool]:
+    """(proxied, any Cloudflare — proxy or NS)."""
+    if result is None:
+        return False, False
+    proxied = bool(result.cloudflare_proxied)
+    any_cf = proxied or (result.nameserver or "") == "cloudflare"
+    return proxied, any_cf
+
+
 def _url_view(
     url: str,
     role: str,
@@ -112,6 +119,7 @@ def _url_view(
     stats: UrlStats,
     playlist_names: list[str],
 ) -> dict[str, Any]:
+    proxied, any_cf = _cloudflare_flag(result)
     return {
         "url": url,
         "role": role,
@@ -124,14 +132,8 @@ def _url_view(
         "resolved_ips": list(result.resolved_ips) if result else [],
         "nameserver": result.nameserver if result else None,
         "nameserver_hosts": list(result.nameserver_hosts) if result else [],
-        "cloudflare_proxied": bool(result.cloudflare_proxied) if result else False,
-        "cloudflare": bool(
-            result
-            and (
-                result.cloudflare_proxied
-                or (result.nameserver or "") == "cloudflare"
-            )
-        ),
+        "cloudflare_proxied": proxied,
+        "cloudflare": any_cf,
         "consecutive_failures": stats.consecutive_failures,
         "consecutive_successes": stats.consecutive_successes,
         "last_checked": result.checked_at.isoformat() if result else None,
@@ -145,8 +147,6 @@ class Monitor:
         self.stats: dict[str, UrlStats] = {}
         self.shared = SharedState()
         self._last_results: dict[str, HealthResult] = {}
-        self._last_live: set[str] = set()
-        self._last_available: set[str] = set()
         self._last_available_keys: list[str] = []
         self._last_live_keys: list[str] = []
         self._last_cfg: AppConfig | None = None
@@ -212,10 +212,9 @@ class Monitor:
             live_keys = [normalize_url(item.current_dns) for item in cfg.playlists]
             live_set = set(live_keys)
 
+        # Drop stats for URLs that left the config so counters cannot leak forever.
         current = live_set | available_set
         self.stats = {url: stats for url, stats in self.stats.items() if url in current}
-        self._last_live = live_set
-        self._last_available = available_set
         self._publish_snapshot(cfg, results, live_set, available_set)
 
         live_up = sum(1 for url in live_set if results.get(url) and results[url].healthy)
@@ -236,6 +235,7 @@ class Monitor:
         result: HealthResult,
         stats: UrlStats,
     ) -> None:
+        """Discord + event log only when health changes (or on first sight of a down URL)."""
         previous = stats.last_healthy
         if previous is None:
             if not result.healthy:
@@ -309,6 +309,7 @@ class Monitor:
         return plans
 
     def simulated_failover_plans(self) -> list[FailoverPlan]:
+        """What would swap if the 3-failure threshold were already met (dry-run)."""
         if self._last_cfg is None:
             return []
         return self._build_plans(
@@ -379,6 +380,7 @@ class Monitor:
             result = results.get(url)
             if result is None or not result.healthy:
                 continue
+            # Orange-cloud hosts stay in the pool for display, but we will not swap onto them.
             if result.cloudflare_proxied:
                 continue
             healthy.append(url)
@@ -457,6 +459,7 @@ class Monitor:
         for playlist in cfg.playlists:
             dns_key = normalize_url(playlist.current_dns)
             result = results.get(dns_key)
+            proxied, any_cf = _cloudflare_flag(result)
             self.shared.playlists.append(
                 {
                     "name": playlist.name,
@@ -465,14 +468,8 @@ class Monitor:
                     "current_dns": dns_key,
                     "healthy": bool(result and result.healthy),
                     "nameserver": result.nameserver if result else None,
-                    "cloudflare_proxied": bool(result.cloudflare_proxied) if result else False,
-                    "cloudflare": bool(
-                        result
-                        and (
-                            result.cloudflare_proxied
-                            or (result.nameserver or "") == "cloudflare"
-                        )
-                    ),
+                    "cloudflare_proxied": proxied,
+                    "cloudflare": any_cf,
                 }
             )
         self._refresh_alerts()
@@ -494,7 +491,7 @@ class Monitor:
         self.shared.alerts = alerts
 
     def inject_demo_down(self) -> None:
-        """Force a clearly fake down live URL so the dashboard banner can be reviewed."""
+        """Force a fake down live URL so the dashboard banner can be reviewed."""
         stats = self._stat(DEMO_DOWN_URL)
         stats.consecutive_failures = max(stats.consecutive_failures, 3)
         demo_result = HealthResult(

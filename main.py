@@ -1,3 +1,5 @@
+"""Run the monitor from the repo root without installing the package first."""
+
 from pathlib import Path
 import sys
 

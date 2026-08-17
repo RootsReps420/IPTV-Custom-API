@@ -1,3 +1,5 @@
+"""Per-URL health checks: DNS, TCP, optional HTTP GET /, then MPEG-TS."""
+
 from __future__ import annotations
 
 import asyncio
@@ -102,7 +104,7 @@ async def _resolve_dns(host: str, timeout: float) -> tuple[bool, list[str], str 
         return False, [], "dns_nxdomain", None
     except dns.resolver.NoNameservers as exc:
         return False, [], "dns_no_nameservers", str(exc)
-    except Exception as exc:  # noqa: BLE001 - surface unexpected resolver errors
+    except Exception as exc:  # noqa: BLE001
         logger.warning("DNS lookup failed for %s: %s", host, exc)
         return False, [], "dns_error", str(exc)
 
@@ -134,6 +136,7 @@ async def _check_tcp(ips: list[str], host: str, port: int, timeout: float) -> tu
 
 
 async def _check_http(url: str, timeout: float, insecure: bool) -> tuple[bool, str | None, str | None]:
+    """Optional GET /. Off by default — Xtream portals often look 'down' on the homepage."""
     try:
         async with httpx.AsyncClient(
             verify=not insecure,
@@ -153,6 +156,10 @@ async def check_url(
     settings: Settings,
     credentials: Credentials | None = None,
 ) -> HealthResult:
+    """Run enabled checks in order. First failure becomes fail_reason; later checks are skipped.
+
+    Nameserver lookup runs in parallel and never fails the URL.
+    """
     try:
         url, host, port = parse_endpoint(raw_url)
     except ValueError as exc:
@@ -216,6 +223,7 @@ async def check_url(
                 fail_reason = stream_reason
                 error_detail = stream_detail
     finally:
+        # Always reap the NS task so a later exception does not leak it.
         nameserver_hosts: list[str] = []
         if ns_task is not None:
             try:
@@ -253,6 +261,7 @@ async def check_urls(
     settings: Settings,
     credentials: Credentials | None = None,
 ) -> dict[str, HealthResult]:
+    """Probe unique URLs in parallel. Keyed by normalised URL."""
     unique: list[str] = []
     seen: set[str] = set()
     for raw in urls:

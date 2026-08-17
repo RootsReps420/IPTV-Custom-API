@@ -1,3 +1,10 @@
+"""Find which DNS company hosts a portal, and whether Cloudflare is proxying it.
+
+Cloudflare nameservers look like ada.ns.cloudflare.com (real first names).
+Orange-cloud / proxied hosts resolve to Cloudflare anycast IPs from their
+published ranges: https://www.cloudflare.com/ips/
+"""
+
 from __future__ import annotations
 
 import ipaddress
@@ -10,8 +17,7 @@ import dns.resolver
 
 logger = logging.getLogger("iptv_monitor.nameserver")
 
-# Published Cloudflare anycast ranges (https://www.cloudflare.com/ips/).
-# Used to detect orange-cloud / proxied hostnames that often block IPTV.
+# Orange-cloud IPTV blocks happen on these proxy ranges, not merely "NS is Cloudflare".
 _CLOUDFLARE_NETWORKS = [
     ipaddress.ip_network(cidr)
     for cidr in (
@@ -40,6 +46,7 @@ _CLOUDFLARE_NETWORKS = [
     )
 ]
 
+# Substring match against NS hostnames, first match wins.
 _NS_PROVIDERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("cloudflare", ("ns.cloudflare.com", "cloudflare-dns.com")),
     ("aws", ("awsdns", "amazonaws.com")),
@@ -49,6 +56,11 @@ _NS_PROVIDERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("namecheap", ("registrar-servers.com",)),
     ("cloudns", ("cloudns.net", "cloudns.eu")),
 )
+
+# Successes stay cached 10 minutes; empty results only 30s so a blip can recover.
+_NS_CACHE: dict[str, tuple[float, list[str]]] = {}
+_NS_CACHE_TTL = 600.0
+_NS_CACHE_EMPTY_TTL = 30.0
 
 
 def ip_is_cloudflare(ip: str) -> bool:
@@ -60,6 +72,7 @@ def ip_is_cloudflare(ip: str) -> bool:
 
 
 def classify_ns_hosts(hosts: list[str]) -> str | None:
+    """Map NS hostnames to a short provider name, or 'other'."""
     blob = " ".join(host.lower() for host in hosts)
     if not blob:
         return None
@@ -69,12 +82,8 @@ def classify_ns_hosts(hosts: list[str]) -> str | None:
     return "other"
 
 
-_NS_CACHE: dict[str, tuple[float, list[str]]] = {}
-_NS_CACHE_TTL = 600.0
-_NS_CACHE_EMPTY_TTL = 30.0
-
-
 async def lookup_ns_hosts(host: str, timeout: float) -> list[str]:
+    """Walk cf.example.com → example.com until an NS record answers."""
     if not host or host.endswith(".invalid"):
         return []
     key = host.rstrip(".").lower()
@@ -109,17 +118,3 @@ async def lookup_ns_hosts(host: str, timeout: float) -> list[str]:
     ttl = _NS_CACHE_TTL if found else _NS_CACHE_EMPTY_TTL
     _NS_CACHE[key] = (now + ttl, found)
     return list(found)
-
-
-async def inspect_nameserver(
-    host: str,
-    resolved_ips: list[str],
-    timeout: float,
-) -> tuple[str | None, list[str], bool]:
-    """Return (provider, ns hosts, proxied through Cloudflare anycast)."""
-    ns_hosts = await lookup_ns_hosts(host, timeout)
-    provider = classify_ns_hosts(ns_hosts)
-    proxied = any(ip_is_cloudflare(ip) for ip in resolved_ips)
-    if proxied and provider is None:
-        provider = "cloudflare"
-    return provider, ns_hosts, proxied

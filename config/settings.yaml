@@ -1,18 +1,19 @@
-# How often to probe every live and available URL
+# How often to probe every live and available URL.
+# YAML reloads each cycle. Python code changes still need a process restart.
 check_interval_seconds: 30
 
-# Live URL must fail this many cycles in a row before a swap
+# Live URL must fail this many cycles in a row before EPGenius is called.
 consecutive_failures_to_swap: 3
 
-# Prefer standbys that have been healthy this many cycles (falls back to any currently healthy)
+# Prefer standbys that have been healthy this many cycles (falls back to any currently healthy).
 min_consecutive_successes_for_swap: 2
 
-# v1 dead = DNS fail OR TCP fail. HTTP GET / is too noisy on IPTV portals.
+# Dead = DNS fail OR TCP fail. HTTP GET / is too noisy on Xtream portals, leave it off.
 dns_check_enabled: true
 tcp_check_enabled: true
 http_check_enabled: false
 
-# Xtream HTTP MPEG-TS sample (what players actually pull). Failures count toward failover.
+# Short HTTP MPEG-TS pull (what players use). Failures count toward failover.
 stream_check_enabled: true
 
 dns_timeout_seconds: 5
@@ -20,9 +21,9 @@ tcp_timeout_seconds: 5
 http_timeout_seconds: 10
 stream_timeout_seconds: 10
 
-# Many IPTV portals use invalid TLS certs; only used if http_check_enabled is true
+# Many IPTV portals use invalid TLS certs; only used if HTTP or stream checks run.
 allow_insecure_tls: true
 
-# 127.0.0.1 = this PC only. 0.0.0.0 = also reachable on your LAN (phone on same Wi-Fi).
+# 127.0.0.1 = this PC only. 0.0.0.0 = also reachable on your LAN.
 dashboard_host: 0.0.0.0
 dashboard_port: 8787

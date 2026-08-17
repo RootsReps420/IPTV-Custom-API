@@ -1,3 +1,5 @@
+"""CLI entry: live monitor, one-shot check, or a dry-run of one piece."""
+
 from __future__ import annotations
 
 import argparse
@@ -45,12 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument(
         "component",
         choices=["urls", "failover", "discord", "dashboard"],
-        help="urls: DNS/TCP table. failover: print would-swap plan. discord: [TEST] webhooks. dashboard: local UI with down banners.",
+        help="urls: table. failover: would-swap plan. discord: [TEST] webhooks. dashboard: local UI.",
     )
     test.add_argument(
         "--demo-down",
         action="store_true",
-        help="For 'test dashboard': inject a fake down URL so the red banner is visible even if all real URLs are up.",
+        help="For 'test dashboard': inject a fake down URL so the red banner is visible.",
     )
     return parser
 

@@ -1,3 +1,5 @@
+/* Dashboard: poll /api/status every 4s and render playlists, URL cards, events. */
+
 const liveList = document.getElementById("live-list");
 const availList = document.getElementById("avail-list");
 const liveCount = document.getElementById("live-count");
@@ -38,6 +40,7 @@ function secondsUntilNext(iso, interval) {
 }
 
 function flag(label, ok) {
+  // stream_ok is null when the MPEG-TS check was skipped (no creds, or an earlier check failed).
   if (ok === null || ok === undefined) {
     return `<span class="flag">${label} skip</span>`;
   }
@@ -64,6 +67,7 @@ function nsBadge(item) {
   if (!label) {
     return "";
   }
+  // Full NS hostnames (e.g. eric.ns.cloudflare.com) live in the hover tooltip.
   const title = (item.nameserver_hosts || []).join(", ");
   const cls = item.cloudflare ? "pill cf" : "pill ns";
   return `<span class="${cls}" title="${esc(title)}">${esc(label)}</span>`;
@@ -169,10 +173,7 @@ function alertClass(text) {
 }
 
 function renderAlerts(items, fallbackError) {
-  const messages = [...(items || [])].filter((text) => {
-    const lower = String(text).toLowerCase();
-    return !lower.includes("cloudflare");
-  });
+  const messages = [...(items || [])];
   if (fallbackError && !messages.includes(fallbackError)) {
     messages.unshift(fallbackError);
   }

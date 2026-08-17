@@ -1,3 +1,5 @@
+"""Dry-run commands: probe URLs, preview failover, test Discord, run the UI with swaps off."""
+
 from __future__ import annotations
 
 import asyncio

@@ -1,3 +1,9 @@
+"""Discord webhooks: alerts channel for down/up, swaps channel for DNS changes.
+
+Swap messages include username/password on purpose. Test sends are prefixed [TEST]
+and never call EPGenius.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -22,6 +28,7 @@ async def _post_webhook(
     *,
     strict: bool = False,
 ) -> None:
+    """Live alerts log a warning on failure; `test discord` raises so you notice."""
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(url, json=payload)

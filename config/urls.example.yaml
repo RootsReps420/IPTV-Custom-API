@@ -1,6 +1,5 @@
 # Copy to urls.yaml (gitignored). Shared standby pool.
-# Replace these with real portal URLs you could swap to.
-# They are probed every cycle; only currently healthy ones are swap candidates.
+# Each URL is probed every cycle. Only currently healthy, non-Cloudflare-proxied hosts are swap candidates.
 
 available:
   - "http://your-standby-1.example"

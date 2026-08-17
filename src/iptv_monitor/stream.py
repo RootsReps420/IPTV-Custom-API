@@ -1,20 +1,30 @@
+"""Xtream HTTP MPEG-TS probe — what IPTV apps actually pull.
+
+Multicast UDP cannot be aimed at these portal hostnames. Players request
+  GET {dns}/live/{user}/{pass}/{stream_id}.ts
+and receive MPEG-TS over HTTP (content-type video/mp2t, packets start with 0x47).
+
+We authenticate with player_api.php first, then read a few hundred bytes of a
+live stream and stop. Failures here count toward failover.
+"""
+
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from typing import Iterable
 
 import httpx
 
-logger = logging.getLogger("iptv_monitor.stream")
-
+# MPEG-TS packets are 188 bytes; the sync byte is always 0x47.
 TS_SYNC = 0x47
 TS_PACKET = 188
 _STREAM_UA = "VLC/3.0.20 LibVLC/3.0.20"
+# Cap parallel stream checks so a large standby pool does not stampede origins.
 _SEM = asyncio.Semaphore(8)
 _STREAM_ID_CACHE: dict[str, tuple[float, list[int]]] = {}
 _STREAM_ID_TTL = 600.0
+# Last stream id that returned real MPEG-TS — try it first on the next host.
 _LAST_GOOD_ID: int | None = None
 
 Credentials = list[tuple[str, str]]
@@ -29,6 +39,7 @@ def _redact(text: str, secrets: Iterable[str]) -> str:
 
 
 def looks_like_mpegts(data: bytes) -> bool:
+    """True if we see 0x47 repeating every 188 bytes (not HTML that happens to contain 'G')."""
     if len(data) < TS_PACKET:
         return bool(data) and data[0] == TS_SYNC
     span = min(TS_PACKET, len(data) - TS_PACKET)
@@ -46,6 +57,7 @@ def _auth_ok(payload: object) -> bool:
 
 
 async def _read_prefix(client: httpx.AsyncClient, url: str, nbytes: int) -> tuple[int, str, bytes]:
+    """Read a short prefix then hang up so we do not download a full live channel."""
     async with client.stream("GET", url) as response:
         ctype = (response.headers.get("content-type") or "").split(";")[0]
         chunks = b""
@@ -63,6 +75,7 @@ async def _stream_ids(
     password: str,
     cache_key: str,
 ) -> list[int]:
+    """First few live stream IDs from Xtream. Cached so we do not download the full list every cycle."""
     now = time.monotonic()
     cached = _STREAM_ID_CACHE.get(cache_key)
     if cached and now < cached[0]:
@@ -112,7 +125,8 @@ async def _probe_stream_ids(
     username: str,
     password: str,
     stream_ids: list[int],
-) -> tuple[bool | None, str | None, str | None]:
+) -> tuple[bool, str]:
+    """Try /live/.../{id}.ts (and without .ts). Returns (ok, last_error_detail)."""
     global _LAST_GOOD_ID
     secrets = [username, password]
     last_detail = "no mpegts"
@@ -131,7 +145,7 @@ async def _probe_stream_ids(
                 status == 200 and "mp2t" in stream_type and data[:1] == bytes([TS_SYNC])
             ):
                 _LAST_GOOD_ID = stream_id
-                return True, None, None
+                return True, ""
             if status in {401, 403}:
                 last_detail = f"live HTTP {status}"
                 continue
@@ -140,7 +154,7 @@ async def _probe_stream_ids(
                 f"live HTTP {status} {stream_type} {preview}".strip(),
                 secrets,
             )[:180]
-    return None, None, last_detail
+    return False, last_detail
 
 
 async def _try_credentials(
@@ -149,7 +163,12 @@ async def _try_credentials(
     username: str,
     password: str,
 ) -> tuple[bool | None, str | None, str | None]:
-    """Return (ok, reason, detail). None ok means this account is not on this panel."""
+    """One account against one portal.
+
+    True = MPEG-TS arrived.
+    False = this host is blocked / broken (counts as down).
+    None = this account is not on this panel (try the next account).
+    """
     api = f"{base}/player_api.php"
     try:
         response = await client.get(api, params={"username": username, "password": password})
@@ -173,28 +192,21 @@ async def _try_credentials(
     if not _auth_ok(payload):
         return None, "stream_auth", "xtream auth failed"
 
-    cache_key = f"{base}|{username}"
+    # Cheap guesses first (last working id, then stream 1) so we skip the full channel list.
     cheap: list[int] = []
     if _LAST_GOOD_ID is not None:
         cheap.append(_LAST_GOOD_ID)
     cheap.append(1)
-    ok, reason, detail = await _probe_stream_ids(
-        client, base, username, password, _unique(cheap)
-    )
-    if ok is True:
+    ok, detail = await _probe_stream_ids(client, base, username, password, _unique(cheap))
+    if ok:
         return True, None, None
-    if ok is False:
-        return False, reason, detail
-    listed = await _stream_ids(client, api, username, password, cache_key)
+
+    listed = await _stream_ids(client, api, username, password, f"{base}|{username}")
     remaining = [item for item in listed if item not in set(cheap)]
     if remaining:
-        ok, reason, detail = await _probe_stream_ids(
-            client, base, username, password, remaining
-        )
-        if ok is True:
+        ok, detail = await _probe_stream_ids(client, base, username, password, remaining)
+        if ok:
             return True, None, None
-        if ok is False:
-            return False, reason, detail
     return False, "stream_no_mpegts", detail or "no mpegts"
 
 
@@ -204,7 +216,11 @@ async def check_xtream_mpegts(
     timeout: float,
     insecure: bool,
 ) -> tuple[bool | None, str | None, str | None]:
-    """Probe Xtream HTTP MPEG-TS. None = skipped / this panel does not accept our accounts."""
+    """Probe a portal with each playlist account until one yields MPEG-TS.
+
+    Returns (ok, fail_reason, detail). ok is None only when we had no credentials.
+    If every account 404s / fails auth, we still mark the URL down so it is not a swap target.
+    """
     if not credentials:
         return None, None, None
     base = base_url.rstrip("/")

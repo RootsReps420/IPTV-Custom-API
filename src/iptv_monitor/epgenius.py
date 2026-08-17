@@ -1,3 +1,5 @@
+"""EPGenius public update_creds call — this is the actual playlist DNS swap."""
+
 from __future__ import annotations
 
 import logging
