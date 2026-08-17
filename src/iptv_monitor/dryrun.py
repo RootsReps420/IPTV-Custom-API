@@ -10,7 +10,7 @@ from iptv_monitor.dashboard import serve_dashboard
 from iptv_monitor.epgenius import update_creds
 from iptv_monitor.health import normalize_url
 from iptv_monitor.monitor import Monitor
-from iptv_monitor.notify import notify_no_standby, notify_swap, notify_url_down, notify_url_up
+from iptv_monitor.notify import notify_no_standby, notify_swap, notify_url_down, notify_url_up, publish_status_board
 
 
 async def run_url_check(monitor: Monitor) -> int:
@@ -61,7 +61,65 @@ async def run_discord_test(root: Path | None) -> int:
     print("  alerts: no healthy standby")
     await notify_swap(cfg.secrets, playlist, live, standby, test=True)
     print("  swaps: playlist DNS swapped (test only)")
-    print("Done. Check the two Discord channels for messages titled [TEST].")
+    if cfg.secrets.discord_webhook_status:
+        snapshot = {
+            "last_cycle_at": None,
+            "check_interval_seconds": cfg.settings.check_interval_seconds,
+            "live": [
+                {
+                    "url": live,
+                    "healthy": True,
+                    "dns_ok": True,
+                    "tcp_ok": True,
+                    "stream_ok": True,
+                    "fail_reason": None,
+                    "consecutive_successes": 2,
+                    "consecutive_failures": 0,
+                    "cloudflare_proxied": False,
+                    "cloudflare": False,
+                    "nameserver": None,
+                }
+            ],
+            "available": [
+                {
+                    "url": standby,
+                    "healthy": False,
+                    "dns_ok": True,
+                    "tcp_ok": True,
+                    "stream_ok": False,
+                    "fail_reason": "demo_forced_down",
+                    "consecutive_successes": 0,
+                    "consecutive_failures": 1,
+                    "cloudflare_proxied": False,
+                    "cloudflare": False,
+                    "nameserver": None,
+                }
+            ],
+            "playlists": [
+                {
+                    "name": playlist.name,
+                    "playlist_id": playlist.playlist_id,
+                    "current_dns": live,
+                    "healthy": True,
+                    "cloudflare_proxied": False,
+                    "cloudflare": False,
+                    "nameserver": None,
+                }
+            ],
+            "counts": {"live_up": 1, "live_total": 1, "available_up": 0, "available_total": 1},
+            "error": None,
+        }
+        await publish_status_board(
+            cfg.secrets,
+            snapshot,
+            root=cfg.paths.root,
+            test=True,
+            persist=False,
+        )
+        print("  status: posted a [TEST] board message (does not replace the live board)")
+    else:
+        print("  status: skipped (DISCORD_WEBHOOK_STATUS not set)")
+    print("Done. Check the Discord channels for messages titled [TEST].")
     return 0
 
 

@@ -15,7 +15,7 @@ Every `check_interval_seconds` (default 30s) the monitor:
 3. Probes **every** unique URL the same way (live and standby).
 4. Updates per-URL failure / success counters.
 5. If a **live** URL has failed **3 cycles in a row**, swaps those playlists to a standby that passed **this** cycle.
-6. Refreshes the dashboard snapshot. Discord fires only on state changes (down, recovered, swap, no standby, EPGenius error).
+6. Refreshes the dashboard snapshot. Discord fires only on state changes (down, recovered, swap, no standby, EPGenius error). If `DISCORD_WEBHOOK_STATUS` is set, one status-channel message is edited in place (no extra posts).
 
 Changing YAML is picked up on the next cycle. Changing Python code needs a process restart (`IPTVPortalMonitor` task).
 
@@ -76,11 +76,23 @@ Local UI (default `http://127.0.0.1:8787`, or LAN if `dashboard_host` is `0.0.0.
 
 Do not port-forward 8787 to the public internet.
 
+## Remote status (Discord)
+
+The local dashboard is LAN-only. For a glance from any network, add a **dedicated Discord channel** and a third webhook. The monitor keeps **one** message in that channel and **edits** it. Discord does not notify on edits, so a 15s check cycle will not spam you.
+
+Create a channel such as `#iptv-status`, create a webhook there, and put it in `.env` as `DISCORD_WEBHOOK_STATUS`. Mute the channel if you like — you still open it when you want the board.
+
+The embed lists playlists, live URLs, and standbys with `dns` / `tcp` / `ts` flags. It updates immediately when something actually changes (down, recovered, fail count toward swap, DNS change). If everything is stable it only refreshes the “checked … ago” line every `discord_status_min_interval_seconds` (default 60).
+
+A slash-command bot (`/status`) would also work, but it needs a Discord application, a bot token, an invite, and a persistent gateway connection. The edited webhook message is the same data with none of that setup. Add a bot later if you want pull-on-demand without opening the channel.
+
+Do not put this webhook in the swaps channel — the status board has no passwords, but swaps still do.
+
 ## Files
 
 | Path | Purpose |
 |------|---------|
-| `.env` | EPGenius API key and two Discord webhooks. **Never commit.** |
+| `.env` | EPGenius API key and Discord webhooks (swaps, alerts, optional status board). **Never commit.** |
 | `config/playlists.yaml` | Accounts: Discord ID, playlist ID, username, password, live `current_dns`. **Never commit.** |
 | `config/urls.yaml` | Shared standby portal URLs. **Never commit.** |
 | `config/settings.yaml` | Intervals, which checks run, dashboard bind address. |
@@ -125,7 +137,7 @@ None of the dry-run commands call EPGenius or rewrite `current_dns`.
 |---------|----------------|
 | `check` / `test urls` | One probe of live + standby. Prints a table and a this-cycle failover preview. |
 | `test failover` | Same probes, then prints what **would** swap if the 3-failure threshold were already met. |
-| `test discord` | Sends `[TEST]` messages to both webhooks. |
+| `test discord` | Sends `[TEST]` messages to alerts and swaps. If a status webhook is set, posts a one-off `[TEST]` board (does not replace the live board). |
 | `test dashboard` | UI with live probes, no Discord, no swaps. |
 | `test dashboard --demo-down` | Same, plus a fake down URL so the red banner is visible. |
 | `apply DanMain` | Push that playlist’s `current_dns` to EPGenius **and** send the Discord swap alert. Use `--dns` / `--from-url` if needed. |

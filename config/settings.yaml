@@ -27,3 +27,8 @@ allow_insecure_tls: true
 # 127.0.0.1 = this PC only. 0.0.0.0 = also reachable on your LAN.
 dashboard_host: 0.0.0.0
 dashboard_port: 8787
+
+# Discord status channel (DISCORD_WEBHOOK_STATUS): edit one message, no extra posts.
+# Refresh the "checked … ago" line at least this often when nothing else changed.
+# Down/up, fail counts, and DNS swaps still edit immediately. 0 = every check cycle.
+discord_status_min_interval_seconds: 60

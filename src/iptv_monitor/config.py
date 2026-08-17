@@ -33,6 +33,9 @@ class Settings(BaseModel):
     allow_insecure_tls: bool = True
     dashboard_host: str = "127.0.0.1"
     dashboard_port: int = 8787
+    # How often to refresh the Discord status-board timestamp when nothing changed.
+    # Health changes (down/up, fail count, DNS swap) still edit immediately. 0 = every cycle.
+    discord_status_min_interval_seconds: int = 60
 
 
 class Playlist(BaseModel):
@@ -50,6 +53,7 @@ class Secrets(BaseModel):
     epgenius_api_key: str
     discord_webhook_swaps: str
     discord_webhook_alerts: str
+    discord_webhook_status: str | None = None
     epgenius_url: str = "https://epgenius.org/api/public/update_creds"
 
 
@@ -146,10 +150,12 @@ def load_secrets(env_path: Path) -> Secrets:
     if missing:
         joined = ", ".join(missing)
         raise RuntimeError(f"Missing environment variables in {env_path}: {joined}")
+    status = os.getenv("DISCORD_WEBHOOK_STATUS", "").strip() or None
     return Secrets(
         epgenius_api_key=os.environ["EPGENIUS_API_KEY"].strip(),
         discord_webhook_swaps=os.environ["DISCORD_WEBHOOK_SWAPS"].strip(),
         discord_webhook_alerts=os.environ["DISCORD_WEBHOOK_ALERTS"].strip(),
+        discord_webhook_status=status,
         epgenius_url=os.getenv(
             "EPGENIUS_URL", "https://epgenius.org/api/public/update_creds"
         ).strip(),

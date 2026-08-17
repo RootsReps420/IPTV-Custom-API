@@ -13,6 +13,7 @@ from iptv_monitor.config import AppConfig, Playlist, load_config, load_settings,
 from iptv_monitor.epgenius import EpgeniusError, update_creds
 from iptv_monitor.health import HealthResult, check_urls, normalize_url
 from iptv_monitor.notify import (
+    DiscordStatusBoard,
     notify_epgenius_error,
     notify_no_standby,
     notify_swap,
@@ -151,6 +152,7 @@ class Monitor:
         self._last_live_keys: list[str] = []
         self._last_cfg: AppConfig | None = None
         self.last_plans: list[FailoverPlan] = []
+        self.status_board = DiscordStatusBoard()
 
     def _stat(self, url: str) -> UrlStats:
         if url not in self.stats:
@@ -216,6 +218,8 @@ class Monitor:
         current = live_set | available_set
         self.stats = {url: stats for url, stats in self.stats.items() if url in current}
         self._publish_snapshot(cfg, results, live_set, available_set)
+        if notify:
+            await self.status_board.sync(cfg, self.shared.snapshot())
 
         live_up = sum(1 for url in live_set if results.get(url) and results[url].healthy)
         avail_up = sum(1 for url in available_set if results.get(url) and results[url].healthy)
