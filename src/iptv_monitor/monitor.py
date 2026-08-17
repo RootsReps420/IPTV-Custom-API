@@ -487,32 +487,8 @@ class Monitor:
             alerts.append(f"{len(down_live)} live URL(s) down: {', '.join(down_live)}")
         if down_avail:
             alerts.append(f"{len(down_avail)} standby URL(s) down: {', '.join(down_avail)}")
-        cf_urls = [
-            row["url"]
-            for row in [*self.shared.live, *self.shared.available]
-            if row.get("cloudflare")
-        ]
-        # Deduplicate while preserving order
-        seen_cf: set[str] = set()
-        cf_unique = []
-        for url in cf_urls:
-            if url not in seen_cf:
-                seen_cf.add(url)
-                cf_unique.append(url)
-        if cf_unique:
-            alerts.append(
-                f"{len(cf_unique)} URL(s) on Cloudflare (often blocks IPTV): {', '.join(cf_unique)}"
-            )
-        all_clear = (
-            self.shared.last_cycle_at
-            and not down_live
-            and not down_avail
-            and not self.shared.error
-        )
-        if all_clear and not cf_unique:
+        if self.shared.last_cycle_at and not down_live and not down_avail and not self.shared.error:
             alerts.append("All portal URLs are up.")
-        elif all_clear:
-            alerts.append("All portal URLs are up, but some resolve through Cloudflare.")
         self.shared.alerts = alerts
 
     def inject_demo_down(self) -> None:

@@ -158,9 +158,6 @@ function alertClass(text) {
   if (lower.startsWith("dry run") || lower.includes("disabled")) {
     return "alert warn";
   }
-  if (lower.includes("cloudflare")) {
-    return "alert warn";
-  }
   if (lower.startsWith("all portal urls are up")) {
     return "alert ok";
   }
@@ -168,7 +165,10 @@ function alertClass(text) {
 }
 
 function renderAlerts(items, fallbackError) {
-  const messages = [...(items || [])];
+  const messages = [...(items || [])].filter((text) => {
+    const lower = String(text).toLowerCase();
+    return !lower.includes("cloudflare");
+  });
   if (fallbackError && !messages.includes(fallbackError)) {
     messages.unshift(fallbackError);
   }
