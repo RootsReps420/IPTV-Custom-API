@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from iptv_monitor.config import load_config
@@ -101,12 +103,32 @@ async def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def configure_logging(root: Path | None) -> None:
+    base = Path(root) if root else Path.cwd()
+    log_dir = base / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    if root_logger.handlers:
+        return
+    file_handler = RotatingFileHandler(
+        log_dir / "monitor.log",
+        maxBytes=2_000_000,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+    if sys.stderr is not None:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        root_logger.addHandler(stream_handler)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    configure_logging(args.root)
     try:
         return asyncio.run(_run(args))
     except KeyboardInterrupt:

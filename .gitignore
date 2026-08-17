@@ -1,3 +1,4 @@
+logs/
 .env
 config/playlists.yaml
 config/urls.yaml

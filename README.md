@@ -71,6 +71,28 @@ python main.py
 
 That **will** swap via EPGenius after 3 consecutive failures. Do not use it until the dry runs look right.
 
+Manual live run without activating the venv:
+
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
+
+## Keep it running on Windows
+
+This registers a Task Scheduler job that starts at logon, restarts up to 5 times if it crashes, and has no run-time limit. It uses `pythonw.exe` so no console window stays open. Logs go to `logs\monitor.log`.
+
+Close any existing `main.py` window first (port 8787 can only be used once). Then:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-windows-task.ps1
+```
+
+- Dashboard: [http://127.0.0.1:8787](http://127.0.0.1:8787)
+- Logs: `logs\monitor.log`
+- Remove: `powershell -ExecutionPolicy Bypass -File scripts\uninstall-windows-task.ps1`
+
+The PC must be on and you must be logged in. Sleep/hibernate still pauses it unless you change Windows power settings. The `dns-dead-test.invalid` standby will fire a Discord “down” alert on first live start; remove it from `config/urls.yaml` if you do not want that.
+
 ## Config
 
 | File | Purpose |

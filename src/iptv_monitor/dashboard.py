@@ -38,6 +38,7 @@ async def serve_dashboard(state: SharedState, host: str, port: int) -> None:
         port=port,
         log_level="warning",
         access_log=False,
+        log_config=None,
     )
     server = uvicorn.Server(config)
     logger.info("Dashboard listening on http://%s:%s", host, port)
