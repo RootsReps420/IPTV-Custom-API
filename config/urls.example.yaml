@@ -1,0 +1,6 @@
+# Copy to urls.yaml (gitignored). Shared standby pool.
+# These are probed every cycle; only currently healthy ones are swap candidates.
+
+available:
+  - "http://standby1.example.com"
+  - "http://standby2.example.com:8080"

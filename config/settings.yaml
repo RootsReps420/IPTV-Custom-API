@@ -1,0 +1,23 @@
+# How often to probe every live and available URL
+check_interval_seconds: 30
+
+# Live URL must fail this many cycles in a row before a swap
+consecutive_failures_to_swap: 3
+
+# Prefer standbys that have been healthy this many cycles (falls back to any currently healthy)
+min_consecutive_successes_for_swap: 2
+
+# v1 dead = DNS fail OR TCP fail. HTTP GET / is too noisy on IPTV portals.
+dns_check_enabled: true
+tcp_check_enabled: true
+http_check_enabled: false
+
+dns_timeout_seconds: 5
+tcp_timeout_seconds: 5
+http_timeout_seconds: 10
+
+# Many IPTV portals use invalid TLS certs; only used if http_check_enabled is true
+allow_insecure_tls: true
+
+dashboard_host: 127.0.0.1
+dashboard_port: 8787

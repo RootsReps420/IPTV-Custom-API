@@ -1,0 +1,10 @@
+# Copy to playlists.yaml (gitignored) and fill in real values.
+# current_dns is the live portal URL for that playlist.
+
+playlists:
+  - name: account-1
+    discord_id: "202010010127958016"
+    playlist_id: "your-playlist-id"
+    username: "your-username"
+    password: "your-password"
+    current_dns: "http://live.example.com:8080"
