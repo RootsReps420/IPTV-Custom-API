@@ -118,6 +118,7 @@ None of the dry-run commands call EPGenius or rewrite `current_dns`.
 .\.venv\Scripts\python.exe main.py test discord
 .\.venv\Scripts\python.exe main.py test dashboard
 .\.venv\Scripts\python.exe main.py test dashboard --demo-down
+.\.venv\Scripts\python.exe main.py apply DanMain
 ```
 
 | Command | What it does |
@@ -127,6 +128,7 @@ None of the dry-run commands call EPGenius or rewrite `current_dns`.
 | `test discord` | Sends `[TEST]` messages to both webhooks. |
 | `test dashboard` | UI with live probes, no Discord, no swaps. |
 | `test dashboard --demo-down` | Same, plus a fake down URL so the red banner is visible. |
+| `apply DanMain` | Push that playlist’s `current_dns` to EPGenius **and** send the Discord swap alert. Use `--dns` / `--from-url` if needed. |
 | `python main.py` | **Live:** swaps and Discord are real. |
 | `python main.py --no-dashboard` | Live checks without the web UI. |
 

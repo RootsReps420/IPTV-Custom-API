@@ -158,6 +158,7 @@ async def notify_swap(
     new_url: str,
     *,
     test: bool = False,
+    manual: bool = False,
 ) -> None:
     fields = [
         {"name": "Name", "value": playlist.name, "inline": True},
@@ -167,13 +168,19 @@ async def notify_swap(
         {"name": "Old URL", "value": old_url, "inline": False},
         {"name": "New URL", "value": new_url, "inline": False},
     ]
+    if test:
+        description = "Dry run. EPGenius was not called and playlist DNS was not changed."
+    elif manual:
+        description = "Manual apply — EPGenius was updated outside automatic failover."
+    else:
+        description = None
     await _post_webhook(
         secrets.discord_webhook_swaps,
         _embed(
             _title("Playlist DNS swapped", test),
             COLOR_SWAP,
             fields,
-            description="Dry run. EPGenius was not called and playlist DNS was not changed." if test else None,
+            description=description,
         ),
         strict=test,
     )

@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from iptv_monitor.config import load_config
+from iptv_monitor.config import load_config, update_playlist_dns
 from iptv_monitor.dashboard import serve_dashboard
+from iptv_monitor.epgenius import update_creds
 from iptv_monitor.health import normalize_url
 from iptv_monitor.monitor import Monitor
 from iptv_monitor.notify import notify_no_standby, notify_swap, notify_url_down, notify_url_up
@@ -61,6 +62,43 @@ async def run_discord_test(root: Path | None) -> int:
     await notify_swap(cfg.secrets, playlist, live, standby, test=True)
     print("  swaps: playlist DNS swapped (test only)")
     print("Done. Check the two Discord channels for messages titled [TEST].")
+    return 0
+
+
+def _find_playlist(cfg, selector: str):
+    sel = selector.strip().lower()
+    hits = [
+        item
+        for item in cfg.playlists
+        if sel == str(item.playlist_id).lower() or sel in item.name.lower()
+    ]
+    if not hits:
+        names = ", ".join(f"{item.name} ({item.playlist_id})" for item in cfg.playlists) or "(none)"
+        raise RuntimeError(f"No playlist matched {selector!r}. Loaded: {names}")
+    if len(hits) > 1:
+        names = ", ".join(f"{item.name} ({item.playlist_id})" for item in hits)
+        raise RuntimeError(f"{selector!r} matched more than one playlist: {names}")
+    return hits[0]
+
+
+async def run_apply(
+    root: Path | None,
+    selector: str,
+    *,
+    dns: str | None = None,
+    from_url: str | None = None,
+) -> int:
+    """Push a playlist DNS to EPGenius and send the same Discord swap alert as automatic failover."""
+    cfg = load_config(root)
+    playlist = _find_playlist(cfg, selector)
+    old_url = normalize_url(from_url or playlist.current_dns)
+    new_url = normalize_url(dns or playlist.current_dns)
+    print(f"Applying {playlist.name} ({playlist.playlist_id})")
+    print(f"  {old_url} -> {new_url}")
+    await update_creds(cfg.secrets, playlist, new_url)
+    update_playlist_dns(cfg.paths.playlists, playlist.playlist_id, new_url)
+    await notify_swap(cfg.secrets, playlist, old_url, new_url, manual=True)
+    print("EPGenius accepted. Discord swap alert sent.")
     return 0
 
 

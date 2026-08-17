@@ -12,6 +12,7 @@ from pathlib import Path
 from iptv_monitor.config import load_config
 from iptv_monitor.dashboard import serve_dashboard
 from iptv_monitor.dryrun import (
+    run_apply,
     run_dashboard_test,
     run_discord_test,
     run_failover_preview,
@@ -54,6 +55,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="For 'test dashboard': inject a fake down URL so the red banner is visible.",
     )
+    apply_cmd = sub.add_parser(
+        "apply",
+        help="Push a playlist's DNS to EPGenius and send the Discord swap alert.",
+    )
+    apply_cmd.add_argument(
+        "playlist",
+        help="Playlist id or part of the name, e.g. 42175 or DanMain.",
+    )
+    apply_cmd.add_argument(
+        "--dns",
+        default=None,
+        help="URL to push. Defaults to current_dns in playlists.yaml.",
+    )
+    apply_cmd.add_argument(
+        "--from-url",
+        default=None,
+        help="Old URL shown on Discord. Defaults to current_dns before the apply.",
+    )
     return parser
 
 
@@ -83,6 +102,14 @@ async def _run(args: argparse.Namespace) -> int:
 
     if component == "discord":
         return await run_discord_test(root)
+
+    if command == "apply":
+        return await run_apply(
+            root,
+            args.playlist,
+            dns=args.dns,
+            from_url=args.from_url,
+        )
 
     if component == "dashboard":
         host, port = _dashboard_bind(root)
