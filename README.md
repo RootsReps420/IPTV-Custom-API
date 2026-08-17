@@ -34,6 +34,9 @@ python main.py
 
 - Dashboard: [http://127.0.0.1:8787](http://127.0.0.1:8787) (localhost only)
 - One observe-only cycle (no swaps, no dashboard): `python main.py --once`
+- Checker only, no UI: `python main.py --no-dashboard`
+
+Leave example.com URLs in place only for a `--once` smoke test. A continuous run will treat those as down and can fire Discord alerts.
 
 ## Config
 

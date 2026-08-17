@@ -6,6 +6,8 @@ import logging
 import sys
 from pathlib import Path
 
+from iptv_monitor.config import load_config
+from iptv_monitor.dashboard import serve_dashboard
 from iptv_monitor.monitor import Monitor
 
 
@@ -24,6 +26,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Project root containing .env and config/. Defaults to the current directory.",
     )
+    parser.add_argument(
+        "--no-dashboard",
+        action="store_true",
+        help="Run the checker without the local status UI.",
+    )
     return parser
 
 
@@ -37,7 +44,21 @@ async def _run(args: argparse.Namespace) -> int:
             return 1
         return 0
 
-    await monitor.run_forever()
+    if args.no_dashboard:
+        await monitor.run_forever()
+        return 0
+
+    try:
+        cfg = load_config(args.root)
+        host = cfg.settings.dashboard_host
+        port = cfg.settings.dashboard_port
+    except Exception:  # noqa: BLE001
+        host, port = "127.0.0.1", 8787
+
+    await asyncio.gather(
+        monitor.run_forever(),
+        serve_dashboard(monitor.shared, host, port),
+    )
     return 0
 
 

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Portal Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="grid-bg" aria-hidden="true"></div>
+  <header>
+    <div>
+      <p class="eyebrow">IPTV · EPGenius failover</p>
+      <h1>Portal Monitor</h1>
+    </div>
+    <div class="meta">
+      <div class="meta-item">
+        <span class="label">Last cycle</span>
+        <span id="last-cycle">waiting…</span>
+      </div>
+      <div class="meta-item">
+        <span class="label">Interval</span>
+        <span id="interval">—</span>
+      </div>
+      <div id="banner" class="banner" hidden></div>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <div class="section-head">
+        <h2>Live</h2>
+        <span id="live-count" class="count"></span>
+      </div>
+      <div id="live-list" class="cards"></div>
+    </section>
+    <section>
+      <div class="section-head">
+        <h2>Standby</h2>
+        <span id="avail-count" class="count"></span>
+      </div>
+      <div id="avail-list" class="cards"></div>
+    </section>
+  </main>
+
+  <section class="playlists">
+    <div class="section-head">
+      <h2>Playlists</h2>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Playlist ID</th>
+            <th>User</th>
+            <th>Current DNS</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="playlist-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
