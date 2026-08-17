@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+import os
+import shutil
+from pathlib import Path
+
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+from ruamel.yaml import YAML
+
+
+class Settings(BaseModel):
+    check_interval_seconds: int = 30
+    consecutive_failures_to_swap: int = 3
+    min_consecutive_successes_for_swap: int = 2
+    dns_check_enabled: bool = True
+    tcp_check_enabled: bool = True
+    http_check_enabled: bool = False
+    dns_timeout_seconds: float = 5
+    tcp_timeout_seconds: float = 5
+    http_timeout_seconds: float = 10
+    allow_insecure_tls: bool = True
+    dashboard_host: str = "127.0.0.1"
+    dashboard_port: int = 8787
+
+
+class Playlist(BaseModel):
+    name: str
+    discord_id: str
+    playlist_id: str
+    username: str
+    password: str
+    current_dns: str
+
+
+class Secrets(BaseModel):
+    epgenius_api_key: str
+    discord_webhook_swaps: str
+    discord_webhook_alerts: str
+    epgenius_url: str = "https://epgenius.org/api/public/update_creds"
+
+
+class Paths(BaseModel):
+    root: Path
+    config_dir: Path
+    settings: Path
+    playlists: Path
+    urls: Path
+    env: Path
+
+
+class AppConfig(BaseModel):
+    paths: Paths
+    settings: Settings
+    secrets: Secrets
+    playlists: list[Playlist]
+    available_urls: list[str] = Field(default_factory=list)
+
+
+def _yaml() -> YAML:
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.default_flow_style = False
+    return yaml
+
+
+def _safe_yaml() -> YAML:
+    return YAML(typ="safe")
+
+
+def resolve_paths(root: Path | None = None) -> Paths:
+    base = Path(root) if root else Path.cwd()
+    config_dir = base / "config"
+    return Paths(
+        root=base,
+        config_dir=config_dir,
+        settings=config_dir / "settings.yaml",
+        playlists=config_dir / "playlists.yaml",
+        urls=config_dir / "urls.yaml",
+        env=base / ".env",
+    )
+
+
+def ensure_runtime_configs(paths: Paths) -> None:
+    """Create gitignored playlists.yaml / urls.yaml from examples on first run."""
+    pairs = (
+        (paths.playlists, paths.config_dir / "playlists.example.yaml"),
+        (paths.urls, paths.config_dir / "urls.example.yaml"),
+    )
+    for dest, example in pairs:
+        if not dest.exists() and example.exists():
+            shutil.copy(example, dest)
+
+
+def load_settings(path: Path) -> Settings:
+    data = _safe_yaml().load(path.read_text(encoding="utf-8")) or {}
+    return Settings.model_validate(data)
+
+
+def load_playlists(path: Path) -> list[Playlist]:
+    data = _safe_yaml().load(path.read_text(encoding="utf-8")) or {}
+    raw = data.get("playlists") or []
+    return [Playlist.model_validate(item) for item in raw]
+
+
+def load_available_urls(path: Path) -> list[str]:
+    data = _safe_yaml().load(path.read_text(encoding="utf-8")) or {}
+    urls = data.get("available") or []
+    return [str(url).strip() for url in urls if str(url).strip()]
+
+
+def load_secrets(env_path: Path) -> Secrets:
+    load_dotenv(env_path, override=False)
+    missing = [
+        name
+        for name in (
+            "EPGENIUS_API_KEY",
+            "DISCORD_WEBHOOK_SWAPS",
+            "DISCORD_WEBHOOK_ALERTS",
+        )
+        if not os.getenv(name)
+    ]
+    if missing:
+        joined = ", ".join(missing)
+        raise RuntimeError(f"Missing environment variables in {env_path}: {joined}")
+    return Secrets(
+        epgenius_api_key=os.environ["EPGENIUS_API_KEY"].strip(),
+        discord_webhook_swaps=os.environ["DISCORD_WEBHOOK_SWAPS"].strip(),
+        discord_webhook_alerts=os.environ["DISCORD_WEBHOOK_ALERTS"].strip(),
+        epgenius_url=os.getenv(
+            "EPGENIUS_URL", "https://epgenius.org/api/public/update_creds"
+        ).strip(),
+    )
+
+
+def load_config(root: Path | None = None) -> AppConfig:
+    paths = resolve_paths(root)
+    if not paths.settings.exists():
+        raise FileNotFoundError(f"Missing settings file: {paths.settings}")
+    ensure_runtime_configs(paths)
+    if not paths.playlists.exists():
+        raise FileNotFoundError(f"Missing playlists file: {paths.playlists}")
+    if not paths.urls.exists():
+        raise FileNotFoundError(f"Missing URLs file: {paths.urls}")
+    if not paths.env.exists():
+        raise FileNotFoundError(f"Missing .env file: {paths.env} (copy .env.example)")
+    return AppConfig(
+        paths=paths,
+        settings=load_settings(paths.settings),
+        secrets=load_secrets(paths.env),
+        playlists=load_playlists(paths.playlists),
+        available_urls=load_available_urls(paths.urls),
+    )
+
+
+def update_playlist_dns(playlists_path: Path, playlist_id: str, new_dns: str) -> None:
+    yaml = _yaml()
+    with playlists_path.open(encoding="utf-8") as handle:
+        data = yaml.load(handle)
+    found = False
+    for item in data.get("playlists") or []:
+        if str(item.get("playlist_id")) == str(playlist_id):
+            item["current_dns"] = new_dns
+            found = True
+    if not found:
+        raise KeyError(f"playlist_id {playlist_id!r} not found in {playlists_path}")
+    tmp = playlists_path.with_suffix(".yaml.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        yaml.dump(data, handle)
+    tmp.replace(playlists_path)
