@@ -26,17 +26,50 @@ copy config\urls.example.yaml config\urls.yaml
 
 Edit `.env` (API key and Discord webhooks), `config/playlists.yaml`, and `config/urls.yaml`. Do not commit those files.
 
-## Run
+## What to fill in for a dry run
+
+`.env` is already local (API key + both Discord webhooks). You still need real portal URLs:
+
+| File | Fields | Needed for |
+|------|--------|------------|
+| [`config/playlists.yaml`](config/playlists.yaml) | `name`, **`current_dns`** | URL checks, dashboard, failover preview |
+| [`config/playlists.yaml`](config/playlists.yaml) | `playlist_id`, `username`, `password`, `discord_id` | `test discord` and real swaps later |
+| [`config/urls.yaml`](config/urls.yaml) | `available` list of standby portal URLs | URL checks, failover preview, dashboard |
+
+`current_dns` is the live portal (host + optional port), e.g. `http://line.provider.com:8080`. Standby URLs in `urls.yaml` are the pool we would swap to. Leave example hosts in place only if you want to see guaranteed DNS failures.
+
+None of the dry-run commands call EPGenius or rewrite `current_dns`.
+
+## Dry-run commands
+
+From the repo root, after `pip install -e .`:
+
+```powershell
+python main.py check
+python main.py test urls
+python main.py test failover
+python main.py test discord
+python main.py test dashboard
+python main.py test dashboard --demo-down
+```
+
+| Command | What it does | Side effects |
+|---------|----------------|--------------|
+| `check` / `test urls` | DNS + TCP table for live and standby URLs, plus a this-cycle failover preview | None |
+| `test failover` | Same probes, then prints what **would** swap if the 3-failure threshold were already met | None |
+| `test discord` | Sends `[TEST]` messages to both webhooks (down, recovered, no standby, swap) | Discord only. No EPGenius. Swap test uses whatever username/password is in `playlists.yaml` |
+| `test dashboard` | Local UI at http://127.0.0.1:8787, live probes, red banners when URLs are down | None (no Discord, no swaps) |
+| `test dashboard --demo-down` | Same, plus a fake `http://dry-run-demo.invalid` live card so the down banner is visible even if every real URL is up | None |
+
+`python main.py --once` is still an alias for `check`.
+
+## Live run (not a dry run)
 
 ```powershell
 python main.py
 ```
 
-- Dashboard: [http://127.0.0.1:8787](http://127.0.0.1:8787) (localhost only)
-- One observe-only cycle (no swaps, no dashboard): `python main.py --once`
-- Checker only, no UI: `python main.py --no-dashboard`
-
-Leave example.com URLs in place only for a `--once` smoke test. A continuous run will treat those as down and can fire Discord alerts.
+That **will** swap via EPGenius after 3 consecutive failures. Do not use it until the dry runs look right.
 
 ## Config
 

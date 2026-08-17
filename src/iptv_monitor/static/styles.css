@@ -99,6 +99,43 @@ h2 {
   font-size: 12px;
 }
 
+.mode-pill {
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+}
+
+.alerts {
+  width: min(1200px, calc(100% - 40px));
+  margin: 16px auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alert {
+  border: 1px solid var(--down);
+  color: var(--down);
+  background: rgba(255, 107, 107, 0.08);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.alert.ok {
+  border-color: var(--up);
+  color: var(--up);
+  background: rgba(125, 255, 195, 0.08);
+}
+
+.alert.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: rgba(240, 193, 74, 0.08);
+}
+
 main {
   display: grid;
   grid-template-columns: 1fr 1fr;

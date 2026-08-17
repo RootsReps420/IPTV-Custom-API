@@ -5,7 +5,8 @@ const availCount = document.getElementById("avail-count");
 const playlistBody = document.getElementById("playlist-body");
 const lastCycle = document.getElementById("last-cycle");
 const intervalEl = document.getElementById("interval");
-const banner = document.getElementById("banner");
+const alertsEl = document.getElementById("alerts");
+const modePill = document.getElementById("mode-pill");
 
 function esc(value) {
   return String(value ?? "")
@@ -83,6 +84,33 @@ function renderPlaylists(items) {
     .join("");
 }
 
+function alertClass(text) {
+  const lower = text.toLowerCase();
+  if (lower.startsWith("dry run") || lower.includes("disabled")) {
+    return "alert warn";
+  }
+  if (lower.startsWith("all portal urls are up")) {
+    return "alert ok";
+  }
+  return "alert";
+}
+
+function renderAlerts(items, fallbackError) {
+  const messages = [...(items || [])];
+  if (fallbackError && !messages.includes(fallbackError)) {
+    messages.unshift(fallbackError);
+  }
+  if (!messages.length) {
+    alertsEl.hidden = true;
+    alertsEl.innerHTML = "";
+    return;
+  }
+  alertsEl.hidden = false;
+  alertsEl.innerHTML = messages
+    .map((text) => `<div class="${alertClass(text)}">${esc(text)}</div>`)
+    .join("");
+}
+
 async function refresh() {
   try {
     const response = await fetch("/api/status");
@@ -92,19 +120,14 @@ async function refresh() {
     const data = await response.json();
     lastCycle.textContent = fmtTime(data.last_cycle_at);
     intervalEl.textContent = `${data.check_interval_seconds}s`;
-    if (data.error) {
-      banner.hidden = false;
-      banner.textContent = data.error;
-    } else {
-      banner.hidden = true;
-      banner.textContent = "";
-    }
+    modePill.hidden = !data.dry_run;
+    renderAlerts(data.alerts, data.error);
     renderList(liveList, liveCount, data.live || [], "No live portal URLs yet.");
     renderList(availList, availCount, data.available || [], "No standby URLs in urls.yaml.");
     renderPlaylists(data.playlists || []);
   } catch (error) {
-    banner.hidden = false;
-    banner.textContent = `Dashboard cannot reach the monitor: ${error.message}`;
+    modePill.hidden = true;
+    renderAlerts([`Dashboard cannot reach the monitor: ${error.message}`]);
   }
 }
 

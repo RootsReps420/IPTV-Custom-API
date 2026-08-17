@@ -20,6 +20,8 @@ from iptv_monitor.notify import (
 
 logger = logging.getLogger("iptv_monitor.monitor")
 
+DEMO_DOWN_URL = "http://dry-run-demo.invalid"
+
 
 @dataclass
 class UrlStats:
@@ -30,13 +32,26 @@ class UrlStats:
 
 
 @dataclass
+class FailoverPlan:
+    failed_url: str
+    fail_reason: str | None
+    failures: int
+    threshold: int
+    playlists: list[Playlist]
+    candidate: str | None
+    status: str
+
+
+@dataclass
 class SharedState:
     last_cycle_at: datetime | None = None
     check_interval_seconds: int = 30
     live: list[dict[str, Any]] = field(default_factory=list)
     available: list[dict[str, Any]] = field(default_factory=list)
     playlists: list[dict[str, Any]] = field(default_factory=list)
+    alerts: list[str] = field(default_factory=list)
     error: str | None = None
+    dry_run: bool = False
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -45,7 +60,9 @@ class SharedState:
             "live": self.live,
             "available": self.available,
             "playlists": self.playlists,
+            "alerts": self.alerts,
             "error": self.error,
+            "dry_run": self.dry_run,
         }
 
 
@@ -90,6 +107,10 @@ class Monitor:
         self._last_results: dict[str, HealthResult] = {}
         self._last_live: set[str] = set()
         self._last_available: set[str] = set()
+        self._last_available_keys: list[str] = []
+        self._last_live_keys: list[str] = []
+        self._last_cfg: AppConfig | None = None
+        self.last_plans: list[FailoverPlan] = []
 
     def _stat(self, url: str) -> UrlStats:
         if url not in self.stats:
@@ -137,14 +158,21 @@ class Monitor:
                 await self._emit_transition(cfg, url, role, result, stats)
             stats.last_healthy = result.healthy
 
+        self._last_cfg = cfg
+        self._last_results = results
+        self._last_live_keys = live_keys
+        self._last_available_keys = available_keys
+        self.last_plans = self._build_plans(
+            cfg, results, live_keys, available_keys, assume_threshold=False
+        )
+
         if swap:
-            await self._failover(cfg, results, live_keys, available_keys)
+            await self._execute_plans(cfg, self.last_plans)
             live_keys = [normalize_url(item.current_dns) for item in cfg.playlists]
             live_set = set(live_keys)
 
         current = live_set | available_set
         self.stats = {url: stats for url, stats in self.stats.items() if url in current}
-        self._last_results = results
         self._last_live = live_set
         self._last_available = available_set
         self._publish_snapshot(cfg, results, live_set, available_set)
@@ -181,15 +209,18 @@ class Monitor:
         elif not previous and result.healthy:
             await notify_url_up(cfg.secrets, url, role)
 
-    async def _failover(
+    def _build_plans(
         self,
         cfg: AppConfig,
         results: dict[str, HealthResult],
         live_keys: list[str],
         available_keys: list[str],
-    ) -> None:
+        *,
+        assume_threshold: bool = False,
+    ) -> list[FailoverPlan]:
         threshold = cfg.settings.consecutive_failures_to_swap
         min_successes = cfg.settings.min_consecutive_successes_for_swap
+        plans: list[FailoverPlan] = []
         seen: set[str] = set()
         for live_url in live_keys:
             if live_url in seen:
@@ -198,16 +229,7 @@ class Monitor:
             result = results.get(live_url)
             if result is None or result.healthy:
                 continue
-            if self._stat(live_url).consecutive_failures < threshold:
-                logger.info(
-                    "Live URL %s is down (%s), %s/%s failures",
-                    live_url,
-                    result.fail_reason,
-                    self._stat(live_url).consecutive_failures,
-                    threshold,
-                )
-                continue
-
+            failures = self._stat(live_url).consecutive_failures
             affected = [
                 playlist
                 for playlist in cfg.playlists
@@ -216,13 +238,78 @@ class Monitor:
             candidate = self._pick_candidate(
                 available_keys, live_url, results, min_successes
             )
-            if not candidate:
-                logger.warning("No healthy standby for failed live URL %s", live_url)
-                await notify_no_standby(cfg.secrets, live_url, affected)
-                continue
+            ready = assume_threshold or failures >= threshold
+            if not ready:
+                status = "waiting"
+            elif candidate:
+                status = "swap"
+            else:
+                status = "no_standby"
+            plans.append(
+                FailoverPlan(
+                    failed_url=live_url,
+                    fail_reason=result.fail_reason,
+                    failures=failures,
+                    threshold=threshold,
+                    playlists=affected,
+                    candidate=candidate,
+                    status=status,
+                )
+            )
+        return plans
 
-            for playlist in affected:
-                await self._swap_playlist(cfg, playlist, live_url, candidate)
+    def simulated_failover_plans(self) -> list[FailoverPlan]:
+        if self._last_cfg is None:
+            return []
+        return self._build_plans(
+            self._last_cfg,
+            self._last_results,
+            self._last_live_keys,
+            self._last_available_keys,
+            assume_threshold=True,
+        )
+
+    def format_failover_preview(self, plans: list[FailoverPlan] | None = None) -> str:
+        items = plans if plans is not None else self.last_plans
+        if not items:
+            return "No live URLs are down — nothing to fail over."
+        lines = []
+        for plan in items:
+            names = ", ".join(item.name for item in plan.playlists) or "(none)"
+            if plan.status == "waiting":
+                lines.append(
+                    f"  WAIT  {plan.failed_url}  {plan.fail_reason or 'down'}  "
+                    f"{plan.failures}/{plan.threshold} failures  playlists: {names}"
+                )
+            elif plan.status == "no_standby":
+                lines.append(
+                    f"  SKIP  {plan.failed_url}  no healthy standby  playlists: {names}"
+                )
+            else:
+                lines.append(
+                    f"  SWAP  {plan.failed_url} -> {plan.candidate}  playlists: {names}"
+                )
+        return "\n".join(lines)
+
+    async def _execute_plans(self, cfg: AppConfig, plans: list[FailoverPlan]) -> None:
+        for plan in plans:
+            if plan.status == "waiting":
+                logger.info(
+                    "Live URL %s is down (%s), %s/%s failures",
+                    plan.failed_url,
+                    plan.fail_reason,
+                    plan.failures,
+                    plan.threshold,
+                )
+                continue
+            if plan.status == "no_standby":
+                logger.warning("No healthy standby for failed live URL %s", plan.failed_url)
+                await notify_no_standby(cfg.secrets, plan.failed_url, plan.playlists)
+                continue
+            if plan.candidate is None:
+                continue
+            for playlist in plan.playlists:
+                await self._swap_playlist(cfg, playlist, plan.failed_url, plan.candidate)
 
     def _pick_candidate(
         self,
@@ -318,6 +405,51 @@ class Monitor:
             }
             for playlist in cfg.playlists
         ]
+        self._refresh_alerts()
+
+    def _refresh_alerts(self) -> None:
+        alerts: list[str] = []
+        if self.shared.dry_run:
+            alerts.append("DRY RUN — EPGenius swaps and Discord alerts are disabled.")
+        if self.shared.error:
+            alerts.append(self.shared.error)
+        down_live = [row["url"] for row in self.shared.live if not row.get("healthy")]
+        down_avail = [row["url"] for row in self.shared.available if not row.get("healthy")]
+        if down_live:
+            alerts.append(f"{len(down_live)} live URL(s) down: {', '.join(down_live)}")
+        if down_avail:
+            alerts.append(f"{len(down_avail)} standby URL(s) down: {', '.join(down_avail)}")
+        if self.shared.last_cycle_at and not down_live and not down_avail and not self.shared.error:
+            alerts.append("All portal URLs are up.")
+        self.shared.alerts = alerts
+
+    def inject_demo_down(self) -> None:
+        """Force a clearly fake down live URL so the dashboard banner can be reviewed."""
+        stats = self._stat(DEMO_DOWN_URL)
+        stats.consecutive_failures = max(stats.consecutive_failures, 3)
+        demo_result = HealthResult(
+            url=DEMO_DOWN_URL,
+            host="dry-run-demo.invalid",
+            port=80,
+            dns_ok=False,
+            tcp_ok=False,
+            http_ok=None,
+            fail_reason="demo_forced_down",
+            healthy=False,
+        )
+        demo_row = _url_view(DEMO_DOWN_URL, "live", demo_result, stats, ["(demo)"])
+        self.shared.live = [demo_row, *self.shared.live]
+        self.shared.playlists = [
+            {
+                "name": "(demo)",
+                "playlist_id": "dry-run",
+                "username": "demo",
+                "current_dns": DEMO_DOWN_URL,
+                "healthy": False,
+            },
+            *self.shared.playlists,
+        ]
+        self._refresh_alerts()
 
     def format_table(self) -> str:
         all_urls = list(

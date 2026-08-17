@@ -1,6 +1,7 @@
 # Copy to urls.yaml (gitignored). Shared standby pool.
-# These are probed every cycle; only currently healthy ones are swap candidates.
+# Replace these with real portal URLs you could swap to.
+# They are probed every cycle; only currently healthy ones are swap candidates.
 
 available:
-  - "http://standby1.example.com"
-  - "http://standby2.example.com:8080"
+  - "http://your-standby-1.example"
+  - "http://your-standby-2.example:8080"

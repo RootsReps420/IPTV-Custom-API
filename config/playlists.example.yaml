@@ -1,5 +1,7 @@
 # Copy to playlists.yaml (gitignored) and fill in real values.
-# current_dns is the live portal URL for that playlist.
+#
+# For a URL-check dry run you only need current_dns (and name).
+# playlist_id / username / password are required for Discord swap tests and live failovers.
 
 playlists:
   - name: account-1
@@ -7,4 +9,4 @@ playlists:
     playlist_id: "your-playlist-id"
     username: "your-username"
     password: "your-password"
-    current_dns: "http://live.example.com:8080"
+    current_dns: "http://your-live-portal.example:8080"
