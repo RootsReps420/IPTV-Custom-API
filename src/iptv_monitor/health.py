@@ -224,7 +224,11 @@ async def check_urls(urls: list[str], settings: Settings) -> dict[str, HealthRes
     for raw, result in zip(unique, results, strict=True):
         if isinstance(result, Exception):
             logger.exception("Health check crashed for %s: %s", raw, result)
-            mapped[raw] = HealthResult(
+            try:
+                key = normalize_url(raw)
+            except ValueError:
+                key = raw
+            mapped[key] = HealthResult(
                 url=raw,
                 host="",
                 port=0,
