@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=2" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -17,13 +17,25 @@
       <h1>Portal Monitor</h1>
     </div>
     <div class="meta">
-      <div class="meta-item">
-        <span class="label">Last cycle</span>
+      <div class="stat">
+        <span class="label">Live</span>
+        <span id="stat-live">—</span>
+      </div>
+      <div class="stat">
+        <span class="label">Standby</span>
+        <span id="stat-avail">—</span>
+      </div>
+      <div class="stat">
+        <span class="label">Playlists</span>
+        <span id="stat-playlists">—</span>
+      </div>
+      <div class="stat">
+        <span class="label">Last check</span>
         <span id="last-cycle">waiting…</span>
       </div>
-      <div class="meta-item">
-        <span class="label">Interval</span>
-        <span id="interval">—</span>
+      <div class="stat">
+        <span class="label">Next check</span>
+        <span id="next-check">—</span>
       </div>
       <span id="mode-pill" class="mode-pill" hidden>dry run</span>
     </div>
@@ -67,6 +79,13 @@
     </div>
   </section>
 
-  <script src="/static/app.js"></script>
+  <section class="events">
+    <div class="section-head">
+      <h2>Recent events</h2>
+    </div>
+    <ol id="event-list" class="event-list"></ol>
+  </section>
+
+  <script src="/static/app.js?v=2"></script>
 </body>
 </html>

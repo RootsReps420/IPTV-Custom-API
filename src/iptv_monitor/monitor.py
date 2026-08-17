@@ -50,10 +50,24 @@ class SharedState:
     available: list[dict[str, Any]] = field(default_factory=list)
     playlists: list[dict[str, Any]] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
     dry_run: bool = False
 
+    def add_event(self, kind: str, message: str) -> None:
+        self.events.insert(
+            0,
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "kind": kind,
+                "message": message,
+            },
+        )
+        self.events = self.events[:40]
+
     def snapshot(self) -> dict[str, Any]:
+        live_up = sum(1 for row in self.live if row.get("healthy"))
+        avail_up = sum(1 for row in self.available if row.get("healthy"))
         return {
             "last_cycle_at": self.last_cycle_at.isoformat() if self.last_cycle_at else None,
             "check_interval_seconds": self.check_interval_seconds,
@@ -61,8 +75,16 @@ class SharedState:
             "available": self.available,
             "playlists": self.playlists,
             "alerts": self.alerts,
+            "events": self.events,
             "error": self.error,
             "dry_run": self.dry_run,
+            "counts": {
+                "live_up": live_up,
+                "live_total": len(self.live),
+                "available_up": avail_up,
+                "available_total": len(self.available),
+                "playlists": len(self.playlists),
+            },
         }
 
 
@@ -198,15 +220,24 @@ class Monitor:
         previous = stats.last_healthy
         if previous is None:
             if not result.healthy:
+                self.shared.add_event(
+                    "down",
+                    f"{role} {url} down ({result.fail_reason or 'unknown'})",
+                )
                 await notify_url_down(
                     cfg.secrets, url, role, result.fail_reason, result.error_detail
                 )
             return
         if previous and not result.healthy:
+            self.shared.add_event(
+                "down",
+                f"{role} {url} down ({result.fail_reason or 'unknown'})",
+            )
             await notify_url_down(
                 cfg.secrets, url, role, result.fail_reason, result.error_detail
             )
         elif not previous and result.healthy:
+            self.shared.add_event("up", f"{role} {url} recovered")
             await notify_url_up(cfg.secrets, url, role)
 
     def _build_plans(
@@ -304,6 +335,10 @@ class Monitor:
                 continue
             if plan.status == "no_standby":
                 logger.warning("No healthy standby for failed live URL %s", plan.failed_url)
+                self.shared.add_event(
+                    "warn",
+                    f"No healthy standby for {plan.failed_url}",
+                )
                 await notify_no_standby(cfg.secrets, plan.failed_url, plan.playlists)
                 continue
             if plan.candidate is None:
@@ -343,6 +378,10 @@ class Monitor:
             await update_creds(cfg.secrets, playlist, new_url)
         except EpgeniusError as exc:
             logger.error("EPGenius swap failed for %s: %s", playlist.name, exc)
+            self.shared.add_event(
+                "down",
+                f"EPGenius failed for {playlist.name}: {exc}",
+            )
             await notify_epgenius_error(cfg.secrets, playlist, old_url, new_url, str(exc))
             return
         try:
@@ -351,6 +390,7 @@ class Monitor:
             logger.exception("API succeeded but failed to persist current_dns for %s", playlist.name)
         playlist.current_dns = new_url
         logger.info("Swapped %s from %s to %s", playlist.name, old_url, new_url)
+        self.shared.add_event("swap", f"{playlist.name}: {old_url} -> {new_url}")
         await notify_swap(cfg.secrets, playlist, old_url, new_url)
 
     def _publish_snapshot(

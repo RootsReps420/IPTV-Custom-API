@@ -4,9 +4,15 @@ const liveCount = document.getElementById("live-count");
 const availCount = document.getElementById("avail-count");
 const playlistBody = document.getElementById("playlist-body");
 const lastCycle = document.getElementById("last-cycle");
-const intervalEl = document.getElementById("interval");
+const nextCheck = document.getElementById("next-check");
 const alertsEl = document.getElementById("alerts");
 const modePill = document.getElementById("mode-pill");
+const eventList = document.getElementById("event-list");
+const statLive = document.getElementById("stat-live");
+const statAvail = document.getElementById("stat-avail");
+const statPlaylists = document.getElementById("stat-playlists");
+
+let latest = null;
 
 function esc(value) {
   return String(value ?? "")
@@ -20,7 +26,15 @@ function fmtTime(iso) {
   if (!iso) {
     return "waiting…";
   }
-  return new Date(iso).toLocaleString();
+  return new Date(iso).toLocaleTimeString();
+}
+
+function secondsUntilNext(iso, interval) {
+  if (!iso || !interval) {
+    return null;
+  }
+  const due = new Date(iso).getTime() + interval * 1000;
+  return Math.max(0, Math.ceil((due - Date.now()) / 1000));
 }
 
 function flag(label, ok) {
@@ -34,6 +48,9 @@ function card(item) {
   const reason = item.fail_reason ? `<span>reason ${esc(item.fail_reason)}</span>` : "";
   const ips = item.resolved_ips?.length ? `<span>ip ${esc(item.resolved_ips.join(", "))}</span>` : "";
   const playlists = item.playlists?.length ? `<span>playlists ${esc(item.playlists.join(", "))}</span>` : "";
+  const fails = item.healthy
+    ? `<span>up x${item.consecutive_successes || 0}</span>`
+    : `<span>fails ${item.consecutive_failures}</span>`;
   return `
     <article class="card ${state}">
       <div class="card-top">
@@ -43,7 +60,7 @@ function card(item) {
       <div class="flags">
         ${flag("dns", item.dns_ok)}
         ${flag("tcp", item.tcp_ok)}
-        <span>fails ${item.consecutive_failures}</span>
+        ${fails}
         ${reason}
         ${ips}
         ${playlists}
@@ -64,7 +81,7 @@ function renderList(el, countEl, items, emptyText) {
 
 function renderPlaylists(items) {
   if (!items.length) {
-    playlistBody.innerHTML = `<tr><td colspan="5">No playlists loaded. Copy config/playlists.example.yaml to config/playlists.yaml.</td></tr>`;
+    playlistBody.innerHTML = `<tr><td colspan="5">No playlists loaded. Add entries in config/playlists.yaml — they appear within one check cycle.</td></tr>`;
     return;
   }
   playlistBody.innerHTML = items
@@ -79,6 +96,25 @@ function renderPlaylists(items) {
           <td>${esc(item.current_dns)}</td>
           <td class="${cls}">${label}</td>
         </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderEvents(items) {
+  if (!items || !items.length) {
+    eventList.innerHTML = `<li class="empty-events">No events yet this process. Downs, recoveries, and swaps show up here.</li>`;
+    return;
+  }
+  eventList.innerHTML = items
+    .map((item) => {
+      const kind = esc(item.kind || "info");
+      return `
+        <li>
+          <span class="event-time">${esc(fmtTime(item.ts))}</span>
+          <span class="event-kind ${kind}">${kind}</span>
+          <span>${esc(item.message)}</span>
+        </li>
       `;
     })
     .join("");
@@ -111,6 +147,14 @@ function renderAlerts(items, fallbackError) {
     .join("");
 }
 
+function tickCountdown() {
+  if (!latest) {
+    return;
+  }
+  const left = secondsUntilNext(latest.last_cycle_at, latest.check_interval_seconds);
+  nextCheck.textContent = left === null ? "—" : `${left}s`;
+}
+
 async function refresh() {
   try {
     const response = await fetch("/api/status");
@@ -118,18 +162,27 @@ async function refresh() {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
+    latest = data;
+    const counts = data.counts || {};
     lastCycle.textContent = fmtTime(data.last_cycle_at);
-    intervalEl.textContent = `${data.check_interval_seconds}s`;
+    statLive.textContent = `${counts.live_up ?? "—"}/${counts.live_total ?? "—"} up`;
+    statAvail.textContent = `${counts.available_up ?? "—"}/${counts.available_total ?? "—"} up`;
+    statPlaylists.textContent = String(counts.playlists ?? (data.playlists || []).length);
     modePill.hidden = !data.dry_run;
+    tickCountdown();
     renderAlerts(data.alerts, data.error);
     renderList(liveList, liveCount, data.live || [], "No live portal URLs yet.");
     renderList(availList, availCount, data.available || [], "No standby URLs in urls.yaml.");
     renderPlaylists(data.playlists || []);
+    renderEvents(data.events || []);
   } catch (error) {
     modePill.hidden = true;
+    latest = null;
+    nextCheck.textContent = "—";
     renderAlerts([`Dashboard cannot reach the monitor: ${error.message}`]);
   }
 }
 
 refresh();
 setInterval(refresh, 4000);
+setInterval(tickCountdown, 1000);
