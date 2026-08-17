@@ -84,6 +84,13 @@ class SharedState:
                 "available_up": avail_up,
                 "available_total": len(self.available),
                 "playlists": len(self.playlists),
+                "cloudflare": len(
+                    {
+                        row["url"]
+                        for row in [*self.live, *self.available]
+                        if row.get("cloudflare")
+                    }
+                ),
             },
         }
 
@@ -114,6 +121,16 @@ def _url_view(
         "http_ok": result.http_ok if result else None,
         "fail_reason": result.fail_reason if result else "not_checked",
         "resolved_ips": list(result.resolved_ips) if result else [],
+        "nameserver": result.nameserver if result else None,
+        "nameserver_hosts": list(result.nameserver_hosts) if result else [],
+        "cloudflare_proxied": bool(result.cloudflare_proxied) if result else False,
+        "cloudflare": bool(
+            result
+            and (
+                result.cloudflare_proxied
+                or (result.nameserver or "") == "cloudflare"
+            )
+        ),
         "consecutive_failures": stats.consecutive_failures,
         "consecutive_successes": stats.consecutive_successes,
         "last_checked": result.checked_at.isoformat() if result else None,
@@ -360,6 +377,8 @@ class Monitor:
             result = results.get(url)
             if result is None or not result.healthy:
                 continue
+            if result.cloudflare_proxied:
+                continue
             healthy.append(url)
         preferred = [
             url for url in healthy if self._stat(url).consecutive_successes >= min_successes
@@ -432,19 +451,28 @@ class Monitor:
         self.shared.last_cycle_at = datetime.now(timezone.utc)
         self.shared.live = live_rows
         self.shared.available = available_rows
-        self.shared.playlists = [
-            {
-                "name": playlist.name,
-                "playlist_id": playlist.playlist_id,
-                "username": playlist.username,
-                "current_dns": normalize_url(playlist.current_dns),
-                "healthy": bool(
-                    results.get(normalize_url(playlist.current_dns))
-                    and results[normalize_url(playlist.current_dns)].healthy
-                ),
-            }
-            for playlist in cfg.playlists
-        ]
+        self.shared.playlists = []
+        for playlist in cfg.playlists:
+            dns_key = normalize_url(playlist.current_dns)
+            result = results.get(dns_key)
+            self.shared.playlists.append(
+                {
+                    "name": playlist.name,
+                    "playlist_id": playlist.playlist_id,
+                    "username": playlist.username,
+                    "current_dns": dns_key,
+                    "healthy": bool(result and result.healthy),
+                    "nameserver": result.nameserver if result else None,
+                    "cloudflare_proxied": bool(result.cloudflare_proxied) if result else False,
+                    "cloudflare": bool(
+                        result
+                        and (
+                            result.cloudflare_proxied
+                            or (result.nameserver or "") == "cloudflare"
+                        )
+                    ),
+                }
+            )
         self._refresh_alerts()
 
     def _refresh_alerts(self) -> None:
@@ -459,8 +487,32 @@ class Monitor:
             alerts.append(f"{len(down_live)} live URL(s) down: {', '.join(down_live)}")
         if down_avail:
             alerts.append(f"{len(down_avail)} standby URL(s) down: {', '.join(down_avail)}")
-        if self.shared.last_cycle_at and not down_live and not down_avail and not self.shared.error:
+        cf_urls = [
+            row["url"]
+            for row in [*self.shared.live, *self.shared.available]
+            if row.get("cloudflare")
+        ]
+        # Deduplicate while preserving order
+        seen_cf: set[str] = set()
+        cf_unique = []
+        for url in cf_urls:
+            if url not in seen_cf:
+                seen_cf.add(url)
+                cf_unique.append(url)
+        if cf_unique:
+            alerts.append(
+                f"{len(cf_unique)} URL(s) on Cloudflare (often blocks IPTV): {', '.join(cf_unique)}"
+            )
+        all_clear = (
+            self.shared.last_cycle_at
+            and not down_live
+            and not down_avail
+            and not self.shared.error
+        )
+        if all_clear and not cf_unique:
             alerts.append("All portal URLs are up.")
+        elif all_clear:
+            alerts.append("All portal URLs are up, but some resolve through Cloudflare.")
         self.shared.alerts = alerts
 
     def inject_demo_down(self) -> None:
@@ -486,6 +538,9 @@ class Monitor:
                 "username": "demo",
                 "current_dns": DEMO_DOWN_URL,
                 "healthy": False,
+                "nameserver": None,
+                "cloudflare_proxied": False,
+                "cloudflare": False,
             },
             *self.shared.playlists,
         ]
@@ -501,17 +556,20 @@ class Monitor:
         by_url = {row["url"]: row for row in self.shared.available}
         by_url.update({row["url"]: row for row in self.shared.live})
         lines = [
-            f"{'URL':<48} {'ROLE':<10} {'DNS':<6} {'TCP':<6} {'FAILS':<6} {'REASON'}",
-            "-" * 90,
+            f"{'URL':<48} {'ROLE':<10} {'DNS':<6} {'TCP':<6} {'NS':<12} {'FAILS':<6} {'REASON'}",
+            "-" * 108,
         ]
         for url in all_urls:
             row = by_url.get(url)
             if not row:
                 continue
+            ns = row.get("nameserver") or ""
+            if row.get("cloudflare_proxied"):
+                ns = f"{ns}+proxy" if ns else "cf-proxy"
             lines.append(
                 f"{row['url']:<48} {row['role']:<10} "
                 f"{_flag(row['dns_ok']):<6} {_flag(row['tcp_ok']):<6} "
-                f"{row['consecutive_failures']:<6} {row['fail_reason'] or ''}"
+                f"{ns:<12} {row['consecutive_failures']:<6} {row['fail_reason'] or ''}"
             )
         if len(lines) == 2:
             lines.append("(no URLs checked)")

@@ -43,6 +43,29 @@ function flag(label, ok) {
   return `<span class="flag ${cls}">${label} ${value}</span>`;
 }
 
+function nsLabel(item) {
+  if (item.cloudflare_proxied) {
+    return "Cloudflare proxy";
+  }
+  if (item.cloudflare) {
+    return "Cloudflare NS";
+  }
+  if (item.nameserver) {
+    return `ns ${item.nameserver}`;
+  }
+  return "";
+}
+
+function nsBadge(item) {
+  const label = nsLabel(item);
+  if (!label) {
+    return "";
+  }
+  const title = (item.nameserver_hosts || []).join(", ");
+  const cls = item.cloudflare ? "pill cf" : "pill ns";
+  return `<span class="${cls}" title="${esc(title)}">${esc(label)}</span>`;
+}
+
 function card(item) {
   const state = item.healthy ? "up" : "down";
   const reason = item.fail_reason ? `<span>reason ${esc(item.fail_reason)}</span>` : "";
@@ -52,10 +75,13 @@ function card(item) {
     ? `<span>up x${item.consecutive_successes || 0}</span>`
     : `<span>fails ${item.consecutive_failures}</span>`;
   return `
-    <article class="card ${state}">
+    <article class="card ${state}${item.cloudflare ? " cf" : ""}">
       <div class="card-top">
         <div class="url">${esc(item.url)}</div>
-        <span class="pill ${state}">${state}</span>
+        <div class="pills">
+          ${nsBadge(item)}
+          <span class="pill ${state}">${state}</span>
+        </div>
       </div>
       <div class="flags">
         ${flag("dns", item.dns_ok)}
@@ -85,19 +111,22 @@ function renderPlaylists(items) {
     playlistCount.textContent = items.length ? `${items.length} loaded` : "none";
   }
   if (!items.length) {
-    playlistBody.innerHTML = `<tr><td colspan="5">No playlists loaded. Add entries in config/playlists.yaml — they appear within one check cycle.</td></tr>`;
+    playlistBody.innerHTML = `<tr><td colspan="6">No playlists loaded. Add entries in config/playlists.yaml — they appear within one check cycle.</td></tr>`;
     return;
   }
   playlistBody.innerHTML = items
     .map((item) => {
       const cls = item.healthy ? "status-up" : "status-down";
       const label = item.healthy ? "up" : "down";
+      const ns = nsLabel(item) || "—";
+      const nsCls = item.cloudflare ? "status-warn" : "";
       return `
         <tr>
           <td>${esc(item.name)}</td>
           <td>${esc(item.playlist_id)}</td>
           <td>${esc(item.username)}</td>
           <td>${esc(item.current_dns)}</td>
+          <td class="${nsCls}">${esc(ns)}</td>
           <td class="${cls}">${label}</td>
         </tr>
       `;
@@ -127,6 +156,9 @@ function renderEvents(items) {
 function alertClass(text) {
   const lower = text.toLowerCase();
   if (lower.startsWith("dry run") || lower.includes("disabled")) {
+    return "alert warn";
+  }
+  if (lower.includes("cloudflare")) {
     return "alert warn";
   }
   if (lower.startsWith("all portal urls are up")) {

@@ -13,6 +13,7 @@ import dns.resolver
 import httpx
 
 from iptv_monitor.config import Settings
+from iptv_monitor.nameserver import classify_ns_hosts, ip_is_cloudflare, lookup_ns_hosts
 
 logger = logging.getLogger("iptv_monitor.health")
 
@@ -26,6 +27,9 @@ class HealthResult:
     tcp_ok: bool
     http_ok: bool | None
     resolved_ips: list[str] = field(default_factory=list)
+    nameserver: str | None = None
+    nameserver_hosts: list[str] = field(default_factory=list)
+    cloudflare_proxied: bool = False
     fail_reason: str | None = None
     healthy: bool = False
     checked_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -164,31 +168,49 @@ async def check_url(raw_url: str, settings: Settings) -> HealthResult:
     resolved_ips: list[str] = []
     fail_reason: str | None = None
     error_detail: str | None = None
+    ns_task = None
+    if host and not _is_ip(host):
+        ns_task = asyncio.create_task(lookup_ns_hosts(host, settings.dns_timeout_seconds))
 
-    if settings.dns_check_enabled:
-        dns_ok, resolved_ips, fail_reason, error_detail = await _resolve_dns(
-            host, settings.dns_timeout_seconds
-        )
-    elif _is_ip(host):
-        resolved_ips = [host]
+    try:
+        if settings.dns_check_enabled:
+            dns_ok, resolved_ips, fail_reason, error_detail = await _resolve_dns(
+                host, settings.dns_timeout_seconds
+            )
+        elif _is_ip(host):
+            resolved_ips = [host]
 
-    if fail_reason is not None:
-        tcp_ok = False
-    elif settings.tcp_check_enabled:
-        tcp_ok, tcp_reason, tcp_detail = await _check_tcp(
-            resolved_ips, host, port, settings.tcp_timeout_seconds
-        )
-        if not tcp_ok:
-            fail_reason = tcp_reason
-            error_detail = tcp_detail
+        if fail_reason is not None:
+            tcp_ok = False
+        elif settings.tcp_check_enabled:
+            tcp_ok, tcp_reason, tcp_detail = await _check_tcp(
+                resolved_ips, host, port, settings.tcp_timeout_seconds
+            )
+            if not tcp_ok:
+                fail_reason = tcp_reason
+                error_detail = tcp_detail
 
-    if fail_reason is None and settings.http_check_enabled:
-        http_ok, http_reason, http_detail = await _check_http(
-            url, settings.http_timeout_seconds, settings.allow_insecure_tls
-        )
-        if not http_ok:
-            fail_reason = http_reason
-            error_detail = http_detail
+        if fail_reason is None and settings.http_check_enabled:
+            http_ok, http_reason, http_detail = await _check_http(
+                url, settings.http_timeout_seconds, settings.allow_insecure_tls
+            )
+            if not http_ok:
+                fail_reason = http_reason
+                error_detail = http_detail
+    finally:
+        nameserver_hosts: list[str] = []
+        if ns_task is not None:
+            try:
+                nameserver_hosts = await ns_task
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("NS lookup failed for %s: %s", host, exc)
+
+    nameserver = classify_ns_hosts(nameserver_hosts)
+    cloudflare_proxied = any(ip_is_cloudflare(ip) for ip in resolved_ips)
+    if cloudflare_proxied and nameserver is None:
+        nameserver = "cloudflare"
 
     return HealthResult(
         url=url,
@@ -198,6 +220,9 @@ async def check_url(raw_url: str, settings: Settings) -> HealthResult:
         tcp_ok=tcp_ok,
         http_ok=http_ok,
         resolved_ips=resolved_ips,
+        nameserver=nameserver,
+        nameserver_hosts=nameserver_hosts,
+        cloudflare_proxied=cloudflare_proxied,
         fail_reason=fail_reason,
         healthy=fail_reason is None,
         error_detail=error_detail,

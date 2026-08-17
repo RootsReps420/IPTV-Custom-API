@@ -188,6 +188,14 @@ h2 {
   border-left-color: var(--down);
 }
 
+.card.cf {
+  border-left-color: var(--warn);
+}
+
+.card.cf.down {
+  border-left-color: var(--down);
+}
+
 .card-top {
   display: flex;
   justify-content: space-between;
@@ -215,6 +223,25 @@ h2 {
 
 .pill.down {
   color: var(--down);
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.pill.cf {
+  color: var(--warn);
+}
+
+.pill.ns {
+  color: var(--muted);
+}
+
+.status-warn {
+  color: var(--warn);
 }
 
 .flags {
