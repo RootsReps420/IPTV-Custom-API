@@ -1,5 +1,5 @@
 # Copy to urls.yaml (gitignored). Shared standby pool.
-# Each URL is probed every cycle. Only currently healthy, non-Cloudflare-proxied hosts are swap candidates.
+# Each URL is probed every cycle. Swap picks a healthy host: no Cloudflare first, then CF NS, then CF proxy.
 
 available:
   - "http://your-standby-1.example"

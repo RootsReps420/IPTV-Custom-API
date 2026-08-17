@@ -50,8 +50,8 @@ Each hostname also gets a nameserver lookup (walks `host` → parent zone for NS
 
 The dashboard badge is **informational** (no top banner):
 
-- **Cloudflare proxy** — orange-cloud / anycast IP. Cloudflare’s HTTP proxy does not pass arbitrary UDP; it can also WAF-block IPTV. These hosts are **not** used as swap targets.
-- **Cloudflare NS** — domain uses `*.ns.cloudflare.com` (those first-name hosts are real Cloudflare nameservers) but the A record is not in the proxy ranges (grey-cloud / origin IP).
+- **Cloudflare proxy** — orange-cloud / anycast IP. Last-choice swap target (most likely to block streams).
+- **Cloudflare NS** — domain uses `*.ns.cloudflare.com` but the A record is origin (grey-cloud). Second-choice swap target.
 - **ns aws / godaddy / …** — other DNS hosts.
 
 This flag does not by itself mark a URL down. A Cloudflare-proxied host can still pass DNS, TCP, and HTTP MPEG-TS.
@@ -61,9 +61,9 @@ This flag does not by itself mark a URL down. A Cloudflare-proxied host can stil
 When a live URL is unhealthy:
 
 - **1st and 2nd** consecutive failures: wait (Discord “down” on the first transition).
-- **3rd**: pick the first standby that is healthy **this cycle**, is not the failed URL, and is **not Cloudflare-proxied**. Prefer standbys with at least 2 consecutive successes.
+- **3rd**: pick a standby that is healthy **this cycle** and is not the failed URL, in this order: no Cloudflare → Cloudflare NS only → Cloudflare proxy. Prefer standbys with at least 2 consecutive successes within that group.
 - Call EPGenius `POST /api/public/update_creds` with the playlist id, new DNS, username, and password.
-- On success, write the new URL into `playlists.yaml` `current_dns`.
+- On success, write the new URL into `playlists.yaml` `current_dns`, update the in-memory playlist, and refresh the dashboard (playlists table + Current DNS) on that same cycle.
 - If no eligible standby exists, Discord gets “No healthy standby” and EPGenius is not called.
 
 ## Dashboard

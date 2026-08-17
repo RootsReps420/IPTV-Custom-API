@@ -71,9 +71,10 @@
         <strong>This is the more likely block.</strong>
         Cloudflare can 403, challenge, or TOS-disable IPTV while DNS and TCP still look fine.
         We have already seen that on a proxied host: <code>player_api.php</code> returned HTTP 403
-        with <code>server: cloudflare</code>. Failover will not swap <em>onto</em> a proxied standby.
-        If a live card is still UP, the stream is getting through <em>right now</em> — treat it as
-        fragile, not preferred.
+        with <code>server: cloudflare</code>.
+        Failover will still use a proxied standby if nothing better is healthy, but only as a last
+        resort after origin hosts and Cloudflare-NS-only hosts. If a live card is still UP, the
+        stream is getting through <em>right now</em> — treat it as fragile, not preferred.
       </p>
     </article>
 

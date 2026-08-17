@@ -373,22 +373,32 @@ class Monitor:
         results: dict[str, HealthResult],
         min_successes: int,
     ) -> str | None:
-        healthy: list[str] = []
+        """Pick a healthy standby. Prefer no Cloudflare, then CF NS, then CF proxy last."""
+        # 0 = no Cloudflare, 1 = Cloudflare nameservers only, 2 = orange-cloud proxy
+        buckets: list[list[str]] = [[], [], []]
         for url in available_keys:
             if url == failed_url:
                 continue
             result = results.get(url)
             if result is None or not result.healthy:
                 continue
-            # Orange-cloud hosts stay in the pool for display, but we will not swap onto them.
             if result.cloudflare_proxied:
-                continue
-            healthy.append(url)
-        preferred = [
-            url for url in healthy if self._stat(url).consecutive_successes >= min_successes
-        ]
-        pool = preferred or healthy
-        return pool[0] if pool else None
+                tier = 2
+            elif (result.nameserver or "") == "cloudflare":
+                tier = 1
+            else:
+                tier = 0
+            buckets[tier].append(url)
+
+        for tier, bucket in enumerate(buckets):
+            preferred = [
+                url for url in bucket if self._stat(url).consecutive_successes >= min_successes
+            ]
+            pool = preferred or bucket
+            if pool:
+                logger.info("Standby candidate %s (preference %s)", pool[0], ("origin", "cf-ns", "cf-proxy")[tier])
+                return pool[0]
+        return None
 
     async def _swap_playlist(
         self,
