@@ -19,5 +19,6 @@ http_timeout_seconds: 10
 # Many IPTV portals use invalid TLS certs; only used if http_check_enabled is true
 allow_insecure_tls: true
 
-dashboard_host: 127.0.0.1
+# 127.0.0.1 = this PC only. 0.0.0.0 = also reachable on your LAN (phone on same Wi-Fi).
+dashboard_host: 0.0.0.0
 dashboard_port: 8787
