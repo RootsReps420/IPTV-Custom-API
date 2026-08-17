@@ -40,6 +40,25 @@
 
     <article class="key-card">
       <div class="key-card-top">
+        <span class="pill down">down</span>
+        <h2>DOWN</h2>
+      </div>
+      <p>
+        The portal failed the latest check cycle. One of DNS, TCP, or the MPEG-TS pull did not
+        succeed. The red <code>dns</code> / <code>tcp</code> / <code>ts</code> flags show which step
+        broke; <code>reason</code> is the specific code (for example <code>dns_nxdomain</code>,
+        <code>tcp_timeout</code>, <code>stream_blocked</code>, <code>stream_no_api</code>).
+      </p>
+      <p>
+        <strong>Do not use it.</strong> Players will not get a working stream from this URL.
+        <code>fails N</code> is how many cycles in a row it has been down. After 3 failures on a
+        <em>live</em> URL, playlists on that host are swapped to a healthy standby. A down standby
+        is never chosen for failover.
+      </p>
+    </article>
+
+    <article class="key-card">
+      <div class="key-card-top">
         <span class="pill cf">Cloudflare proxy</span>
         <h2>Cloudflare Proxy</h2>
       </div>
