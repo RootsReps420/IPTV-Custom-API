@@ -79,7 +79,7 @@ function card(item) {
   const ips = item.resolved_ips?.length ? `<span>ip ${esc(item.resolved_ips.join(", "))}</span>` : "";
   const playlists = item.playlists?.length ? `<span>playlists ${esc(item.playlists.join(", "))}</span>` : "";
   const fails = item.healthy
-    ? `<span>check-pass completed</span>`
+    ? `<span>check-pass completed: ${item.consecutive_successes || 0}</span>`
     : `<span>fails ${item.consecutive_failures}</span>`;
   return `
     <article class="card ${state}${item.cloudflare ? " cf" : ""}">
@@ -94,11 +94,11 @@ function card(item) {
         ${flag("dns", item.dns_ok)}
         ${flag("tcp", item.tcp_ok)}
         ${flag("ts", item.stream_ok)}
-        ${fails}
         ${reason}
         ${ips}
         ${playlists}
       </div>
+      <div class="check-line">${fails}</div>
     </article>
   `;
 }

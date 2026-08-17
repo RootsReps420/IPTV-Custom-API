@@ -27,6 +27,10 @@ def create_app(state: SharedState) -> FastAPI:
     async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/key")
+    async def key() -> FileResponse:
+        return FileResponse(STATIC_DIR / "key.html")
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
 

@@ -76,6 +76,74 @@ h1 {
   letter-spacing: -0.04em;
 }
 
+.title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 18px;
+}
+
+.key-btn {
+  display: inline-block;
+  flex-shrink: 0;
+  border: 1px solid var(--up);
+  color: var(--up);
+  text-decoration: none;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+}
+
+.key-btn:hover {
+  background: rgba(125, 255, 195, 0.1);
+}
+
+.key-page {
+  position: relative;
+  width: min(800px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 28px 0 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.key-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 18px 20px;
+}
+
+.key-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.key-card p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.key-card p:last-child {
+  margin-bottom: 0;
+}
+
+.key-card strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.key-card code {
+  font-family: inherit;
+  color: var(--text);
+}
+
 h2 {
   font-size: 22px;
   letter-spacing: -0.03em;
@@ -251,6 +319,12 @@ h2 {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.check-line {
+  margin-top: 8px;
   color: var(--muted);
   font-size: 12px;
 }
