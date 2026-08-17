@@ -1,3 +1,4 @@
+tools/
 logs/
 .env
 config/playlists.yaml
