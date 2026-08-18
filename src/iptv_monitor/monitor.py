@@ -363,7 +363,11 @@ class Monitor:
                 if normalize_url(playlist.current_dns) == live_url
             ]
             candidate = self._pick_candidate(
-                available_keys, live_url, results, min_successes
+                available_keys,
+                live_url,
+                results,
+                min_successes,
+                frequent_threshold=max(2, int(cfg.settings.frequent_failure_down_events)),
             )
             ready = assume_threshold or failures >= threshold
             if not ready:
@@ -449,8 +453,47 @@ class Monitor:
         failed_url: str,
         results: dict[str, HealthResult],
         min_successes: int,
+        *,
+        frequent_threshold: int = 3,
     ) -> str | None:
-        """Pick a healthy standby. Prefer no Cloudflare, then CF NS, then CF proxy last."""
+        """Pick a healthy standby.
+
+        Prefer hosts that are not Frequent failure, then the usual Cloudflare order:
+        no Cloudflare → CF NS → CF proxy. Frequent-failure standbys are only used
+        when every other healthy option is already out.
+        """
+        picked = self._pick_from_healthy(
+            available_keys,
+            failed_url,
+            results,
+            min_successes,
+            allow_frequent=False,
+            frequent_threshold=frequent_threshold,
+        )
+        if picked:
+            return picked
+        return self._pick_from_healthy(
+            available_keys,
+            failed_url,
+            results,
+            min_successes,
+            allow_frequent=True,
+            frequent_threshold=frequent_threshold,
+        )
+
+    def _is_frequent_failure(self, url: str, threshold: int) -> bool:
+        return len(self._stat(url).down_at) >= threshold
+
+    def _pick_from_healthy(
+        self,
+        available_keys: list[str],
+        failed_url: str,
+        results: dict[str, HealthResult],
+        min_successes: int,
+        *,
+        allow_frequent: bool,
+        frequent_threshold: int,
+    ) -> str | None:
         # 0 = no Cloudflare, 1 = Cloudflare nameservers only, 2 = orange-cloud proxy
         buckets: list[list[str]] = [[], [], []]
         for url in available_keys:
@@ -458,6 +501,11 @@ class Monitor:
                 continue
             result = results.get(url)
             if result is None or not result.healthy:
+                continue
+            frequent = self._is_frequent_failure(url, frequent_threshold)
+            if frequent and not allow_frequent:
+                continue
+            if not frequent and allow_frequent:
                 continue
             if result.cloudflare_proxied:
                 tier = 2
@@ -467,13 +515,17 @@ class Monitor:
                 tier = 0
             buckets[tier].append(url)
 
+        labels = ("origin", "cf-ns", "cf-proxy")
         for tier, bucket in enumerate(buckets):
             preferred = [
                 url for url in bucket if self._stat(url).consecutive_successes >= min_successes
             ]
             pool = preferred or bucket
             if pool:
-                logger.info("Standby candidate %s (preference %s)", pool[0], ("origin", "cf-ns", "cf-proxy")[tier])
+                tag = labels[tier]
+                if allow_frequent:
+                    tag = f"{tag}+frequent"
+                logger.info("Standby candidate %s (preference %s)", pool[0], tag)
                 return pool[0]
         return None
 

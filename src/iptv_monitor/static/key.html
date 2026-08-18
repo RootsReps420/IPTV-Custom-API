@@ -105,8 +105,8 @@
       </div>
       <p>
         This URL has gone down at least three separate times in the last 24 hours (not just one
-        outage that lasted several check cycles). The monitor still probes it; failover will not
-        pick a standby while it is currently DOWN.
+        outage that lasted several check cycles). Failover skips these standbys while any other
+        healthy option exists. They are only used if every non-frequent standby is down.
       </p>
       <p>
         <strong>Treat it as unreliable</strong> even if the latest card says UP — it has been
