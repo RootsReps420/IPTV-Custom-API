@@ -68,11 +68,10 @@ When a live URL is unhealthy:
 
 ## Dashboard
 
-Local UI (default `http://127.0.0.1:8787`, or LAN if `dashboard_host` is `0.0.0.0`).
+On the VPS, `https://vps-4f889186.vps.ovh.net` is public (standby pool health only). Playlists and Current DNS are on `/owner`, behind the same Caddy login (`dan`) you already use. Locally the app is `http://127.0.0.1:8787`.
 
-- Playlists table (no passwords)
-- Current DNS cards and Available pool cards: `dns` / `tcp` / `ts` flags, nameserver badge
-- Recent events
+- Public: available pool cards (`dns` / `tcp` / `ts`, nameserver badge), plus standby down/up events
+- Owner (`/owner`): the same, plus Current DNS and the playlists table (no passwords)
 
 Do not port-forward 8787 to the public internet.
 

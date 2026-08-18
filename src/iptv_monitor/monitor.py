@@ -78,6 +78,7 @@ class SharedState:
         live_up = sum(1 for row in self.live if row.get("healthy"))
         avail_up = sum(1 for row in self.available if row.get("healthy"))
         return {
+            "owner": True,
             "last_cycle_at": self.last_cycle_at.isoformat() if self.last_cycle_at else None,
             "check_interval_seconds": self.check_interval_seconds,
             "live": self.live,
@@ -95,6 +96,40 @@ class SharedState:
                 "playlists": len(self.playlists),
             },
         }
+
+    def public_snapshot(self) -> dict[str, Any]:
+        """Standby pool health only — no playlists or currently-live DNS."""
+        data = self.snapshot()
+        data["owner"] = False
+        data["playlists"] = []
+        data["live"] = []
+        data["counts"] = {
+            **data["counts"],
+            "playlists": 0,
+            "live_up": 0,
+            "live_total": 0,
+        }
+        data["available"] = [_public_url_row(row) for row in data.get("available") or []]
+        data["events"] = [
+            item for item in data.get("events") or [] if _public_event(item)
+        ]
+        data["alerts"] = [
+            text for text in data.get("alerts") or [] if "live URL" not in text
+        ]
+        return data
+
+
+def _public_url_row(row: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(row)
+    cleaned["playlists"] = []
+    return cleaned
+
+
+def _public_event(item: dict[str, Any]) -> bool:
+    if item.get("kind") not in {"down", "up"}:
+        return False
+    message = str(item.get("message") or "")
+    return not (message.startswith("live ") or message.startswith("both "))
 
 
 def _role(url: str, live: set[str], available: set[str]) -> str:
@@ -541,7 +576,7 @@ class Monitor:
         except EpgeniusError as exc:
             logger.error("EPGenius swap failed for %s: %s", playlist.name, exc)
             self.shared.add_event(
-                "down",
+                "error",
                 f"EPGenius failed for {playlist.name}: {exc}",
             )
             await notify_epgenius_error(cfg.secrets, playlist, old_url, new_url, str(exc))

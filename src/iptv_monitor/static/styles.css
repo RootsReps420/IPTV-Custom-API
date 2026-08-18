@@ -328,9 +328,11 @@ h2 {
   margin-top: 8px;
   color: var(--muted);
   font-size: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+}
+
+.check-line .sep {
+  opacity: 0.4;
+  padding: 0 6px;
 }
 
 .url-group {

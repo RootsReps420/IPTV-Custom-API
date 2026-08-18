@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=14" />
+  <link rel="stylesheet" href="/static/styles.css?v=17" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -17,10 +17,12 @@
       <div class="title-row">
         <h1>Portal Monitor</h1>
         <a class="key-btn" href="/key">Info</a>
+        <a class="key-btn" href="/owner" id="owner-link">Playlists</a>
+        <a class="key-btn" href="/" id="public-link" hidden>Public</a>
       </div>
     </div>
     <div class="meta">
-      <div class="stat">
+      <div class="stat" id="stat-live-wrap" hidden>
         <span class="label">Live</span>
         <span id="stat-live">—</span>
       </div>
@@ -28,7 +30,7 @@
         <span class="label">Standby</span>
         <span id="stat-avail">—</span>
       </div>
-      <div class="stat">
+      <div class="stat" id="stat-playlists-wrap" hidden>
         <span class="label">Playlists</span>
         <span id="stat-playlists">—</span>
       </div>
@@ -45,7 +47,7 @@
   </header>
   <div id="alerts" class="alerts" hidden></div>
 
-  <section class="playlists">
+  <section class="playlists" id="playlists-section" hidden>
     <div class="section-head">
       <h2>Playlists</h2>
       <span id="playlist-count" class="count"></span>
@@ -67,7 +69,7 @@
     </div>
   </section>
 
-  <section class="current">
+  <section class="current" id="live-section" hidden>
     <div class="section-head">
       <h2>Current DNS</h2>
       <span id="live-count" class="count"></span>
@@ -90,6 +92,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=13"></script>
+  <script src="/static/app.js?v=17"></script>
 </body>
 </html>

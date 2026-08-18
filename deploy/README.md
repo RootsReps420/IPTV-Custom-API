@@ -6,7 +6,7 @@ The live monitor runs on the Ubuntu VPS, not the Windows PC.
 |---|---|
 | App directory | `/home/ubuntu/iptv-monitor` |
 | Process | systemd unit `iptv-monitor` (`deploy/iptv-monitor.service`) |
-| Dashboard | `127.0.0.1:8787` on the VPS only (SSH tunnel from home) |
+| Dashboard | `https://vps-4f889186.vps.ovh.net` (public standby pool). Playlists and Current DNS at `/owner` (same Caddy login). App binds `127.0.0.1:8787`. |
 | Discord | Alerts, swaps, and the status-board webhook — no tunnel needed |
 
 `systemctl enable` means it **starts on reboot**. `Restart=always` means it comes back if the process crashes.
@@ -68,13 +68,62 @@ cd /home/ubuntu/iptv-monitor
 .venv/bin/python main.py apply DanMain --dns http://new-host.example --from-url http://old-host.example
 ```
 
-## Dashboard from home
+## Dashboard in a browser (Caddy)
 
-```powershell
-ssh -L 8787:127.0.0.1:8787 ubuntu@YOUR_VPS_IP
+Caddy terminates HTTPS and proxies to `127.0.0.1:8787`. Port 8787 stays closed.
+
+| URL | Login | What it shows |
+|-----|--------|----------------|
+| `https://vps-4f889186.vps.ovh.net` | none | Standby URL pool health. Safe to share. |
+| `https://vps-4f889186.vps.ovh.net/owner` | username `dan` | Same page plus Current DNS and the playlists table (names, IDs, usernames). |
+| `/api/public` | none | JSON used by the public page (no live DNS, no playlist rows). |
+| `/api/status` | `dan` | Full JSON including live DNS and playlists. |
+
+The **Playlists** button on the public page is `/owner`. The browser’s HTTP basic-auth prompt is the same login you already use. Standby hostnames in the available pool stay visible; currently-live DNS and playlist identity are hidden.
+
+Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Auth is only on `/owner` and `/api/status`. When you edit the Caddyfile, keep the `@owner` matcher — do not wrap the whole site in `basicauth` again.
+
+To change the owner password, in PuTTY. Ubuntu’s Caddy 2.6.2 expects a **base64** hash, not a raw `$2a$...` line and not backslash-escaped dollars.
+
+```bash
+python3 << 'PY'
+import base64, getpass, subprocess
+pw = getpass.getpass("New dashboard password: ")
+pw2 = getpass.getpass("Again: ")
+if pw != pw2 or not pw:
+    raise SystemExit("Passwords did not match")
+raw = subprocess.check_output(["caddy", "hash-password", "--plaintext", pw], text=True).strip()
+print("dan " + base64.b64encode(raw.encode()).decode())
+PY
 ```
 
-Open `http://127.0.0.1:8787`. Do not open port 8787 on the VPS firewall or in the hosting panel.
+Copy the `dan JDJh...` line (no `$`, no backslashes). Then:
+
+```bash
+sudo nano /etc/caddy/Caddyfile
+```
+
+Replace the existing `dan ...` line inside `basicauth @owner` with that line. Leave the `@owner` path matcher in place. Save, then:
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+```bash
+sudo systemctl status caddy
+sudo journalctl -u caddy -n 50 --no-pager
+```
+
+Firewall should allow **22, 80, 443** only. Do not allow 8787.
+
+The SSH tunnel still works if Caddy is down:
+
+```powershell
+ssh -i $env:USERPROFILE\.ssh\id_ed25519_iptv_vps -N -L 8787:127.0.0.1:8787 ubuntu@198.244.234.149
+```
+
+Then `http://127.0.0.1:8787`.
 
 ## Optional: make the VPS a git clone
 

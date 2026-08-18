@@ -14,7 +14,16 @@ const statLive = document.getElementById("stat-live");
 const statAvail = document.getElementById("stat-avail");
 const statPlaylists = document.getElementById("stat-playlists");
 
-let latest = null;
+const playlistSection = document.getElementById("playlists-section");
+const playlistStatWrap = document.getElementById("stat-playlists-wrap");
+const liveSection = document.getElementById("live-section");
+const liveStatWrap = document.getElementById("stat-live-wrap");
+const ownerLink = document.getElementById("owner-link");
+const publicLink = document.getElementById("public-link");
+
+function isOwnerView() {
+  return location.pathname === "/owner" || location.pathname.startsWith("/owner/");
+}
 
 function esc(value) {
   return String(value ?? "")
@@ -78,12 +87,10 @@ function card(item) {
   const reason = item.fail_reason ? `<span>reason ${esc(item.fail_reason)}</span>` : "";
   const ips = item.resolved_ips?.length ? `<span>ip ${esc(item.resolved_ips.join(", "))}</span>` : "";
   const playlists = item.playlists?.length ? `<span>playlists ${esc(item.playlists.join(", "))}</span>` : "";
-  const fails = item.healthy
-    ? `<span>check-pass completed: ${item.consecutive_successes || 0}</span>`
-    : `<span>fails ${item.consecutive_failures}</span>`;
-  const downs = item.down_events_24h
-    ? `<span>${item.down_events_24h} downs in 24h</span>`
-    : "";
+  const check = item.healthy
+    ? `check-pass completed: ${item.consecutive_successes || 0}`
+    : `fails ${item.consecutive_failures}`;
+  const downs = `Service 'Down' count (24hr): ${item.down_events_24h || 0}`;
   const frequent = item.frequent_failure
     ? `<span class="pill frequent" title="${item.down_events_24h || 0} separate downs in 24h">Frequent failure</span>`
     : "";
@@ -105,7 +112,7 @@ function card(item) {
         ${ips}
         ${playlists}
       </div>
-      <div class="check-line">${fails}${downs}</div>
+      <div class="check-line">${esc(check)} <span class="sep">|</span> ${esc(downs)}</div>
     </article>
   `;
 }
@@ -232,23 +239,47 @@ function tickCountdown() {
 
 async function refresh() {
   try {
-    const response = await fetch("/api/status");
+    const owner = isOwnerView();
+    const response = await fetch(owner ? "/api/status" : "/api/public");
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
     latest = data;
     const counts = data.counts || {};
+    const signedIn = Boolean(data.owner);
     lastCycle.textContent = fmtTime(data.last_cycle_at);
-    statLive.textContent = `${counts.live_up ?? "—"}/${counts.live_total ?? "—"} up`;
     statAvail.textContent = `${counts.available_up ?? "—"}/${counts.available_total ?? "—"} up`;
-    statPlaylists.textContent = String(counts.playlists ?? (data.playlists || []).length);
+    if (playlistStatWrap) {
+      playlistStatWrap.hidden = !signedIn;
+    }
+    if (liveStatWrap) {
+      liveStatWrap.hidden = !signedIn;
+    }
+    if (signedIn) {
+      statLive.textContent = `${counts.live_up ?? "—"}/${counts.live_total ?? "—"} up`;
+      statPlaylists.textContent = String(counts.playlists ?? (data.playlists || []).length);
+    }
+    if (ownerLink) {
+      ownerLink.hidden = signedIn;
+    }
+    if (publicLink) {
+      publicLink.hidden = !signedIn;
+    }
+    if (playlistSection) {
+      playlistSection.hidden = !signedIn;
+    }
+    if (liveSection) {
+      liveSection.hidden = !signedIn;
+    }
     modePill.hidden = !data.dry_run;
     tickCountdown();
     renderAlerts(data.alerts, data.error);
-    renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false);
     renderGrouped(availList, availCount, data.available || [], "No standby URLs in urls.yaml.", true);
-    renderPlaylists(data.playlists || []);
+    if (signedIn) {
+      renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false);
+      renderPlaylists(data.playlists || []);
+    }
     renderEvents(data.events || []);
   } catch (error) {
     modePill.hidden = true;

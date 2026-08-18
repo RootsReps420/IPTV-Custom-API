@@ -23,8 +23,16 @@ def create_app(state: SharedState) -> FastAPI:
     async def status() -> dict:
         return state.snapshot()
 
+    @app.get("/api/public")
+    async def public_status() -> dict:
+        return state.public_snapshot()
+
     @app.get("/")
     async def index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/owner")
+    async def owner() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
     @app.get("/key")
