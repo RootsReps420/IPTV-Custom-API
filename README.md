@@ -158,6 +158,18 @@ That registers Task Scheduler job `IPTVPortalMonitor`: starts at logon, restarts
 
 Remove with `scripts\uninstall-windows-task.ps1`. The PC must be on and you must be logged in; sleep still pauses it.
 
+## Keep it running on the VPS
+
+**This is the live monitor.** Day-to-day: updates, git vs secrets, restart rules, dashboard tunnel — see [deploy/README.md](deploy/README.md).
+
+Short version: GitHub does **not** update the VPS. Copy or `git pull` on the server, then `sudo systemctl restart iptv-monitor` for Python changes. Playlist/URL YAML is edited on the VPS and reloads by itself. Do not run the Windows task at the same time.
+
+Dashboard (SSH tunnel, then `http://127.0.0.1:8787`):
+
+```powershell
+ssh -L 8787:127.0.0.1:8787 ubuntu@YOUR_VPS_IP
+```
+
 ## Layout of the code
 
 | Module | Role |
