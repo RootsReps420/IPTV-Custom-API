@@ -107,7 +107,7 @@ function card(item) {
       <div class="flags">
         ${flag("dns", item.dns_ok)}
         ${flag("tcp", item.tcp_ok)}
-        ${flag("ts", item.stream_ok)}
+        ${flag("mpeg-ts", item.stream_ok)}
         ${reason}
         ${ips}
         ${playlists}
