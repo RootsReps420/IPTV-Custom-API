@@ -91,6 +91,40 @@ sudo systemctl restart iptv-monitor
 
 A private repo will not `git pull` until the VPS has a deploy key (or you keep copying files).
 
+## SSH login (password vs key)
+
+The `ubuntu` user already has a login password (whatever you set with `passwd` in PuTTY). That **is** the SSH password. It cannot be set from this PC without an existing login.
+
+To change it, in PuTTY:
+
+```bash
+passwd
+```
+
+Do not paste that password into chat or into this repo.
+
+To let this PC copy files / restart the service without a password, add an SSH **key** (preferred). On Windows PowerShell. Do **not** use `-N ""` — PowerShell strips that and ssh-keygen errors. Either press Enter twice when asked for a passphrase, or use `cmd`:
+
+```powershell
+ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\id_ed25519_iptv_vps
+Get-Content $env:USERPROFILE\.ssh\id_ed25519_iptv_vps.pub
+```
+
+On the VPS, append that one public line:
+
+```bash
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+nano ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+Then test from Windows:
+
+```powershell
+ssh -i $env:USERPROFILE\.ssh\id_ed25519_iptv_vps ubuntu@YOUR_VPS_IP
+```
+
 ## First install (already done on this box)
 
 ```bash

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=12" />
+  <link rel="stylesheet" href="/static/styles.css?v=14" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -95,6 +95,22 @@
         can. Residual risk: they still control DNS, so they can orange-cloud the hostname later
         without you changing the URL. Safer than Proxy for playback; still not as clean as a host
         with no Cloudflare badge.
+      </p>
+    </article>
+
+    <article class="key-card">
+      <div class="key-card-top">
+        <span class="pill frequent">Frequent failure</span>
+        <h2>Frequent failure</h2>
+      </div>
+      <p>
+        This URL has gone down at least three separate times in the last 24 hours (not just one
+        outage that lasted several check cycles). The monitor still probes it; failover will not
+        pick a standby while it is currently DOWN.
+      </p>
+      <p>
+        <strong>Treat it as unreliable</strong> even if the latest card says UP — it has been
+        flapping. Counts reset as those downs age out of the 24-hour window.
       </p>
     </article>
   </section>

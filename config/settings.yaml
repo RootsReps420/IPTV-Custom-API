@@ -32,3 +32,7 @@ dashboard_port: 8787
 # Refresh the "checked … ago" line at least this often when nothing else changed.
 # Down/up, fail counts, and DNS swaps still edit immediately. 0 = every check cycle.
 discord_status_min_interval_seconds: 60
+
+# Standby cards show "Frequent failure" after this many separate downs in the window.
+frequent_failure_down_events: 3
+frequent_failure_window_hours: 24

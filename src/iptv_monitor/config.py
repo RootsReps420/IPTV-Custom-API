@@ -36,6 +36,9 @@ class Settings(BaseModel):
     # How often to refresh the Discord status-board timestamp when nothing changed.
     # Health changes (down/up, fail count, DNS swap) still edit immediately. 0 = every cycle.
     discord_status_min_interval_seconds: int = 60
+    # Dashboard "Frequent failure" on standbys: this many separate down events in the window.
+    frequent_failure_down_events: int = 3
+    frequent_failure_window_hours: int = 24
 
 
 class Playlist(BaseModel):

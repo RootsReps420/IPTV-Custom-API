@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,8 @@ class UrlStats:
     consecutive_successes: int = 0
     last_healthy: bool | None = None
     last_result: HealthResult | None = None
+    # Timestamps of healthy → down transitions (pruned to the frequent-failure window).
+    down_at: list[datetime] = field(default_factory=list)
 
 
 @dataclass
@@ -119,8 +122,11 @@ def _url_view(
     result: HealthResult | None,
     stats: UrlStats,
     playlist_names: list[str],
+    *,
+    frequent_threshold: int = 3,
 ) -> dict[str, Any]:
     proxied, any_cf = _cloudflare_flag(result)
+    down_events = len(stats.down_at)
     return {
         "url": url,
         "role": role,
@@ -139,6 +145,8 @@ def _url_view(
         "consecutive_successes": stats.consecutive_successes,
         "last_checked": result.checked_at.isoformat() if result else None,
         "playlists": playlist_names,
+        "down_events_24h": down_events,
+        "frequent_failure": down_events >= frequent_threshold,
     }
 
 
@@ -153,11 +161,73 @@ class Monitor:
         self._last_cfg: AppConfig | None = None
         self.last_plans: list[FailoverPlan] = []
         self.status_board = DiscordStatusBoard()
+        self._load_failure_history()
 
     def _stat(self, url: str) -> UrlStats:
         if url not in self.stats:
             self.stats[url] = UrlStats()
         return self.stats[url]
+
+    def _failure_history_path(self) -> Path:
+        return resolve_paths(self.root).root / "state" / "failure_history.json"
+
+    def _failure_window(self, settings: Any | None = None) -> timedelta:
+        hours = 24
+        if settings is not None:
+            hours = max(1, int(settings.frequent_failure_window_hours))
+        return timedelta(hours=hours)
+
+    def _prune_down_events(self, stats: UrlStats, window: timedelta) -> None:
+        cutoff = datetime.now(timezone.utc) - window
+        stats.down_at = [stamp for stamp in stats.down_at if stamp > cutoff]
+
+    def _load_failure_history(self) -> None:
+        path = self._failure_history_path()
+        if not path.exists():
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Could not read failure history from %s", path)
+            return
+        if not isinstance(raw, dict):
+            return
+        window = self._failure_window()
+        for url, stamps in raw.items():
+            stats = self._stat(str(url))
+            parsed: list[datetime] = []
+            for item in stamps or []:
+                try:
+                    stamp = datetime.fromisoformat(str(item))
+                except ValueError:
+                    continue
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                parsed.append(stamp)
+            stats.down_at = parsed
+            self._prune_down_events(stats, window)
+
+    def _save_failure_history(self, window: timedelta) -> None:
+        path = self._failure_history_path()
+        payload: dict[str, list[str]] = {}
+        for url, stats in self.stats.items():
+            self._prune_down_events(stats, window)
+            if stats.down_at:
+                payload[url] = [stamp.isoformat() for stamp in stats.down_at]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    def _record_down_event(self, stats: UrlStats, result: HealthResult, window: timedelta) -> None:
+        """Count a separate outage when a URL goes from up (or unknown) to down."""
+        self._prune_down_events(stats, window)
+        if result.healthy:
+            return
+        previous = stats.last_healthy
+        if previous is True:
+            stats.down_at.append(datetime.now(timezone.utc))
+            return
+        if previous is None and not stats.down_at:
+            stats.down_at.append(datetime.now(timezone.utc))
 
     async def run_forever(self) -> None:
         while True:
@@ -186,9 +256,11 @@ class Monitor:
         live_set = set(live_keys)
         available_set = set(available_keys)
 
+        window = self._failure_window(settings)
         for url, result in results.items():
             stats = self._stat(url)
             stats.last_result = result
+            self._record_down_event(stats, result, window)
             if result.healthy:
                 stats.consecutive_failures = 0
                 stats.consecutive_successes += 1
@@ -217,6 +289,7 @@ class Monitor:
         # Drop stats for URLs that left the config so counters cannot leak forever.
         current = live_set | available_set
         self.stats = {url: stats for url, stats in self.stats.items() if url in current}
+        self._save_failure_history(window)
         self._publish_snapshot(cfg, results, live_set, available_set)
         if notify:
             await self.status_board.sync(cfg, self.shared.snapshot())
@@ -442,6 +515,7 @@ class Monitor:
             key = normalize_url(playlist.current_dns)
             names_by_url.setdefault(key, []).append(playlist.name)
 
+        threshold = max(2, int(cfg.settings.frequent_failure_down_events))
         live_rows = []
         for url in sorted(live_set):
             live_rows.append(
@@ -451,6 +525,7 @@ class Monitor:
                     results.get(url),
                     self._stat(url),
                     names_by_url.get(url, []),
+                    frequent_threshold=threshold,
                 )
             )
         available_rows = []
@@ -463,6 +538,7 @@ class Monitor:
                     results.get(key),
                     self._stat(key),
                     names_by_url.get(key, []),
+                    frequent_threshold=threshold,
                 )
             )
 

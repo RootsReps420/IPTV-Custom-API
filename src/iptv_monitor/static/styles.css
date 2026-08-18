@@ -10,6 +10,7 @@
   --up: #7dffc3;
   --down: #ff6b6b;
   --warn: #f0c14a;
+  --frequent: #ff7a18;
 }
 
 * {
@@ -327,6 +328,40 @@ h2 {
   margin-top: 8px;
   color: var(--muted);
   font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.url-group {
+  margin-bottom: 22px;
+}
+
+.url-group:last-child {
+  margin-bottom: 0;
+}
+
+.url-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.url-group-head h3 {
+  font-family: Syne, sans-serif;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.pill.frequent,
+.card.frequent .pill.frequent {
+  color: #1a0c00;
+  background: var(--frequent);
+  border-color: var(--frequent);
 }
 
 .flag.ok {

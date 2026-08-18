@@ -81,12 +81,19 @@ function card(item) {
   const fails = item.healthy
     ? `<span>check-pass completed: ${item.consecutive_successes || 0}</span>`
     : `<span>fails ${item.consecutive_failures}</span>`;
+  const downs = item.down_events_24h
+    ? `<span>${item.down_events_24h} downs in 24h</span>`
+    : "";
+  const frequent = item.frequent_failure
+    ? `<span class="pill frequent" title="${item.down_events_24h || 0} separate downs in 24h">Frequent failure</span>`
+    : "";
   return `
-    <article class="card ${state}${item.cloudflare ? " cf" : ""}">
+    <article class="card ${state}${item.cloudflare ? " cf" : ""}${item.frequent_failure ? " frequent" : ""}">
       <div class="card-top">
         <div class="url">${esc(item.url)}</div>
         <div class="pills">
           ${nsBadge(item)}
+          ${frequent}
           <span class="pill ${state}">${state}</span>
         </div>
       </div>
@@ -98,19 +105,46 @@ function card(item) {
         ${ips}
         ${playlists}
       </div>
-      <div class="check-line">${fails}</div>
+      <div class="check-line">${fails}${downs}</div>
     </article>
   `;
 }
 
-function renderList(el, countEl, items, emptyText) {
+const CF_GROUPS = [
+  { id: "proxy", title: "Cloudflare Proxy" },
+  { id: "ns", title: "Cloudflare NS" },
+  { id: "other", title: "Other" },
+];
+
+function renderGrouped(el, countEl, items, emptyText, grid) {
   const up = items.filter((item) => item.healthy).length;
   countEl.textContent = items.length ? `${up}/${items.length} up` : "none";
   if (!items.length) {
     el.innerHTML = `<div class="empty">${emptyText}</div>`;
     return;
   }
-  el.innerHTML = items.map(card).join("");
+  const buckets = {
+    proxy: items.filter((item) => item.cloudflare_proxied),
+    ns: items.filter((item) => item.cloudflare && !item.cloudflare_proxied),
+    other: items.filter((item) => !item.cloudflare),
+  };
+  const listClass = grid ? "cards cards-grid" : "cards";
+  el.innerHTML = CF_GROUPS.map((group) => {
+    const rows = buckets[group.id];
+    if (!rows.length) {
+      return "";
+    }
+    const groupUp = rows.filter((item) => item.healthy).length;
+    return `
+      <div class="url-group">
+        <div class="url-group-head">
+          <h3>${esc(group.title)}</h3>
+          <span class="count">${groupUp}/${rows.length} up</span>
+        </div>
+        <div class="${listClass}">${rows.map(card).join("")}</div>
+      </div>
+    `;
+  }).join("");
 }
 
 function renderPlaylists(items) {
@@ -212,8 +246,8 @@ async function refresh() {
     modePill.hidden = !data.dry_run;
     tickCountdown();
     renderAlerts(data.alerts, data.error);
-    renderList(liveList, liveCount, data.live || [], "No live portal URLs yet.");
-    renderList(availList, availCount, data.available || [], "No standby URLs in urls.yaml.");
+    renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false);
+    renderGrouped(availList, availCount, data.available || [], "No standby URLs in urls.yaml.", true);
     renderPlaylists(data.playlists || []);
     renderEvents(data.events || []);
   } catch (error) {
