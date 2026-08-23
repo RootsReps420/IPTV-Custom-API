@@ -12,7 +12,7 @@ from typing import Any
 
 from iptv_monitor.config import AppConfig, Playlist, load_config, load_settings, resolve_paths, update_playlist_dns
 from iptv_monitor.epgenius import EpgeniusError, update_creds
-from iptv_monitor.health import HealthResult, check_urls, normalize_url
+from iptv_monitor.health import HealthResult, check_url, check_urls, normalize_url
 from iptv_monitor.notify import (
     DiscordStatusBoard,
     notify_epgenius_error,
@@ -600,6 +600,27 @@ class Monitor:
             log=log,
         )
 
+    def _find_playlist(self, cfg: AppConfig, playlist_id: str) -> Playlist:
+        wanted = str(playlist_id).strip()
+        playlist = next(
+            (item for item in cfg.playlists if str(item.playlist_id) == wanted),
+            None,
+        )
+        if playlist is None:
+            raise SwitchError(f"Playlist {wanted} was not found.", 404)
+        return playlist
+
+    def _publish_after_manual(self, cfg: AppConfig) -> None:
+        live_keys = [normalize_url(item.current_dns) for item in cfg.playlists]
+        self._last_cfg = cfg
+        self._last_live_keys = live_keys
+        self._publish_snapshot(
+            cfg,
+            self._last_results,
+            set(live_keys),
+            set(normalize_url(url) for url in cfg.available_urls),
+        )
+
     async def manual_switch(self, playlist_id: str) -> dict[str, Any]:
         """Swap one playlist now, using the last health snapshot. No extra URL probe."""
         if self.shared.dry_run:
@@ -609,17 +630,7 @@ class Monitor:
 
         async with self._swap_lock:
             cfg = load_config(self.root)
-            wanted = str(playlist_id).strip()
-            playlist = next(
-                (
-                    item
-                    for item in cfg.playlists
-                    if str(item.playlist_id) == wanted
-                ),
-                None,
-            )
-            if playlist is None:
-                raise SwitchError(f"Playlist {wanted} was not found.", 404)
+            playlist = self._find_playlist(cfg, playlist_id)
             old_url = normalize_url(playlist.current_dns)
             candidate = self._candidate_for(cfg, old_url, log=True)
             if not candidate:
@@ -627,21 +638,67 @@ class Monitor:
             await self._swap_playlist(
                 cfg, playlist, old_url, candidate, manual=True
             )
-            live_keys = [normalize_url(item.current_dns) for item in cfg.playlists]
-            self._last_cfg = cfg
-            self._last_live_keys = live_keys
-            self._publish_snapshot(
-                cfg,
-                self._last_results,
-                set(live_keys),
-                set(normalize_url(url) for url in cfg.available_urls),
-            )
+            self._publish_after_manual(cfg)
             return {
                 "ok": True,
                 "playlist_id": playlist.playlist_id,
                 "name": playlist.name,
                 "from": old_url,
                 "to": candidate,
+            }
+
+    async def manual_revert(self, playlist_id: str) -> dict[str, Any]:
+        """Health-check the pre-manual URL, then EPGenius back to it if it is up."""
+        if self.shared.dry_run:
+            raise SwitchError("Dry run — manual switches are disabled.", 409)
+
+        async with self._swap_lock:
+            cfg = load_config(self.root)
+            playlist = self._find_playlist(cfg, playlist_id)
+            origin = (playlist.manual_from_dns or "").strip()
+            if not origin:
+                raise SwitchError("No manual switch to revert on this playlist.", 409)
+            target = normalize_url(origin)
+            current = normalize_url(playlist.current_dns)
+            if target == current:
+                playlist.manual_from_dns = None
+                update_playlist_dns(
+                    cfg.paths.playlists,
+                    playlist.playlist_id,
+                    current,
+                    manual_from_dns=None,
+                )
+                self._publish_after_manual(cfg)
+                return {
+                    "ok": True,
+                    "playlist_id": playlist.playlist_id,
+                    "name": playlist.name,
+                    "from": current,
+                    "to": target,
+                    "already": True,
+                }
+
+            credentials = [(item.username, item.password) for item in cfg.playlists]
+            result = await check_url(target, cfg.settings, credentials)
+            self._last_results[result.url] = result
+            self._stat(result.url).last_result = result
+            if not result.healthy:
+                reason = result.fail_reason or "down"
+                raise SwitchError(
+                    f"Original DNS failed the health check ({reason}). Not switching back.",
+                    409,
+                )
+
+            await self._swap_playlist(
+                cfg, playlist, current, target, revert=True
+            )
+            self._publish_after_manual(cfg)
+            return {
+                "ok": True,
+                "playlist_id": playlist.playlist_id,
+                "name": playlist.name,
+                "from": current,
+                "to": target,
             }
 
     async def _swap_playlist(
@@ -652,8 +709,9 @@ class Monitor:
         new_url: str,
         *,
         manual: bool = False,
+        revert: bool = False,
     ) -> None:
-        timeout = 12 if manual else 20
+        timeout = 12 if (manual or revert) else 20
         try:
             await update_creds(cfg.secrets, playlist, new_url, timeout_seconds=timeout)
         except EpgeniusError as exc:
@@ -662,7 +720,7 @@ class Monitor:
                 "error",
                 f"EPGenius failed for {playlist.name}: {exc}",
             )
-            if manual:
+            if manual or revert:
                 asyncio.create_task(
                     notify_epgenius_error(
                         cfg.secrets, playlist, old_url, new_url, str(exc)
@@ -671,15 +729,26 @@ class Monitor:
                 raise SwitchError(str(exc), 502) from exc
             await notify_epgenius_error(cfg.secrets, playlist, old_url, new_url, str(exc))
             return
+
+        origin_kw: dict[str, Any] = {}
+        if revert:
+            playlist.manual_from_dns = None
+            origin_kw["manual_from_dns"] = None
+        elif manual and not playlist.manual_from_dns:
+            playlist.manual_from_dns = old_url
+            origin_kw["manual_from_dns"] = old_url
+
         try:
-            update_playlist_dns(cfg.paths.playlists, playlist.playlist_id, new_url)
+            update_playlist_dns(
+                cfg.paths.playlists, playlist.playlist_id, new_url, **origin_kw
+            )
         except Exception:
             logger.exception("API succeeded but failed to persist current_dns for %s", playlist.name)
         playlist.current_dns = new_url
         logger.info("Swapped %s from %s to %s", playlist.name, old_url, new_url)
-        prefix = "manual " if manual else ""
+        prefix = "manual revert " if revert else ("manual " if manual else "")
         self.shared.add_event("swap", f"{prefix}{playlist.name}: {old_url} -> {new_url}")
-        if manual:
+        if manual or revert:
             asyncio.create_task(self._after_manual_notify(cfg, playlist, old_url, new_url))
             return
         await notify_swap(cfg.secrets, playlist, old_url, new_url)
@@ -747,6 +816,14 @@ class Monitor:
             dns_key = normalize_url(playlist.current_dns)
             result = results.get(dns_key)
             proxied, any_cf = _cloudflare_flag(result)
+            revert_dns = None
+            if playlist.manual_from_dns:
+                try:
+                    revert_dns = normalize_url(playlist.manual_from_dns)
+                except ValueError:
+                    revert_dns = str(playlist.manual_from_dns).strip()
+                if revert_dns == dns_key:
+                    revert_dns = None
             self.shared.playlists.append(
                 {
                     "name": playlist.name,
@@ -758,6 +835,7 @@ class Monitor:
                     "cloudflare_proxied": proxied,
                     "cloudflare": any_cf,
                     "next_standby": self._candidate_for(cfg, dns_key),
+                    "revert_dns": revert_dns,
                 }
             )
         self._refresh_alerts()

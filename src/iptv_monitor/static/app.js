@@ -201,6 +201,12 @@ function renderPlaylists(items) {
         ? `Switch to ${hostOf(target)}`
         : "No healthy standby right now";
       const btnLabel = busy ? "Switching…" : "Switch";
+      const revertTo = item.revert_dns;
+      const canRevert = Boolean(revertTo) && !dryRun;
+      const revertTitle = revertTo
+        ? `Switch back to ${hostOf(revertTo)} (health-checked first)`
+        : "";
+      const revertLabel = busy ? "Checking…" : "Switch back";
       return `
         <tr>
           <td>${esc(item.name)}</td>
@@ -210,13 +216,26 @@ function renderPlaylists(items) {
           <td class="${nsCls}">${esc(ns)}</td>
           <td class="${cls}">${label}</td>
           <td>
-            <button
-              type="button"
-              class="switch-btn${busy ? " busy" : ""}"
-              data-switch="${esc(id)}"
-              title="${esc(title)}"
-              ${canSwitch && !busy ? "" : "disabled"}
-            >${btnLabel}</button>
+            <div class="switch-actions">
+              <button
+                type="button"
+                class="switch-btn${busy ? " busy" : ""}"
+                data-switch="${esc(id)}"
+                title="${esc(title)}"
+                ${canSwitch && !busy ? "" : "disabled"}
+              >${btnLabel}</button>
+              ${
+                revertTo
+                  ? `<button
+                type="button"
+                class="switch-btn revert${busy ? " busy" : ""}"
+                data-revert="${esc(id)}"
+                title="${esc(revertTitle)}"
+                ${canRevert && !busy ? "" : "disabled"}
+              >${revertLabel}</button>`
+                  : ""
+              }
+            </div>
           </td>
         </tr>
       `;
@@ -224,7 +243,7 @@ function renderPlaylists(items) {
     .join("");
 }
 
-async function switchPlaylist(playlistId) {
+async function postSwitch(path, playlistId, failPrefix) {
   if (!playlistId || switching.has(playlistId)) {
     return;
   }
@@ -233,7 +252,7 @@ async function switchPlaylist(playlistId) {
     renderPlaylists(latest.playlists || []);
   }
   try {
-    const response = await fetch("/api/switch", {
+    const response = await fetch(path, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
@@ -245,7 +264,7 @@ async function switchPlaylist(playlistId) {
     }
     await refresh();
   } catch (error) {
-    renderAlerts([`Switch failed: ${error.message}`]);
+    renderAlerts([`${failPrefix}: ${error.message}`]);
   } finally {
     switching.delete(playlistId);
     if (latest) {
@@ -254,8 +273,21 @@ async function switchPlaylist(playlistId) {
   }
 }
 
+function switchPlaylist(playlistId) {
+  return postSwitch("/api/switch", playlistId, "Switch failed");
+}
+
+function switchBackPlaylist(playlistId) {
+  return postSwitch("/api/switch-back", playlistId, "Switch back failed");
+}
+
 if (playlistBody) {
   playlistBody.addEventListener("click", (event) => {
+    const revert = event.target.closest("[data-revert]");
+    if (revert && !revert.disabled) {
+      switchBackPlaylist(revert.getAttribute("data-revert"));
+      return;
+    }
     const button = event.target.closest("[data-switch]");
     if (!button || button.disabled) {
       return;

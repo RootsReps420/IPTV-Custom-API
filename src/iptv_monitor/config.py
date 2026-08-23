@@ -50,6 +50,8 @@ class Playlist(BaseModel):
     username: str
     password: str
     current_dns: str
+    # Set on a dashboard manual switch; Switch back returns here after a health check.
+    manual_from_dns: str | None = None
 
 
 class Secrets(BaseModel):
@@ -185,7 +187,16 @@ def load_config(root: Path | None = None) -> AppConfig:
     )
 
 
-def update_playlist_dns(playlists_path: Path, playlist_id: str, new_dns: str) -> None:
+_UNSET = object()
+
+
+def update_playlist_dns(
+    playlists_path: Path,
+    playlist_id: str,
+    new_dns: str,
+    *,
+    manual_from_dns: str | None | object = _UNSET,
+) -> None:
     """Write the new live URL into playlists.yaml after EPGenius accepts the swap."""
     yaml = _yaml()
     with playlists_path.open(encoding="utf-8") as handle:
@@ -194,6 +205,11 @@ def update_playlist_dns(playlists_path: Path, playlist_id: str, new_dns: str) ->
     for item in data.get("playlists") or []:
         if str(item.get("playlist_id")) == str(playlist_id):
             item["current_dns"] = new_dns
+            if manual_from_dns is not _UNSET:
+                if manual_from_dns:
+                    item["manual_from_dns"] = manual_from_dns
+                else:
+                    item.pop("manual_from_dns", None)
             found = True
     if not found:
         raise KeyError(f"playlist_id {playlist_id!r} not found in {playlists_path}")

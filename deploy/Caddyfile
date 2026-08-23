@@ -6,7 +6,7 @@
 vps-4f889186.vps.ovh.net {
 	encode gzip
 	@owner {
-		path /owner /owner/ /api/status /api/switch
+		path /owner /owner/ /api/status /api/switch /api/switch-back
 	}
 	basicauth @owner {
 		dan REPLACE_WITH_BASE64_HASH

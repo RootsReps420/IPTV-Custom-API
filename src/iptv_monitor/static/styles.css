@@ -496,6 +496,21 @@ tr:last-child td {
   color: var(--warn);
 }
 
+.switch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.switch-btn.revert {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.switch-btn.revert:hover:not(:disabled) {
+  background: rgba(240, 193, 74, 0.12);
+}
+
 @media (max-width: 860px) {
   header {
     display: block;

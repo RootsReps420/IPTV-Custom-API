@@ -39,6 +39,13 @@ def create_app(monitor: Monitor) -> FastAPI:
         except SwitchError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    @app.post("/api/switch-back")
+    async def switch_back_playlist(body: SwitchBody) -> dict:
+        try:
+            return await monitor.manual_revert(body.playlist_id)
+        except SwitchError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
     @app.get("/")
     async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
