@@ -75,13 +75,14 @@ Caddy terminates HTTPS and proxies to `127.0.0.1:8787`. Port 8787 stays closed.
 | URL | Login | What it shows |
 |-----|--------|----------------|
 | `https://vps-4f889186.vps.ovh.net` | none | Standby URL pool health. Safe to share. |
-| `https://vps-4f889186.vps.ovh.net/owner` | username `dan` | Same page plus Current DNS and the playlists table (names, IDs, usernames). |
+| `https://vps-4f889186.vps.ovh.net/owner` | username `dan` | Same page plus Current DNS, the playlists table, and manual Switch. |
 | `/api/public` | none | JSON used by the public page (no live DNS, no playlist rows). |
 | `/api/status` | `dan` | Full JSON including live DNS and playlists. |
+| `/api/switch` | `dan` | POST `{ "playlist_id": "..." }` — immediate EPGenius swap to the best healthy standby. |
 
 The **Playlists** button on the public page is `/owner`. The browser’s HTTP basic-auth prompt is the same login you already use. Standby hostnames in the available pool stay visible; currently-live DNS and playlist identity are hidden.
 
-Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Auth is only on `/owner` and `/api/status`. When you edit the Caddyfile, keep the `@owner` matcher — do not wrap the whole site in `basicauth` again.
+Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Auth is only on `/owner`, `/api/status`, and `/api/switch`. When you edit the Caddyfile, keep the `@owner` matcher — do not wrap the whole site in `basicauth` again.
 
 To change the owner password, in PuTTY. Ubuntu’s Caddy 2.6.2 expects a **base64** hash, not a raw `$2a$...` line and not backslash-escaped dollars.
 

@@ -127,7 +127,7 @@ async def _run(args: argparse.Namespace) -> int:
     host, port = _dashboard_bind(root)
     await asyncio.gather(
         monitor.run_forever(),
-        serve_dashboard(monitor.shared, host, port),
+        serve_dashboard(monitor, host, port),
     )
     return 0
 

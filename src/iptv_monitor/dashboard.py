@@ -1,31 +1,43 @@
-"""Local FastAPI dashboard. Polls SharedState; does not run checks itself."""
+"""Local FastAPI dashboard. Owner switch actions go through Monitor."""
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-from iptv_monitor.monitor import SharedState
+from iptv_monitor.monitor import Monitor, SwitchError
 
 logger = logging.getLogger("iptv_monitor.dashboard")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
-def create_app(state: SharedState) -> FastAPI:
+class SwitchBody(BaseModel):
+    playlist_id: str = Field(min_length=1)
+
+
+def create_app(monitor: Monitor) -> FastAPI:
     app = FastAPI(title="IPTV Portal Monitor", docs_url=None, redoc_url=None)
-    app.state.shared = state
+    app.state.monitor = monitor
 
     @app.get("/api/status")
     async def status() -> dict:
-        return state.snapshot()
+        return monitor.shared.snapshot()
 
     @app.get("/api/public")
     async def public_status() -> dict:
-        return state.public_snapshot()
+        return monitor.shared.public_snapshot()
+
+    @app.post("/api/switch")
+    async def switch_playlist(body: SwitchBody) -> dict:
+        try:
+            return await monitor.manual_switch(body.playlist_id)
+        except SwitchError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     @app.get("/")
     async def index() -> FileResponse:
@@ -43,11 +55,11 @@ def create_app(state: SharedState) -> FastAPI:
     return app
 
 
-async def serve_dashboard(state: SharedState, host: str, port: int) -> None:
+async def serve_dashboard(monitor: Monitor, host: str, port: int) -> None:
     import uvicorn
 
     config = uvicorn.Config(
-        create_app(state),
+        create_app(monitor),
         host=host,
         port=port,
         log_level="warning",

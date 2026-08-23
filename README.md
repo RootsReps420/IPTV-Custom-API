@@ -6,7 +6,7 @@ It is meant to run on one machine (this PC via Task Scheduler, or later a Pi / V
 
 ## How a check cycle works
 
-Every `check_interval_seconds` (default 30s) the monitor:
+Every `check_interval_seconds` (default 10s) the monitor:
 
 1. Reloads `config/playlists.yaml`, `config/urls.yaml`, and `config/settings.yaml`.
 2. Builds two URL lists:
@@ -38,8 +38,9 @@ Stream-check outcomes you will see as `fail_reason`:
 |--------|---------|
 | `stream_no_api` | `player_api.php` returned 404 — not an Xtream panel (parked domain, nginx default, etc.). |
 | `stream_blocked` | API or stream returned 401/403, a Cloudflare challenge page, or non-JSON HTML instead of Xtream JSON. |
+| `stream_452` | Panel returned HTTP 452/453/456/464 (blocked, geo, or DNS-locked). All channels are unusable on that host. |
 | `stream_auth` | Xtream JSON came back but `user_info.auth` was not 1 for our playlist accounts. |
-| `stream_no_mpegts` | Logged in, but the live path did not return MPEG-TS. |
+| `stream_no_mpegts` | Logged in, but the live path did not return MPEG-TS (placeholder `black.ts` redirects do not count). |
 | `stream_timeout` / `stream_error` | Network timeout or request error talking to the API/stream. |
 
 The stream check uses the username/password from `playlists.yaml` against **every** URL (standbys too). Same credentials, different DNS — that is how EPGenius failover works.
@@ -61,7 +62,7 @@ This flag does not by itself mark a URL down. A Cloudflare-proxied host can stil
 When a live URL is unhealthy:
 
 - **1st and 2nd** consecutive failures: wait (Discord “down” on the first transition).
-- **3rd**: pick a standby that is healthy **this cycle** and is not the failed URL, in this order: no Cloudflare → Cloudflare NS only → Cloudflare proxy. Prefer standbys with at least 2 consecutive successes within that group.
+- **3rd** (~30s at a 10s check interval): pick a standby that is healthy **this cycle** and is not the failed URL, in this order: no Cloudflare → Cloudflare NS only → Cloudflare proxy. Prefer standbys with at least 2 consecutive successes within that group.
 - Call EPGenius `POST /api/public/update_creds` with the playlist id, new DNS, username, and password.
 - On success, write the new URL into `playlists.yaml` `current_dns`, update the in-memory playlist, and refresh the dashboard (playlists table + Current DNS) on that same cycle.
 - If no eligible standby exists, Discord gets “No healthy standby” and EPGenius is not called.
@@ -71,7 +72,7 @@ When a live URL is unhealthy:
 On the VPS, `https://vps-4f889186.vps.ovh.net` is public (standby pool health only). Playlists and Current DNS are on `/owner`, behind the same Caddy login (`dan`) you already use. Locally the app is `http://127.0.0.1:8787`.
 
 - Public: available pool cards (`dns` / `tcp` / `ts`, nameserver badge), plus standby down/up events
-- Owner (`/owner`): the same, plus Current DNS and the playlists table (no passwords)
+- Owner (`/owner`): the same, plus Current DNS, the playlists table (no passwords), and a Switch button that fails that playlist over immediately
 
 Do not port-forward 8787 to the public internet.
 

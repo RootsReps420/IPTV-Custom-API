@@ -26,6 +26,9 @@ _STREAM_ID_CACHE: dict[str, tuple[float, list[int]]] = {}
 _STREAM_ID_TTL = 600.0
 # Last stream id that returned real MPEG-TS — try it first on the next host.
 _LAST_GOOD_ID: int | None = None
+# MAG / Xtream panel codes. 452/453 = blocked; 456 = geo; 464 = DNS locked.
+_PANEL_DENY_STATUSES = {452, 453, 456, 464}
+_PLACEHOLDER_MARKERS = ("black.ts", "/video/black")
 
 Credentials = list[tuple[str, str]]
 
@@ -56,7 +59,19 @@ def _auth_ok(payload: object) -> bool:
     return auth in {1, "1", True, "true", "True"}
 
 
-async def _read_prefix(client: httpx.AsyncClient, url: str, nbytes: int) -> tuple[int, str, bytes]:
+def _is_placeholder_url(url: str) -> bool:
+    low = url.lower()
+    return any(marker in low for marker in _PLACEHOLDER_MARKERS)
+
+
+def _deny_status(hops: list[int]) -> int | None:
+    for status in hops:
+        if status in _PANEL_DENY_STATUSES:
+            return status
+    return None
+
+
+async def _read_prefix(client: httpx.AsyncClient, url: str, nbytes: int) -> tuple[int, str, bytes, str, list[int]]:
     """Read a short prefix then hang up so we do not download a full live channel."""
     async with client.stream("GET", url) as response:
         ctype = (response.headers.get("content-type") or "").split(";")[0]
@@ -65,7 +80,8 @@ async def _read_prefix(client: httpx.AsyncClient, url: str, nbytes: int) -> tupl
             chunks += chunk
             if len(chunks) >= nbytes:
                 break
-        return response.status_code, ctype, chunks
+        hops = [item.status_code for item in response.history] + [response.status_code]
+        return response.status_code, ctype, chunks, str(response.url), hops
 
 
 async def _stream_ids(
@@ -101,7 +117,7 @@ async def _stream_ids(
             ids.append(int(stream_id))
         except (TypeError, ValueError):
             continue
-        if len(ids) >= 5:
+        if len(ids) >= 12:
             break
     if ids:
         _STREAM_ID_CACHE[cache_key] = (now + _STREAM_ID_TTL, ids)
@@ -125,8 +141,13 @@ async def _probe_stream_ids(
     username: str,
     password: str,
     stream_ids: list[int],
-) -> tuple[bool, str]:
-    """Try /live/.../{id}.ts (and without .ts). Returns (ok, last_error_detail)."""
+) -> tuple[bool | None, str]:
+    """Try /live/.../{id}.ts (and without .ts).
+
+    True = real MPEG-TS from a non-placeholder URL.
+    False = no usable stream among these ids.
+    None = panel returned 452/453/456/464 — treat the host as down immediately.
+    """
     global _LAST_GOOD_ID
     secrets = [username, password]
     last_detail = "no mpegts"
@@ -134,12 +155,20 @@ async def _probe_stream_ids(
         for suffix in (f"{stream_id}.ts", str(stream_id)):
             url = f"{base}/live/{username}/{password}/{suffix}"
             try:
-                status, stream_type, data = await _read_prefix(client, url, TS_PACKET * 3)
+                status, stream_type, data, final_url, hops = await _read_prefix(
+                    client, url, TS_PACKET * 3
+                )
             except httpx.TimeoutException:
                 last_detail = f"timeout {suffix}"
                 continue
             except httpx.RequestError as exc:
                 last_detail = _redact(str(exc), secrets)[:180]
+                continue
+            denied = _deny_status(hops)
+            if denied is not None:
+                return None, f"live HTTP {denied}"
+            if _is_placeholder_url(url) or _is_placeholder_url(final_url):
+                last_detail = "placeholder black.ts"
                 continue
             if looks_like_mpegts(data) or (
                 status == 200 and "mp2t" in stream_type and data[:1] == bytes([TS_SYNC])
@@ -179,6 +208,8 @@ async def _try_credentials(
 
     if response.status_code in {401, 403}:
         return False, "stream_blocked", f"player_api HTTP {response.status_code}"
+    if response.status_code in _PANEL_DENY_STATUSES:
+        return False, "stream_452", f"player_api HTTP {response.status_code}"
     if response.status_code == 404:
         return None, "stream_no_api", "player_api HTTP 404"
     ctype = (response.headers.get("content-type") or "").split(";")[0]
@@ -198,15 +229,19 @@ async def _try_credentials(
         cheap.append(_LAST_GOOD_ID)
     cheap.append(1)
     ok, detail = await _probe_stream_ids(client, base, username, password, _unique(cheap))
-    if ok:
+    if ok is True:
         return True, None, None
+    if ok is None:
+        return False, "stream_452", detail
 
     listed = await _stream_ids(client, api, username, password, f"{base}|{username}")
     remaining = [item for item in listed if item not in set(cheap)]
     if remaining:
         ok, detail = await _probe_stream_ids(client, base, username, password, remaining)
-        if ok:
+        if ok is True:
             return True, None, None
+        if ok is None:
+            return False, "stream_452", detail
     return False, "stream_no_mpegts", detail or "no mpegts"
 
 

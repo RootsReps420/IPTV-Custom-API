@@ -18,7 +18,7 @@ from ruamel.yaml import YAML
 class Settings(BaseModel):
     """Knobs from config/settings.yaml."""
 
-    check_interval_seconds: int = 30
+    check_interval_seconds: int = 10
     consecutive_failures_to_swap: int = 3
     # Prefer a standby that has been healthy this many cycles; otherwise any healthy one.
     min_consecutive_successes_for_swap: int = 2

@@ -468,6 +468,34 @@ tr:last-child td {
   color: var(--down);
 }
 
+.switch-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--up);
+  color: var(--up);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.switch-btn:hover:not(:disabled) {
+  background: rgba(125, 255, 195, 0.1);
+}
+
+.switch-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.switch-btn.busy {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
 @media (max-width: 860px) {
   header {
     display: block;

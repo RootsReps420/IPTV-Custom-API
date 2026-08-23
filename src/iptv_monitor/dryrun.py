@@ -188,5 +188,5 @@ async def run_dashboard_test(
     await monitor.run_cycle(swap=False, notify=False)
     if demo_down:
         monitor.inject_demo_down()
-    await asyncio.gather(loop(), serve_dashboard(monitor.shared, host, port))
+    await asyncio.gather(loop(), serve_dashboard(monitor, host, port))
     return 0

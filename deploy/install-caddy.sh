@@ -28,7 +28,7 @@ cat >/etc/caddy/Caddyfile <<EOF
 ${HOST} {
 	encode gzip
 	@owner {
-		path /owner /owner/ /api/status
+		path /owner /owner/ /api/status /api/switch
 	}
 	basicauth @owner {
 		${USER_NAME} "${HASH}"

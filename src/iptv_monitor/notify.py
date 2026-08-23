@@ -182,7 +182,7 @@ async def notify_swap(
     if test:
         description = "Dry run. EPGenius was not called and playlist DNS was not changed."
     elif manual:
-        description = "Manual apply — EPGenius was updated outside automatic failover."
+        description = "Manual switch — EPGenius was updated without waiting for a down check."
     else:
         description = None
     await _post_webhook(

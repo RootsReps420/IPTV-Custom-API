@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=17" />
+  <link rel="stylesheet" href="/static/styles.css?v=20" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -28,7 +28,7 @@
         <h2>UP</h2>
       </div>
       <p>
-        The portal passed the latest check cycle (every 30 seconds by default). That means DNS resolved,
+        The portal passed the latest check cycle (every 10 seconds by default). That means DNS resolved,
         TCP connected to the portal port, and a short HTTP MPEG-TS pull succeeded — the same kind of
         stream request an IPTV player makes.
       </p>
@@ -48,11 +48,16 @@
         The portal failed the latest check cycle. One of DNS, TCP, or the MPEG-TS pull did not
         succeed. The red <code>dns</code> / <code>tcp</code> / <code>mpeg-ts</code> flags show which step
         broke; <code>reason</code> is the specific code (for example <code>dns_nxdomain</code>,
-        <code>tcp_timeout</code>, <code>stream_blocked</code>, <code>stream_no_api</code>).
+        <code>tcp_timeout</code>, <code>stream_blocked</code>, <code>stream_452</code>,
+        <code>stream_no_api</code>).
+        <code>stream_452</code> is the panel telling every channel to fail (blocked / DNS-locked).
+        A redirect to <code>black.ts</code> is ignored — that placeholder can look “up” while
+        real channels return 452.
       </p>
       <p>
         <strong>Do not use it.</strong> Players will not get a working stream from this URL.
-        <code>fails N</code> is how many cycles in a row it has been down. After 3 failures on a
+        <code>fails N</code> is how many cycles in a row it has been down. After 3 failures
+        (~30 seconds at a 10s check interval) on a
         <em>live</em> URL, playlists on that host are swapped to a healthy standby. A down standby
         is never chosen for failover.
       </p>

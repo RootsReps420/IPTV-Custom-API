@@ -154,21 +154,53 @@ function renderGrouped(el, countEl, items, emptyText, grid) {
   }).join("");
 }
 
+const switching = new Set();
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
+
+function apiError(data, fallback) {
+  if (!data) {
+    return fallback;
+  }
+  if (typeof data.detail === "string") {
+    return data.detail;
+  }
+  if (Array.isArray(data.detail) && data.detail.length) {
+    return data.detail.map((item) => item.msg || item).join("; ");
+  }
+  return fallback;
+}
+
 function renderPlaylists(items) {
   const playlistCount = document.getElementById("playlist-count");
   if (playlistCount) {
     playlistCount.textContent = items.length ? `${items.length} loaded` : "none";
   }
   if (!items.length) {
-    playlistBody.innerHTML = `<tr><td colspan="6">No playlists loaded. Add entries in config/playlists.yaml — they appear within one check cycle.</td></tr>`;
+    playlistBody.innerHTML = `<tr><td colspan="7">No playlists loaded. Add entries in config/playlists.yaml — they appear within one check cycle.</td></tr>`;
     return;
   }
+  const dryRun = Boolean(latest && latest.dry_run);
   playlistBody.innerHTML = items
     .map((item) => {
       const cls = item.healthy ? "status-up" : "status-down";
       const label = item.healthy ? "up" : "down";
       const ns = nsLabel(item) || "—";
       const nsCls = item.cloudflare ? "status-warn" : "";
+      const id = String(item.playlist_id ?? "");
+      const busy = switching.has(id);
+      const target = item.next_standby;
+      const canSwitch = Boolean(target) && !dryRun;
+      const title = target
+        ? `Switch to ${hostOf(target)}`
+        : "No healthy standby right now";
+      const btnLabel = busy ? "Switching…" : "Switch";
       return `
         <tr>
           <td>${esc(item.name)}</td>
@@ -177,10 +209,59 @@ function renderPlaylists(items) {
           <td>${esc(item.current_dns)}</td>
           <td class="${nsCls}">${esc(ns)}</td>
           <td class="${cls}">${label}</td>
+          <td>
+            <button
+              type="button"
+              class="switch-btn${busy ? " busy" : ""}"
+              data-switch="${esc(id)}"
+              title="${esc(title)}"
+              ${canSwitch && !busy ? "" : "disabled"}
+            >${btnLabel}</button>
+          </td>
         </tr>
       `;
     })
     .join("");
+}
+
+async function switchPlaylist(playlistId) {
+  if (!playlistId || switching.has(playlistId)) {
+    return;
+  }
+  switching.add(playlistId);
+  if (latest) {
+    renderPlaylists(latest.playlists || []);
+  }
+  try {
+    const response = await fetch("/api/switch", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playlist_id: playlistId }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(apiError(data, `HTTP ${response.status}`));
+    }
+    await refresh();
+  } catch (error) {
+    renderAlerts([`Switch failed: ${error.message}`]);
+  } finally {
+    switching.delete(playlistId);
+    if (latest) {
+      renderPlaylists(latest.playlists || []);
+    }
+  }
+}
+
+if (playlistBody) {
+  playlistBody.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-switch]");
+    if (!button || button.disabled) {
+      return;
+    }
+    switchPlaylist(button.getAttribute("data-switch"));
+  });
 }
 
 function renderEvents(items) {

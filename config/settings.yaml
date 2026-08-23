@@ -1,6 +1,6 @@
 # How often to probe every live and available URL.
 # YAML reloads each cycle. Python code changes still need a process restart.
-check_interval_seconds: 15
+check_interval_seconds: 10
 
 # Live URL must fail this many cycles in a row before EPGenius is called.
 consecutive_failures_to_swap: 3

@@ -28,6 +28,15 @@ logger = logging.getLogger("iptv_monitor.monitor")
 DEMO_DOWN_URL = "http://dry-run-demo.invalid"
 
 
+class SwitchError(Exception):
+    """Owner dashboard asked for a manual swap that cannot run."""
+
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
 @dataclass
 class UrlStats:
     consecutive_failures: int = 0
@@ -54,7 +63,7 @@ class SharedState:
     """Snapshot the dashboard polls. Keep passwords off this object."""
 
     last_cycle_at: datetime | None = None
-    check_interval_seconds: int = 30
+    check_interval_seconds: int = 10
     live: list[dict[str, Any]] = field(default_factory=list)
     available: list[dict[str, Any]] = field(default_factory=list)
     playlists: list[dict[str, Any]] = field(default_factory=list)
@@ -196,6 +205,7 @@ class Monitor:
         self._last_cfg: AppConfig | None = None
         self.last_plans: list[FailoverPlan] = []
         self.status_board = DiscordStatusBoard()
+        self._swap_lock = asyncio.Lock()
         self._load_failure_history()
 
     def _stat(self, url: str) -> UrlStats:
@@ -459,28 +469,37 @@ class Monitor:
         return "\n".join(lines)
 
     async def _execute_plans(self, cfg: AppConfig, plans: list[FailoverPlan]) -> None:
-        for plan in plans:
-            if plan.status == "waiting":
-                logger.info(
-                    "Live URL %s is down (%s), %s/%s failures",
-                    plan.failed_url,
-                    plan.fail_reason,
-                    plan.failures,
-                    plan.threshold,
-                )
-                continue
-            if plan.status == "no_standby":
-                logger.warning("No healthy standby for failed live URL %s", plan.failed_url)
-                self.shared.add_event(
-                    "warn",
-                    f"No healthy standby for {plan.failed_url}",
-                )
-                await notify_no_standby(cfg.secrets, plan.failed_url, plan.playlists)
-                continue
-            if plan.candidate is None:
-                continue
-            for playlist in plan.playlists:
-                await self._swap_playlist(cfg, playlist, plan.failed_url, plan.candidate)
+        async with self._swap_lock:
+            fresh = load_config(self.root)
+            for plan in plans:
+                if plan.status == "waiting":
+                    logger.info(
+                        "Live URL %s is down (%s), %s/%s failures",
+                        plan.failed_url,
+                        plan.fail_reason,
+                        plan.failures,
+                        plan.threshold,
+                    )
+                    continue
+                if plan.status == "no_standby":
+                    logger.warning("No healthy standby for failed live URL %s", plan.failed_url)
+                    self.shared.add_event(
+                        "warn",
+                        f"No healthy standby for {plan.failed_url}",
+                    )
+                    await notify_no_standby(fresh.secrets, plan.failed_url, plan.playlists)
+                    continue
+                if plan.candidate is None:
+                    continue
+                affected = [
+                    playlist
+                    for playlist in fresh.playlists
+                    if normalize_url(playlist.current_dns) == plan.failed_url
+                ]
+                for playlist in affected:
+                    await self._swap_playlist(
+                        fresh, playlist, plan.failed_url, plan.candidate
+                    )
 
     def _pick_candidate(
         self,
@@ -490,6 +509,7 @@ class Monitor:
         min_successes: int,
         *,
         frequent_threshold: int = 3,
+        log: bool = True,
     ) -> str | None:
         """Pick a healthy standby.
 
@@ -504,6 +524,7 @@ class Monitor:
             min_successes,
             allow_frequent=False,
             frequent_threshold=frequent_threshold,
+            log=log,
         )
         if picked:
             return picked
@@ -514,6 +535,7 @@ class Monitor:
             min_successes,
             allow_frequent=True,
             frequent_threshold=frequent_threshold,
+            log=log,
         )
 
     def _is_frequent_failure(self, url: str, threshold: int) -> bool:
@@ -528,6 +550,7 @@ class Monitor:
         *,
         allow_frequent: bool,
         frequent_threshold: int,
+        log: bool = True,
     ) -> str | None:
         # 0 = no Cloudflare, 1 = Cloudflare nameservers only, 2 = orange-cloud proxy
         buckets: list[list[str]] = [[], [], []]
@@ -560,9 +583,66 @@ class Monitor:
                 tag = labels[tier]
                 if allow_frequent:
                     tag = f"{tag}+frequent"
-                logger.info("Standby candidate %s (preference %s)", pool[0], tag)
+                if log:
+                    logger.info("Standby candidate %s (preference %s)", pool[0], tag)
                 return pool[0]
         return None
+
+    def _candidate_for(self, cfg: AppConfig, current_url: str, *, log: bool = False) -> str | None:
+        if not self._last_results:
+            return None
+        return self._pick_candidate(
+            [normalize_url(url) for url in cfg.available_urls],
+            normalize_url(current_url),
+            self._last_results,
+            cfg.settings.min_consecutive_successes_for_swap,
+            frequent_threshold=max(2, int(cfg.settings.frequent_failure_down_events)),
+            log=log,
+        )
+
+    async def manual_switch(self, playlist_id: str) -> dict[str, Any]:
+        """Swap one playlist now, using the last health snapshot. No extra URL probe."""
+        if self.shared.dry_run:
+            raise SwitchError("Dry run — manual switches are disabled.", 409)
+        if not self._last_results:
+            raise SwitchError("No health snapshot yet — wait for the first check cycle.", 503)
+
+        async with self._swap_lock:
+            cfg = load_config(self.root)
+            wanted = str(playlist_id).strip()
+            playlist = next(
+                (
+                    item
+                    for item in cfg.playlists
+                    if str(item.playlist_id) == wanted
+                ),
+                None,
+            )
+            if playlist is None:
+                raise SwitchError(f"Playlist {wanted} was not found.", 404)
+            old_url = normalize_url(playlist.current_dns)
+            candidate = self._candidate_for(cfg, old_url, log=True)
+            if not candidate:
+                raise SwitchError("No healthy standby to switch to.", 409)
+            await self._swap_playlist(
+                cfg, playlist, old_url, candidate, manual=True
+            )
+            live_keys = [normalize_url(item.current_dns) for item in cfg.playlists]
+            self._last_cfg = cfg
+            self._last_live_keys = live_keys
+            self._publish_snapshot(
+                cfg,
+                self._last_results,
+                set(live_keys),
+                set(normalize_url(url) for url in cfg.available_urls),
+            )
+            return {
+                "ok": True,
+                "playlist_id": playlist.playlist_id,
+                "name": playlist.name,
+                "from": old_url,
+                "to": candidate,
+            }
 
     async def _swap_playlist(
         self,
@@ -570,15 +650,25 @@ class Monitor:
         playlist: Playlist,
         old_url: str,
         new_url: str,
+        *,
+        manual: bool = False,
     ) -> None:
+        timeout = 12 if manual else 20
         try:
-            await update_creds(cfg.secrets, playlist, new_url)
+            await update_creds(cfg.secrets, playlist, new_url, timeout_seconds=timeout)
         except EpgeniusError as exc:
             logger.error("EPGenius swap failed for %s: %s", playlist.name, exc)
             self.shared.add_event(
                 "error",
                 f"EPGenius failed for {playlist.name}: {exc}",
             )
+            if manual:
+                asyncio.create_task(
+                    notify_epgenius_error(
+                        cfg.secrets, playlist, old_url, new_url, str(exc)
+                    )
+                )
+                raise SwitchError(str(exc), 502) from exc
             await notify_epgenius_error(cfg.secrets, playlist, old_url, new_url, str(exc))
             return
         try:
@@ -587,8 +677,28 @@ class Monitor:
             logger.exception("API succeeded but failed to persist current_dns for %s", playlist.name)
         playlist.current_dns = new_url
         logger.info("Swapped %s from %s to %s", playlist.name, old_url, new_url)
-        self.shared.add_event("swap", f"{playlist.name}: {old_url} -> {new_url}")
+        prefix = "manual " if manual else ""
+        self.shared.add_event("swap", f"{prefix}{playlist.name}: {old_url} -> {new_url}")
+        if manual:
+            asyncio.create_task(self._after_manual_notify(cfg, playlist, old_url, new_url))
+            return
         await notify_swap(cfg.secrets, playlist, old_url, new_url)
+
+    async def _after_manual_notify(
+        self,
+        cfg: AppConfig,
+        playlist: Playlist,
+        old_url: str,
+        new_url: str,
+    ) -> None:
+        try:
+            await notify_swap(cfg.secrets, playlist, old_url, new_url, manual=True)
+        except Exception:
+            logger.exception("Discord swap notify failed after manual switch")
+        try:
+            await self.status_board.sync(cfg, self.shared.snapshot())
+        except Exception:
+            logger.exception("Status board sync failed after manual switch")
 
     def _publish_snapshot(
         self,
@@ -647,6 +757,7 @@ class Monitor:
                     "nameserver": result.nameserver if result else None,
                     "cloudflare_proxied": proxied,
                     "cloudflare": any_cf,
+                    "next_standby": self._candidate_for(cfg, dns_key),
                 }
             )
         self._refresh_alerts()
