@@ -20,11 +20,11 @@ import httpx
 from pydantic import BaseModel
 from ruamel.yaml import YAML
 
-from iptv_monitor.config import load_playlists, resolve_paths
+from iptv_monitor.config import resolve_paths
 from iptv_monitor.player_guide import (
     decode_xtream_text,
-    is_uk_live_group,
     is_wanted_library_group,
+    is_wanted_live_group,
     listings_to_guide_rows,
 )
 from iptv_monitor.health import normalize_url
@@ -72,27 +72,8 @@ class PlayerConfig(BaseModel):
             return ""
 
 
-def _follow_playlist_dns(root, cfg: PlayerConfig) -> PlayerConfig:
-    """Use the matching playlist's current_dns so Watch follows failovers."""
-    user = cfg.username.strip()
-    if not user:
-        return cfg
-    path = resolve_paths(root).playlists
-    if not path.exists():
-        return cfg
-    try:
-        playlists = load_playlists(path)
-    except Exception:
-        return cfg
-    for item in playlists:
-        if item.username.strip() != user or not item.current_dns.strip():
-            continue
-        return cfg.model_copy(update={"dns": item.current_dns.strip()})
-    return cfg
-
-
 def load_player_config(root=None) -> PlayerConfig:
-    """Read config/player.yaml. Missing/invalid file → empty unconfigured config."""
+    """Read config/player.yaml only. Watch never follows playlists.yaml / DanMain DNS."""
     paths = resolve_paths(root)
     path = paths.player
     if not path.exists():
@@ -103,7 +84,7 @@ def load_player_config(root=None) -> PlayerConfig:
     except Exception:
         logger.warning("Could not read player config from %s", path)
         return PlayerConfig()
-    return _follow_playlist_dns(root, cfg)
+    return cfg
 
 
 def _as_list(payload: object) -> list[dict[str, Any]]:
@@ -337,7 +318,7 @@ class XtreamCatalogue:
         }[kind]
         rows = [_pick(item, _CATEGORY_KEYS) for item in _as_list(await self._api(cfg, action))]
         if kind == "live":
-            rows = [row for row in rows if is_uk_live_group(str(row.get("category_name") or ""))]
+            rows = [row for row in rows if is_wanted_live_group(str(row.get("category_name") or ""))]
         elif kind in {"vod", "series"}:
             rows = [row for row in rows if is_wanted_library_group(str(row.get("category_name") or ""))]
         return rows

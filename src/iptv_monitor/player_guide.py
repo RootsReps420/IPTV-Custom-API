@@ -29,7 +29,8 @@ EPG_NAME = "watch_epg.json"
 META_NAME = "watch_sync.json"
 _B64 = re.compile(r"^[A-Za-z0-9+/]{8,}={0,2}$")
 _NOT_ALNUM = re.compile(r"[^a-z0-9]+")
-_UK_GROUP = re.compile(r"^uk\s*\|", re.I)
+# Old panel: "UK| Sky Sports". New panel: "EU | UK | GENERAL".
+_UK_GROUP = re.compile(r"(^uk\s*\||\|\s*uk\s*\|)", re.I)
 _ARABIC_SCRIPT = re.compile(r"[\u0600-\u06FF]")
 _SKIP_LIBRARY = re.compile(
     r"("
@@ -38,24 +39,73 @@ _SKIP_LIBRARY = re.compile(
     r"|disney\+?\s*asia"
     r"|arab(?:ic)?[\s\-_/]*audio"
     r"|audio[\s\-_/]*arab(?:ic)?"
+    r"|\b(ramadan|maghreb|khaliji|bollywood|punjabi|telugu|tamil|malayalam|kannada)\b"
+    r")",
+    re.I,
+)
+# New panel tags language in the group name: "VOD | EN - NETFLIX" vs "VOD | FR - NETFLIX".
+_EN_LIBRARY = re.compile(
+    r"("
+    r"(?:^|[\s\|])en\s*[-–:]"
+    r"|\benglish\b"
+    r"|\bimdb\b"
+    r"|stand\s*up"
+    r")",
+    re.I,
+)
+_VIP_LIVE = re.compile(r"^vip\s*\|", re.I)
+_VIP_LIVE_SKIP = re.compile(
+    r"^vip\s*\|\s*(christmas|4\s*golden\s*relax|music\s*concerts)\b",
+    re.I,
+)
+_NON_EN_LANG = re.compile(
+    r"(?:^|[\s\|])(?:fr|de|sc|it|es|pt|nl|pl|al|bg|tr|ar|ru|in|ca)\s*[-–:|]",
+    re.I,
+)
+_NON_EN_PLACE = re.compile(
+    r"("
+    r"\b("
+    r"portugal|italy|italian|albania|albanian|spanish|brazil|brazilian|"
+    r"bulgarian|french|deutsch|german|indonesia|netherland|netherlands|"
+    r"nordic|sweden|swedish|denmark|danish|china|chinese|japan|japanese|"
+    r"malaysia|latino|greece|greek|polish|poland|korea|korean|africa|"
+    r"somali|pakistan|thailand|romania|quebec|québec|ex-?yu|islam|"
+    r"shqiptar|multi-?lang|malta|philippines|indian|russia|russian|"
+    r"quebecois|québécois|quebécois|sports|fifa|world\s*cup"
+    r")\b"
+    r"|\[alb\]|\[bg\]|\[my\]|\[pk\]"
+    r"|për\s+fëmijë|filmat\s+shqiptar"
+    r"|india\s*en\b"
     r")",
     re.I,
 )
 
 
 def is_uk_live_group(name: str) -> bool:
-    """Live groups we sync: panel names like 'UK| Sky Sports'. US/IE/4K/PPV-without-UK are out."""
-    return bool(_UK_GROUP.match((name or "").strip()))
+    """Live groups tagged UK: 'UK| …' or '… | UK | …'."""
+    return bool(_UK_GROUP.search((name or "").strip()))
+
+
+def is_wanted_live_group(name: str) -> bool:
+    """Live groups we sync: UK packs plus VIP sports/events (not Christmas / relax / concerts)."""
+    text = (name or "").replace("\u00a0", " ").strip()
+    if is_uk_live_group(text):
+        return True
+    return bool(_VIP_LIVE.match(text) and not _VIP_LIVE_SKIP.match(text))
 
 
 def is_wanted_library_group(name: str) -> bool:
-    """Movies/Shows: English/Western catalogues. No Arabic/Turkish/MENA, Netflix/Disney+ Asia, or Arabic audio."""
+    """Movies/Shows: English catalogues. Skip Arabic/Turkish/MENA and non-English language packs."""
     text = (name or "").strip()
     if not text:
         return False
     if _ARABIC_SCRIPT.search(text):
         return False
     if _SKIP_LIBRARY.search(text):
+        return False
+    if _EN_LIBRARY.search(text):
+        return True
+    if _NON_EN_LANG.search(text) or _NON_EN_PLACE.search(text):
         return False
     return True
 
@@ -309,7 +359,7 @@ class WatchGuide:
         self.progress = ""
         self.last_error = ""
         self.interval_seconds = 14400
-        self.library_interval_seconds = 28800
+        self.library_interval_seconds = 14400
         self.vod = ItemLibrary()
         self.series = ItemLibrary()
         self._lock = threading.Lock()
@@ -725,7 +775,7 @@ class WatchGuide:
         return [
             row
             for row in self.data.categories
-            if is_uk_live_group(str(row.get("category_name") or ""))
+            if is_wanted_live_group(str(row.get("category_name") or ""))
         ]
 
     def live_streams(self, category_id: str) -> list[dict[str, Any]] | None:
@@ -742,7 +792,7 @@ class WatchGuide:
             ),
             None,
         )
-        if not cat or not is_uk_live_group(str(cat.get("category_name") or "")):
+        if not cat or not is_wanted_live_group(str(cat.get("category_name") or "")):
             return []
         rows = self.data.by_cat.get(cid, [])
         return [self.decorate(stream) for stream in rows]

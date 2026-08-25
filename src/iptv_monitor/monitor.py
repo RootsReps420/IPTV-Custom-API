@@ -5,7 +5,8 @@ healthy→down edges (24h frequent-failure file AND 90-day History store), then
 auto-fails live playlists after 3 consecutive downs. Manual Switch / Choose URL /
 Switch back share `_swap_lock` with auto failover so they cannot race.
 
-This module never talks to the /watch Xtream account — that is player_*.py.
+This module never swaps the /watch Xtream account. A playlist with failover: false
+is probed for up/down only (DNS/TCP) and is excluded from EPGenius.
 """
 
 from __future__ import annotations
@@ -322,8 +323,21 @@ class Monitor:
 
         live_keys = [normalize_url(item.current_dns) for item in cfg.playlists]
         available_keys = [normalize_url(url) for url in cfg.available_urls]
-        credentials = [(item.username, item.password) for item in cfg.playlists]
-        results = await check_urls(live_keys + available_keys, settings, credentials)
+        monitor_keys = {
+            normalize_url(item.current_dns) for item in cfg.playlists if not item.failover
+        }
+        failover_creds = [
+            (item.username, item.password) for item in cfg.playlists if item.failover
+        ]
+        bulk_urls = [url for url in live_keys + available_keys if url not in monitor_keys]
+        results = await check_urls(bulk_urls, settings, failover_creds)
+        # Monitor-only hosts: DNS/TCP only. Do not MPEG-TS-probe the Watch account
+        # (that would steal a stream slot) and do not try its creds on other portals.
+        for playlist in cfg.playlists:
+            if playlist.failover:
+                continue
+            extra = await check_url(normalize_url(playlist.current_dns), settings, None)
+            results[extra.url] = extra
 
         live_set = set(live_keys)
         available_set = set(available_keys)
@@ -435,8 +449,10 @@ class Monitor:
             affected = [
                 playlist
                 for playlist in cfg.playlists
-                if normalize_url(playlist.current_dns) == live_url
+                if playlist.failover and normalize_url(playlist.current_dns) == live_url
             ]
+            if not affected:
+                continue
             candidate = self._pick_candidate(
                 available_keys,
                 live_url,
@@ -524,8 +540,11 @@ class Monitor:
                 affected = [
                     playlist
                     for playlist in fresh.playlists
-                    if normalize_url(playlist.current_dns) == plan.failed_url
+                    if playlist.failover
+                    and normalize_url(playlist.current_dns) == plan.failed_url
                 ]
+                if not affected:
+                    continue
                 for playlist in affected:
                     await self._swap_playlist(
                         fresh, playlist, plan.failed_url, plan.candidate
@@ -665,6 +684,11 @@ class Monitor:
         async with self._swap_lock:
             cfg = load_config(self.root)
             playlist = self._find_playlist(cfg, playlist_id)
+            if not playlist.failover:
+                raise SwitchError(
+                    "This playlist is monitor-only — automatic and manual switch are off.",
+                    409,
+                )
             old_url = normalize_url(playlist.current_dns)
             if target_url:
                 candidate = self._resolve_chosen_url(cfg, old_url, target_url)
@@ -715,6 +739,11 @@ class Monitor:
         async with self._swap_lock:
             cfg = load_config(self.root)
             playlist = self._find_playlist(cfg, playlist_id)
+            if not playlist.failover:
+                raise SwitchError(
+                    "This playlist is monitor-only — automatic and manual switch are off.",
+                    409,
+                )
             origin = (playlist.manual_from_dns or "").strip()
             if not origin:
                 raise SwitchError("No manual switch to revert on this playlist.", 409)
@@ -895,7 +924,10 @@ class Monitor:
                     "nameserver": result.nameserver if result else None,
                     "cloudflare_proxied": proxied,
                     "cloudflare": any_cf,
-                    "next_standby": self._candidate_for(cfg, dns_key),
+                    "failover": bool(playlist.failover),
+                    "next_standby": (
+                        None if not playlist.failover else self._candidate_for(cfg, dns_key)
+                    ),
                     "revert_dns": revert_dns,
                 }
             )

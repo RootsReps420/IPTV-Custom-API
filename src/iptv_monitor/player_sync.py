@@ -1,7 +1,7 @@
 """Background live catalogue + EPG pull for /watch.
 
-Runs beside the dashboard. Live + EPG refresh every watch_sync_seconds (default
-4 hours). Movies/Shows refresh every watch_library_sync_seconds (default 8 hours).
+Runs beside the dashboard. Live, EPG, and movies/shows refresh every
+watch_sync_seconds / watch_library_sync_seconds (default 4 hours).
 Category clicks then read disk. Credentials never go in the JSON files.
 """
 
@@ -24,8 +24,8 @@ from iptv_monitor.player_guide import (
     WatchGuide,
     decode_xtream_text,
     epg_alias_keys,
-    is_uk_live_group,
     is_wanted_library_group,
+    is_wanted_live_group,
     listings_to_guide_rows,
 )
 from iptv_monitor.player_xtream import (
@@ -46,6 +46,8 @@ CAT_TIMEOUT = httpx.Timeout(connect=10.0, read=70.0, write=30.0, pool=10.0)
 CAT_RETRY_TIMEOUT = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=10.0)
 EPG_TIMEOUT = httpx.Timeout(connect=8.0, read=25.0, write=15.0, pool=8.0)
 FORCE_SYNC_NAME = "watch_force_sync"
+FORCE_PLAYLIST_NAME = "watch_force_playlist"
+FORCE_EPG_NAME = "watch_force_epg"
 XMLTV_MAX_BYTES = 180_000_000
 EPG_HORIZON = 24 * 3600
 EPG_FLOOR = 15 * 60
@@ -140,11 +142,39 @@ def parse_xmltv_file(path: Path, now: int) -> tuple[dict[str, list[dict[str, Any
     return channels, aliases
 
 
+def _state_dir(root: Path | None) -> Path:
+    return resolve_paths(root).root / "state"
+
+
+def queue_watch_force(root: Path | None, kind: str) -> str:
+    """Write a force-sync flag. kind is playlist, epg, or all."""
+    name = {
+        "playlist": FORCE_PLAYLIST_NAME,
+        "epg": FORCE_EPG_NAME,
+        "all": FORCE_SYNC_NAME,
+    }.get((kind or "").strip().lower())
+    if not name:
+        raise ValueError("kind must be playlist, epg, or all")
+    path = _state_dir(root) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("1\n", encoding="utf-8")
+    return kind.strip().lower()
+
+
 class WatchSyncer:
     def __init__(self, root: Path | None, guide: WatchGuide) -> None:
         self.root = root
         self.guide = guide
         self._lock = asyncio.Lock()
+        self._wake = asyncio.Event()
+
+    def wake(self) -> None:
+        self._wake.set()
+
+    def request(self, kind: str) -> dict[str, Any]:
+        queued = queue_watch_force(self.root, kind)
+        self.wake()
+        return {"ok": True, "queued": queued, "running": bool(self.guide.running)}
 
     def _interval(self) -> int:
         try:
@@ -157,8 +187,8 @@ class WatchSyncer:
         try:
             seconds = int(load_settings(resolve_paths(self.root).settings).watch_library_sync_seconds)
         except Exception:
-            seconds = 28800
-        return max(3600, seconds)
+            seconds = 14400
+        return max(600, seconds)
 
     def _library_fresh(self, lib) -> bool:
         age = self.guide.library_age_seconds(lib)
@@ -173,46 +203,64 @@ class WatchSyncer:
             return False
         return (time.time() - stamp) < self._interval()
 
-    def _force_path(self) -> Path:
-        return resolve_paths(self.root).root / "state" / FORCE_SYNC_NAME
+    def _force_paths(self) -> tuple[Path, Path, Path]:
+        folder = _state_dir(self.root)
+        return folder / FORCE_SYNC_NAME, folder / FORCE_PLAYLIST_NAME, folder / FORCE_EPG_NAME
 
-    def _consume_force(self) -> bool:
-        path = self._force_path()
+    def _force_pending(self) -> bool:
+        return any(path.exists() for path in self._force_paths())
+
+    def _unlink_force(self, path: Path) -> bool:
         if not path.exists():
             return False
         try:
             path.unlink()
         except OSError:
-            logger.warning("Watch guide could not remove force-sync flag")
-            return True
+            logger.warning("Watch guide could not remove force-sync flag %s", path.name)
         return True
 
+    def _consume_force(self) -> tuple[bool, bool]:
+        """Return (force_playlist, force_epg). watch_force_sync still means both."""
+        all_path, playlist_path, epg_path = self._force_paths()
+        force_all = self._unlink_force(all_path)
+        force_playlist = force_all or self._unlink_force(playlist_path)
+        force_epg = force_all or self._unlink_force(epg_path)
+        return force_playlist, force_epg
+
     async def _wait_for_next(self, seconds: float) -> None:
-        """Sleep in 60s slices so a force-sync flag is noticed without a restart."""
-        remaining = max(60.0, seconds)
+        """Sleep until due, or until a UI/SSH force flag arrives."""
+        remaining = max(0.0, float(seconds))
+        self._wake.clear()
         while remaining > 0:
-            if self._force_path().exists():
+            if self._force_pending():
                 return
-            chunk = min(60.0, remaining)
-            await asyncio.sleep(chunk)
-            remaining -= chunk
+            chunk = min(15.0, remaining)
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=chunk)
+                self._wake.clear()
+                return
+            except TimeoutError:
+                remaining -= chunk
 
     async def run_forever(self) -> None:
-        """Sync live/EPG on the live interval; movies/shows only when missing or older than 8 hours."""
+        """Sync live, movies/shows, and EPG on the configured 4-hour cadence."""
         await asyncio.sleep(8)
         while True:
             interval = self._interval()
             lib_interval = self._library_interval()
             self.guide.interval_seconds = interval
             self.guide.library_interval_seconds = lib_interval
-            force = self._consume_force()
+            force_playlist, force_epg = self._consume_force()
             age = self.guide.age_seconds()
             need_live = age is None or age >= interval
             need_lib = not self._library_fresh(self.guide.vod) or not self._library_fresh(self.guide.series)
             need_epg = self.guide.has_live() and not self._epg_fresh()
-            if force or need_live or need_lib or need_epg:
+            if force_playlist or force_epg or need_live or need_lib or need_epg:
                 try:
-                    await self.sync_once(force=force)
+                    await self.sync_once(
+                        force_playlist=force_playlist,
+                        force_epg=force_epg,
+                    )
                 except Exception:
                     logger.exception("Watch guide sync failed")
                     if not self.guide.last_error:
@@ -228,18 +276,30 @@ class WatchSyncer:
                 lib_age = self.guide.library_age_seconds(lib)
                 if lib_age is not None:
                     waits.append(lib_interval - lib_age)
+            stamp = float(self.guide.data.epg_updated_at or 0)
+            if stamp > 0 and self.guide.has_live():
+                waits.append(interval - (time.time() - stamp))
             wait = min(waits) if waits else 60
+            if wait <= 0 and not self._force_pending():
+                wait = 60
             await self._wait_for_next(wait)
 
-    async def sync_once(self, *, force: bool = False) -> None:
+    async def sync_once(self, *, force: bool = False, force_playlist: bool = False, force_epg: bool = False) -> None:
+        if force:
+            force_playlist = True
+            force_epg = True
         async with self._lock:
             cfg = load_player_config(self.root)
             if not cfg.configured:
                 self.guide.progress = "Watch player is not configured."
                 self.guide.write_meta()
                 return
-            if force:
+            if force_playlist and force_epg:
                 logger.info("Watch guide forced full refresh (live, movies, series, EPG)")
+            elif force_playlist:
+                logger.info("Watch guide forced playlist refresh (live, movies, series)")
+            elif force_epg:
+                logger.info("Watch guide forced EPG refresh")
             self.guide.begin_sync()
             started = time.monotonic()
             interval = self._interval()
@@ -247,9 +307,9 @@ class WatchSyncer:
             self.guide.interval_seconds = interval
             self.guide.library_interval_seconds = lib_interval
             age = self.guide.age_seconds()
-            live_fresh = (not force) and bool(self.guide.has_live() and age is not None and age < interval)
-            vod_fresh = (not force) and self._library_fresh(self.guide.vod)
-            series_fresh = (not force) and self._library_fresh(self.guide.series)
+            live_fresh = (not force_playlist) and bool(self.guide.has_live() and age is not None and age < interval)
+            vod_fresh = (not force_playlist) and self._library_fresh(self.guide.vod)
+            series_fresh = (not force_playlist) and self._library_fresh(self.guide.series)
             try:
                 if live_fresh:
                     logger.info(
@@ -267,7 +327,7 @@ class WatchSyncer:
                         len(streams),
                         time.monotonic() - started,
                     )
-                epg_ok = (not force) and self._epg_fresh()
+                epg_ok = (not force_epg) and self._epg_fresh()
                 if vod_fresh:
                     logger.info(
                         "Watch guide movies still fresh (%ss old, %s titles); skipping",
@@ -298,8 +358,11 @@ class WatchSyncer:
                     except Exception as exc:
                         logger.warning("Watch guide series failed: %s", exc)
                         self.guide.last_error = (self.guide.last_error or "") + f" series: {exc}"[:80]
-                if live_fresh and epg_ok:
-                    logger.info("Watch guide EPG already loaded (%s channels); skipping", len(self.guide.data.epg))
+                if epg_ok:
+                    logger.info(
+                        "Watch guide EPG still fresh (%s channels); skipping",
+                        len(self.guide.data.epg),
+                    )
                 else:
                     self.guide.set_phase("epg", message="Downloading EPG…")
                     epg_started = time.monotonic()
@@ -385,13 +448,13 @@ class WatchSyncer:
         keep = [row for row in categories if not is_catch_all_category(str(row.get("category_name") or ""))]
         skipped_all = len(categories) - len(keep)
         if progress == "Live":
-            uk = [row for row in keep if is_uk_live_group(str(row.get("category_name") or ""))]
+            wanted = [row for row in keep if is_wanted_live_group(str(row.get("category_name") or ""))]
             logger.info(
-                "Watch guide Live: kept %s UK groups, skipped %s others",
-                len(uk),
-                len(keep) - len(uk),
+                "Watch guide Live: kept %s groups, skipped %s others",
+                len(wanted),
+                len(keep) - len(wanted),
             )
-            keep = uk
+            keep = wanted
         elif progress in {"Movies", "Series"}:
             wanted = [row for row in keep if is_wanted_library_group(str(row.get("category_name") or ""))]
             logger.info(

@@ -1,5 +1,6 @@
 # Copy to player.yaml (gitignored). Shared /watch Xtream account (max 5 streams).
-# Overview: NOT a failover playlist. Empty username/password = Watch shows "not configured".
+# Overview: NOT a failover playlist. Watch never reads playlists.yaml.
+# Empty username/password = Watch shows "not configured".
 # Put the dedicated 5-connection credentials here on the VPS only. Never commit.
 
 max_concurrent: 5

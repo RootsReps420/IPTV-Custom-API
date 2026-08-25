@@ -248,7 +248,8 @@ def _playlist_line(row: dict[str, Any]) -> str:
     dns = _host_label(str(row.get("current_dns") or ""))
     ns = _ns_tag(row)
     extra = f" · {ns}" if ns else ""
-    return f"{mark} **{name}** → `{dns}`{extra}"
+    mode = " · monitor" if row.get("failover") is False else ""
+    return f"{mark} **{name}** → `{dns}`{extra}{mode}"
 
 
 def _chunk_field(name: str, lines: list[str]) -> list[dict[str, Any]]:

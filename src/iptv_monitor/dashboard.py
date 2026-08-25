@@ -99,6 +99,7 @@ async def serve_dashboard(monitor: Monitor, host: str, port: int) -> None:
 
     app = create_app(monitor)
     syncer = WatchSyncer(monitor.root, app.state.watch.guide)
+    app.state.watch_syncer = syncer
     config = uvicorn.Config(
         app,
         host=host,

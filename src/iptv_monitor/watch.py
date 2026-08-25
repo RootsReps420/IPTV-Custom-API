@@ -5,14 +5,14 @@ Catalogue JSON is sanitized Xtream player_api (no panel user/pass).
 Media is same-origin /api/player/media/... which proxies the panel.
 
 Slot heartbeats cap concurrent playback at player.yaml max_concurrent (default 5).
-Do not reuse failover playlists.yaml here — that would steal DanMain slots.
+Watch uses config/player.yaml only. Failover playlists.yaml is never a Watch source.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -31,6 +31,7 @@ from iptv_monitor.player_auth import (
 from iptv_monitor.player_proxy import load_signed_url, panel_media_url, proxy_url
 from iptv_monitor.player_guide import WatchGuide
 from iptv_monitor.player_slots import SlotTracker
+from iptv_monitor.player_sync import queue_watch_force
 from iptv_monitor.player_xtream import XtreamCatalogue, load_player_config
 
 logger = logging.getLogger("iptv_monitor.watch")
@@ -40,6 +41,10 @@ KINDS = {"live", "movie", "series"}
 
 class SlotBody(BaseModel):
     play_id: str = Field(default="", max_length=80)
+
+
+class SyncBody(BaseModel):
+    kind: Literal["playlist", "epg"]
 
 
 class WatchService:
@@ -125,6 +130,22 @@ def register_watch(app: FastAPI, static_dir) -> None:
             "slots": snap,
             "sync": svc.guide.status(),
         }
+
+    @app.post("/api/player/sync")
+    async def player_sync(request: Request, body: SyncBody) -> dict[str, Any]:
+        """Queue a manual playlist or EPG refresh. The background syncer picks it up immediately."""
+        require_username(request, _root(request))
+        cfg = _svc(request).config()
+        if not cfg.configured:
+            raise HTTPException(status_code=503, detail="Watch player is not configured.")
+        try:
+            syncer = getattr(request.app.state, "watch_syncer", None)
+            if syncer is not None:
+                return syncer.request(body.kind)
+            queued = queue_watch_force(_root(request), body.kind)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "queued": queued, "running": bool(_svc(request).guide.running)}
 
     @app.post("/api/player/slot/heartbeat")
     async def slot_heartbeat(request: Request, body: SlotBody) -> dict[str, Any]:

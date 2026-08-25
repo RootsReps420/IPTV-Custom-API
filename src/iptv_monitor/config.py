@@ -46,8 +46,8 @@ class Settings(BaseModel):
     history_retention_days: int = 90
     # How often Watch re-downloads live channels + EPG into state/ (seconds).
     watch_sync_seconds: int = 14400
-    # Movies/Shows catalogue. Longer than live — titles change slowly.
-    watch_library_sync_seconds: int = 28800
+    # Movies/Shows catalogue. Same 4-hour cadence as live + EPG.
+    watch_library_sync_seconds: int = 14400
 
 
 class Playlist(BaseModel):
@@ -61,6 +61,8 @@ class Playlist(BaseModel):
     current_dns: str
     # Set on a dashboard manual switch; Switch back returns here after a health check.
     manual_from_dns: str | None = None
+    # False = dashboard up/down only. No auto failover, no manual Switch, no EPGenius.
+    failover: bool = True
 
 
 class Secrets(BaseModel):

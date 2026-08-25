@@ -18,6 +18,8 @@ const syncLabel = document.getElementById("watch-sync-label");
 const syncEta = document.getElementById("watch-sync-eta");
 const syncFill = document.getElementById("watch-sync-fill");
 const syncDetail = document.getElementById("watch-sync-detail");
+const refreshPlaylistBtn = document.getElementById("refresh-playlist-btn");
+const refreshEpgBtn = document.getElementById("refresh-epg-btn");
 const video = document.getElementById("player");
 const nowTitle = document.getElementById("now-title");
 const nowEpg = document.getElementById("now-epg");
@@ -98,6 +100,7 @@ const state = {
   epgTries: 0,
   searchKind: "all",
   searchHits: { live: [], movies: [], series: [] },
+  syncBusy: false,
 };
 
 let hls = null;
@@ -465,8 +468,20 @@ function renderSyncPanel(sync) {
   syncPanel.hidden = true;
 }
 
+function setRefreshEnabled(enabled) {
+  const on = !!enabled;
+  if (refreshPlaylistBtn) {
+    refreshPlaylistBtn.disabled = !on;
+  }
+  if (refreshEpgBtn) {
+    refreshEpgBtn.disabled = !on;
+  }
+}
+
 function setGuide(sync) {
   renderSyncPanel(sync);
+  const canRefresh = state.configured && !state.syncBusy && !sync?.running;
+  setRefreshEnabled(canRefresh);
   if (!guideStat) {
     return;
   }
@@ -1336,6 +1351,28 @@ loginForm.addEventListener("submit", async (event) => {
   }
 });
 
+async function requestSync(kind) {
+  if (state.syncBusy || !state.configured) {
+    return;
+  }
+  state.syncBusy = true;
+  setRefreshEnabled(false);
+  try {
+    await api("/api/player/sync", {
+      method: "POST",
+      body: JSON.stringify({ kind }),
+    });
+    state.wasSyncing = true;
+    showBanner(kind === "epg" ? "EPG refresh queued…" : "Playlist refresh queued…");
+    startGuidePoll(2000);
+  } catch (error) {
+    showBanner(error.message, "bad");
+  } finally {
+    state.syncBusy = false;
+    await tickGuide();
+  }
+}
+
 document.getElementById("logout-btn").addEventListener("click", async () => {
   state.playingItem = null;
   state.playingLiveId = "";
@@ -1350,6 +1387,13 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
   }
   showLogin();
 });
+
+if (refreshPlaylistBtn) {
+  refreshPlaylistBtn.addEventListener("click", () => requestSync("playlist"));
+}
+if (refreshEpgBtn) {
+  refreshEpgBtn.addEventListener("click", () => requestSync("epg"));
+}
 
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", async () => {

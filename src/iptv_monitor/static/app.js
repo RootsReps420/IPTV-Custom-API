@@ -260,8 +260,9 @@ function renderPlaylists(items) {
       const nsCls = item.cloudflare ? "status-warn" : "";
       const id = String(item.playlist_id ?? "");
       const busy = switching.has(id);
+      const monitorOnly = item.failover === false;
       const target = item.next_standby;
-      const canSwitch = Boolean(target) && !dryRun;
+      const canSwitch = Boolean(target) && !dryRun && !monitorOnly;
       const title = target
         ? `Switch to ${hostOf(target)}`
         : "No healthy standby right now";
@@ -283,7 +284,10 @@ function renderPlaylists(items) {
           <td class="${nsCls}">${esc(ns)}</td>
           <td class="${cls}">${label}</td>
           <td>
-            <div class="switch-actions">
+            ${
+              monitorOnly
+                ? `<span class="monitor-only" title="No EPGenius swap. Portal reachability only.">Monitor only</span>`
+                : `<div class="switch-actions">
               <button
                 type="button"
                 class="switch-btn${busy ? " busy" : ""}"
@@ -310,7 +314,8 @@ function renderPlaylists(items) {
                   : ""
               }
             </div>
-            ${pickerMarkup(item, id, dryRun, busy)}
+            ${pickerMarkup(item, id, dryRun, busy)}`
+            }
           </td>
         </tr>
       `;

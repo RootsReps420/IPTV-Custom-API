@@ -44,5 +44,5 @@ history_retention_days: 90
 
 # Watch: live channels + now/next EPG into state/. 14400 = 4 hours.
 watch_sync_seconds: 14400
-# Movies/Shows lists. 28800 = 8 hours.
-watch_library_sync_seconds: 28800
+# Movies/Shows lists. Same 4-hour cadence as live + EPG.
+watch_library_sync_seconds: 14400

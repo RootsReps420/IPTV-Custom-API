@@ -510,6 +510,13 @@ tr:last-child td {
   gap: 6px;
 }
 
+.monitor-only {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .switch-btn.revert {
   border-color: var(--warn);
   color: var(--warn);
@@ -812,14 +819,14 @@ tr.row-down td {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 92px minmax(200px, 260px) 1fr;
+  grid-template-columns: 176px minmax(200px, 260px) minmax(0, 1fr);
 }
 
 .watch-rail {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 16px 8px 12px;
+  padding: 16px 10px 12px;
   background: #0b0e14;
   border-right: 1px solid var(--line);
 }
@@ -831,7 +838,8 @@ tr.row-down td {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--up);
-  margin: 0 8px 12px;
+  margin: 0 6px 12px;
+  white-space: nowrap;
 }
 
 .watch-rail-btn {
@@ -858,6 +866,35 @@ tr.row-down td {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.watch-refresh {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.watch-refresh-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.watch-refresh-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.watch-refresh-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .watch-rail-meta {
@@ -1237,6 +1274,12 @@ tr.row-down td {
     margin-left: auto;
     flex-direction: row;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .watch-refresh {
+    flex-direction: row;
   }
 
   .watch-rail-meta {
