@@ -1,16 +1,18 @@
 """Background live catalogue + XMLTV pull for /watch.
 
-Runs beside the dashboard. Every watch_sync_seconds (default 2 hours) downloads
-get_live_categories, get_live_streams (all channels), and xmltv.php into state/.
-Category clicks then read disk. Credentials never go in the JSON files.
+Runs beside the dashboard. Every watch_sync_seconds (default 4 hours) downloads
+live/VOD/series lists (skipping catch-all "All Channels" groups) and xmltv.php
+into state/. Category clicks then read disk. Credentials never go in the JSON files.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,8 @@ from iptv_monitor.player_guide import WatchGuide, decode_xtream_text
 from iptv_monitor.player_xtream import (
     _CATEGORY_KEYS,
     _LIVE_KEYS,
+    _SERIES_KEYS,
+    _VOD_KEYS,
     _as_list,
     _pick,
     load_player_config,
@@ -31,16 +35,32 @@ from iptv_monitor.stream import _STREAM_UA
 logger = logging.getLogger("iptv_monitor.player_sync")
 
 LIVE_TIMEOUT = httpx.Timeout(connect=15.0, read=600.0, write=60.0, pool=15.0)
+CAT_TIMEOUT = httpx.Timeout(connect=10.0, read=70.0, write=30.0, pool=10.0)
 EPG_TIMEOUT = httpx.Timeout(connect=15.0, read=600.0, write=60.0, pool=15.0)
 XMLTV_MAX_BYTES = 180_000_000
 EPG_HORIZON = 24 * 3600
 EPG_FLOOR = 15 * 60
 EPG_PER_CHANNEL = 40
+CAT_WORKERS = 4
 _LIVE_SYNC_KEYS = _LIVE_KEYS
+_CATCH_ALL = re.compile(
+    r"^(all|all\s*(channels?|tvs?|tv|live|streams?)|for you)$",
+    re.I,
+)
 
 
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
+
+
+def is_catch_all_category(name: str) -> bool:
+    """Skip mega-lists like 'All Channels' that hang player_api and duplicate every group."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+    if not normalized:
+        return False
+    if _CATCH_ALL.match(normalized):
+        return True
+    return "all channel" in normalized
 
 
 def parse_xmltv_time(value: str) -> int | None:
@@ -103,11 +123,11 @@ class WatchSyncer:
         try:
             seconds = int(load_settings(resolve_paths(self.root).settings).watch_sync_seconds)
         except Exception:
-            seconds = 7200
+            seconds = 14400
         return max(600, seconds)
 
     async def run_forever(self) -> None:
-        """First sync if the on-disk guide is missing or older than the interval, then every 2 hours."""
+        """First sync if the on-disk guide is missing or stale, then every 4 hours."""
         await asyncio.sleep(8)
         while True:
             interval = self._interval()
@@ -162,6 +182,24 @@ class WatchSyncer:
                 except Exception as exc:
                     logger.warning("Watch guide EPG failed: %s", exc)
                     self.guide.last_error = f"channels ok; EPG failed ({exc})"[:180]
+                try:
+                    self.guide.progress = "Downloading movies…"
+                    self.guide.write_meta()
+                    vod_cats, vod_items = await asyncio.to_thread(self._download_vod, cfg)
+                    self.guide.replace_vod(vod_cats, vod_items)
+                    logger.info("Watch guide movies: %s titles", len(vod_items))
+                except Exception as exc:
+                    logger.warning("Watch guide movies failed: %s", exc)
+                    self.guide.last_error = (self.guide.last_error or "") + f" movies: {exc}"[:80]
+                try:
+                    self.guide.progress = "Downloading series…"
+                    self.guide.write_meta()
+                    series_cats, series_items = await asyncio.to_thread(self._download_series, cfg)
+                    self.guide.replace_series(series_cats, series_items)
+                    logger.info("Watch guide series: %s titles", len(series_items))
+                except Exception as exc:
+                    logger.warning("Watch guide series failed: %s", exc)
+                    self.guide.last_error = (self.guide.last_error or "") + f" series: {exc}"[:80]
                 self.guide.progress = ""
             except Exception as exc:
                 self.guide.last_error = str(exc)[:180]
@@ -181,28 +219,105 @@ class WatchSyncer:
         )
 
     def _download_live(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        return self._download_by_category(
+            cfg,
+            cat_action="get_live_categories",
+            list_action="get_live_streams",
+            item_keys=_LIVE_SYNC_KEYS,
+            id_key="stream_id",
+            progress="Live",
+        )
+
+    def _download_vod(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        return self._download_by_category(
+            cfg,
+            cat_action="get_vod_categories",
+            list_action="get_vod_streams",
+            item_keys=_VOD_KEYS,
+            id_key="stream_id",
+            progress="Movies",
+        )
+
+    def _download_series(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        return self._download_by_category(
+            cfg,
+            cat_action="get_series_categories",
+            list_action="get_series",
+            item_keys=_SERIES_KEYS,
+            id_key="series_id",
+            progress="Series",
+        )
+
+    def _download_by_category(
+        self,
+        cfg,
+        *,
+        cat_action: str,
+        list_action: str,
+        item_keys: tuple[str, ...],
+        id_key: str,
+        progress: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         creds = {"username": cfg.username.strip(), "password": cfg.password.strip()}
         with self._client(LIVE_TIMEOUT) as client:
             cats_resp = client.get(
                 f"{cfg.base}/player_api.php",
-                params={**creds, "action": "get_live_categories"},
+                params={**creds, "action": cat_action},
             )
-            if cats_resp.status_code >= 400:
-                raise RuntimeError(f"categories HTTP {cats_resp.status_code}")
-            categories = [_pick(item, _CATEGORY_KEYS) for item in _as_list(cats_resp.json())]
-            streams_resp = client.get(
-                f"{cfg.base}/player_api.php",
-                params={**creds, "action": "get_live_streams"},
-            )
-            if streams_resp.status_code >= 400:
-                raise RuntimeError(f"live streams HTTP {streams_resp.status_code}")
-            payload = streams_resp.json()
-        if isinstance(payload, dict):
-            payload = payload.get("available_channels") or payload.get("streams") or payload
-        streams = [_pick(item, _LIVE_SYNC_KEYS) for item in _as_list(payload)]
-        if not streams:
-            raise RuntimeError("Panel returned no live streams")
-        return categories, streams
+        if cats_resp.status_code >= 400:
+            raise RuntimeError(f"{progress} categories HTTP {cats_resp.status_code}")
+        categories = [_pick(item, _CATEGORY_KEYS) for item in _as_list(cats_resp.json())]
+        keep = [row for row in categories if not is_catch_all_category(str(row.get("category_name") or ""))]
+        skipped = len(categories) - len(keep)
+        if skipped:
+            logger.info("Watch guide %s: skipped %s catch-all groups", progress, skipped)
+        self.guide.progress = f"{progress} 0/{total} groups" + (
+            f" ({skipped} catch-all skipped)" if skipped else ""
+        )
+        self.guide.write_meta()
+        by_id: dict[str, dict[str, Any]] = {}
+        total = len(keep)
+        done = 0
+
+        def fetch_group(cat: dict[str, Any]) -> list[dict[str, Any]]:
+            cid = str(cat.get("category_id") or "").strip()
+            if not cid:
+                return []
+            try:
+                with self._client(CAT_TIMEOUT) as client:
+                    resp = client.get(
+                        f"{cfg.base}/player_api.php",
+                        params={**creds, "action": list_action, "category_id": cid},
+                    )
+            except Exception as exc:
+                logger.warning("Watch guide %s group %s failed: %s", progress, cid, type(exc).__name__)
+                return []
+            if resp.status_code >= 400:
+                logger.warning("Watch guide %s group %s HTTP %s", progress, cid, resp.status_code)
+                return []
+            try:
+                payload = resp.json()
+            except Exception:
+                return []
+            if isinstance(payload, dict):
+                payload = payload.get("available_channels") or payload.get("streams") or payload
+            return [_pick(item, item_keys) for item in _as_list(payload)]
+
+        with ThreadPoolExecutor(max_workers=CAT_WORKERS) as pool:
+            futures = [pool.submit(fetch_group, cat) for cat in keep]
+            for fut in as_completed(futures):
+                done += 1
+                self.guide.progress = f"{progress} {done}/{total} groups…"
+                if done % 3 == 0 or done == total:
+                    self.guide.write_meta()
+                for row in fut.result():
+                    sid = str(row.get(id_key) or "").strip()
+                    if sid:
+                        by_id[sid] = row
+        items = list(by_id.values())
+        if not items:
+            raise RuntimeError(f"Panel returned no {progress.lower()} items")
+        return keep, items
 
     def _download_epg(self, cfg) -> dict[str, list[dict[str, Any]]]:
         creds = {"username": cfg.username.strip(), "password": cfg.password.strip()}

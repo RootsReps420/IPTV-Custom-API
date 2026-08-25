@@ -23,6 +23,7 @@ logger = logging.getLogger("iptv_monitor.player_auth")
 
 COOKIE = "watch_session"
 SESSION_MAX_AGE = 14 * 24 * 3600
+_secret_cache: str | None = None
 
 
 class WatchUser(BaseModel):
@@ -68,17 +69,22 @@ def authenticate(path: Path, username: str, password: str) -> str | None:
 
 def session_secret(root: Path | None) -> str:
     """Env WATCH_SESSION_SECRET, else persist a random secret under state/ (gitignored)."""
+    global _secret_cache
     env = os.getenv("WATCH_SESSION_SECRET", "").strip()
     if env:
         return env
+    if _secret_cache:
+        return _secret_cache
     path = resolve_paths(root).root / "state" / "watch_secret.txt"
     if path.exists():
         value = path.read_text(encoding="utf-8").strip()
         if value:
+            _secret_cache = value
             return value
     path.parent.mkdir(parents=True, exist_ok=True)
     value = os.urandom(32).hex()
     path.write_text(value + "\n", encoding="utf-8")
+    _secret_cache = value
     return value
 
 

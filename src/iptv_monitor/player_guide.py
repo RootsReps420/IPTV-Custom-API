@@ -22,6 +22,8 @@ from iptv_monitor.config import resolve_paths
 logger = logging.getLogger("iptv_monitor.player_guide")
 
 LIVE_NAME = "watch_live.json"
+VOD_NAME = "watch_vod.json"
+SERIES_NAME = "watch_series.json"
 EPG_NAME = "watch_epg.json"
 META_NAME = "watch_sync.json"
 _B64 = re.compile(r"^[A-Za-z0-9+/]{8,}={0,2}$")
@@ -91,16 +93,31 @@ class GuideData:
     epg_updated_at: float = 0.0
 
 
-def index_streams(streams: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
+def index_items(
+    items: list[dict[str, Any]], id_key: str
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
     by_cat: dict[str, list[dict[str, Any]]] = {}
     by_id: dict[str, dict[str, Any]] = {}
-    for stream in streams:
-        sid = str(stream.get("stream_id") or "").strip()
+    for item in items:
+        sid = str(item.get(id_key) or "").strip()
         if sid:
-            by_id[sid] = stream
-        for cid in category_ids_of(stream):
-            by_cat.setdefault(cid, []).append(stream)
+            by_id[sid] = item
+        for cid in category_ids_of(item):
+            by_cat.setdefault(cid, []).append(item)
     return by_cat, by_id
+
+
+def index_streams(streams: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
+    return index_items(streams, "stream_id")
+
+
+@dataclass
+class ItemLibrary:
+    categories: list[dict[str, Any]] = field(default_factory=list)
+    items: list[dict[str, Any]] = field(default_factory=list)
+    by_cat: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    updated_at: float = 0.0
 
 
 def with_counts(categories: list[dict[str, Any]], by_cat: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -122,15 +139,35 @@ class WatchGuide:
         self.running = False
         self.progress = ""
         self.last_error = ""
-        self.interval_seconds = 7200
+        self.interval_seconds = 14400
+        self.vod = ItemLibrary()
+        self.series = ItemLibrary()
         self.load_disk()
 
-    def paths(self) -> tuple[Path, Path, Path]:
+    def paths(self) -> tuple[Path, Path, Path, Path, Path]:
         folder = _state_dir(self.root)
-        return folder / LIVE_NAME, folder / EPG_NAME, folder / META_NAME
+        return (
+            folder / LIVE_NAME,
+            folder / VOD_NAME,
+            folder / SERIES_NAME,
+            folder / EPG_NAME,
+            folder / META_NAME,
+        )
+
+    def _load_library(self, path: Path, id_key: str) -> ItemLibrary:
+        raw = load_json(path)
+        lib = ItemLibrary()
+        if not isinstance(raw, dict):
+            return lib
+        lib.categories = [row for row in (raw.get("categories") or []) if isinstance(row, dict)]
+        lib.items = [row for row in (raw.get("items") or raw.get("streams") or raw.get("series") or []) if isinstance(row, dict)]
+        lib.updated_at = float(raw.get("updated_at") or 0)
+        lib.by_cat, lib.by_id = index_items(lib.items, id_key)
+        lib.categories = with_counts(lib.categories, lib.by_cat)
+        return lib
 
     def load_disk(self) -> None:
-        live_path, epg_path, _meta = self.paths()
+        live_path, vod_path, series_path, epg_path, _meta = self.paths()
         live = load_json(live_path)
         epg_raw = load_json(epg_path)
         streams: list[dict[str, Any]] = []
@@ -162,10 +199,13 @@ class WatchGuide:
             updated_at=updated,
             epg_updated_at=epg_updated,
         )
+        self.vod = self._load_library(vod_path, "stream_id")
+        self.series = self._load_library(series_path, "series_id")
         logger.info(
-            "Watch guide loaded: %s categories, %s streams, %s EPG channels",
-            len(self.data.categories),
+            "Watch guide loaded: %s live, %s movies, %s series, %s EPG channels",
             len(self.data.streams),
+            len(self.vod.items),
+            len(self.series.items),
             len(self.data.epg),
         )
 
@@ -181,21 +221,47 @@ class WatchGuide:
             updated_at=now,
             epg_updated_at=self.data.epg_updated_at,
         )
-        live_path, _epg, _meta = self.paths()
+        live_path, _vod, _series, _epg, _meta = self.paths()
         atomic_write_json(
             live_path,
             {"updated_at": now, "categories": self.data.categories, "streams": streams},
         )
 
+    def _replace_library(
+        self, lib: ItemLibrary, path: Path, categories: list[dict[str, Any]], items: list[dict[str, Any]], id_key: str
+    ) -> ItemLibrary:
+        now = time.time()
+        by_cat, by_id = index_items(items, id_key)
+        lib = ItemLibrary(
+            categories=with_counts(categories, by_cat),
+            items=items,
+            by_cat=by_cat,
+            by_id=by_id,
+            updated_at=now,
+        )
+        atomic_write_json(
+            path,
+            {"updated_at": now, "categories": lib.categories, "items": items},
+        )
+        return lib
+
+    def replace_vod(self, categories: list[dict[str, Any]], items: list[dict[str, Any]]) -> None:
+        _live, vod_path, _series, _epg, _meta = self.paths()
+        self.vod = self._replace_library(self.vod, vod_path, categories, items, "stream_id")
+
+    def replace_series(self, categories: list[dict[str, Any]], items: list[dict[str, Any]]) -> None:
+        _live, _vod, series_path, _epg, _meta = self.paths()
+        self.series = self._replace_library(self.series, series_path, categories, items, "series_id")
+
     def replace_epg(self, channels: dict[str, list[dict[str, Any]]]) -> None:
         now = time.time()
         self.data.epg = channels
         self.data.epg_updated_at = now
-        _live, epg_path, _meta = self.paths()
+        _live, _vod, _series, epg_path, _meta = self.paths()
         atomic_write_json(epg_path, {"updated_at": now, "channels": channels})
 
     def write_meta(self) -> None:
-        _live, _epg, meta_path = self.paths()
+        *_rest, meta_path = self.paths()
         atomic_write_json(meta_path, self.status())
 
     def has_live(self) -> bool:
@@ -219,6 +285,8 @@ class WatchGuide:
             "age_seconds": None if age is None else int(age),
             "categories": len(self.data.categories),
             "streams": len(self.data.streams),
+            "movies": len(self.vod.items),
+            "series": len(self.series.items),
             "epg_channels": len(self.data.epg),
             "interval_seconds": int(self.interval_seconds),
             "last_error": self.last_error or None,
@@ -237,6 +305,31 @@ class WatchGuide:
             return []
         rows = self.data.by_cat.get(cid, [])
         return [self.decorate(stream) for stream in rows]
+
+    def _library_categories(self, lib: ItemLibrary) -> list[dict[str, Any]] | None:
+        if not lib.items:
+            return None
+        return lib.categories
+
+    def _library_items(self, lib: ItemLibrary, category_id: str) -> list[dict[str, Any]] | None:
+        if not lib.items:
+            return None
+        cid = str(category_id or "").strip()
+        if not cid:
+            return []
+        return list(lib.by_cat.get(cid, []))
+
+    def vod_categories(self) -> list[dict[str, Any]] | None:
+        return self._library_categories(self.vod)
+
+    def vod_streams(self, category_id: str) -> list[dict[str, Any]] | None:
+        return self._library_items(self.vod, category_id)
+
+    def series_categories(self) -> list[dict[str, Any]] | None:
+        return self._library_categories(self.series)
+
+    def series_list(self, category_id: str) -> list[dict[str, Any]] | None:
+        return self._library_items(self.series, category_id)
 
     def decorate(self, stream: dict[str, Any]) -> dict[str, Any]:
         out = dict(stream)

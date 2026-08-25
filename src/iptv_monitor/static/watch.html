@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   Friend IPTV player. Login is a site account (watch_users.yaml), not Xtream.
-  hls.js then mpegts.js play same-origin /api/player media. Chrome/Edge first.
+  hls.js for VOD HLS if needed; live uses mpegts.js on MPEG-TS.
 -->
 <html lang="en">
 <head>
@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=26" />
+  <link rel="stylesheet" href="/static/styles.css?v=28" />
 </head>
 <body class="watch-body">
   <div class="grid-bg" aria-hidden="true"></div>
@@ -68,7 +68,7 @@
 
     <div class="watch-layout">
       <section class="watch-player-col">
-        <video id="player" controls playsinline></video>
+        <video id="player" controls playsinline autoplay></video>
         <div class="watch-now">
           <div id="now-title" class="hist-host">Select a channel</div>
           <div id="now-epg" class="hist-url"></div>
@@ -89,6 +89,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=26"></script>
+  <script src="/static/watch.js?v=28"></script>
 </body>
 </html>

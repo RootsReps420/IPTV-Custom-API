@@ -827,6 +827,7 @@ tr.row-down td {
 }
 
 .watch-cat.is-here,
+.watch-item.is-here,
 .watch-item:hover,
 .watch-cat:hover {
   color: var(--text);

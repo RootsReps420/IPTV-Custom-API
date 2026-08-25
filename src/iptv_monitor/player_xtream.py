@@ -288,8 +288,14 @@ class XtreamCatalogue:
         return payload
 
     async def categories(self, cfg: PlayerConfig, kind: str) -> list[dict[str, Any]]:
-        if kind == "live" and self.guide is not None:
-            cached = self.guide.live_categories()
+        if self.guide is not None:
+            cached = None
+            if kind == "live":
+                cached = self.guide.live_categories()
+            elif kind == "vod":
+                cached = self.guide.vod_categories()
+            elif kind == "series":
+                cached = self.guide.series_categories()
             if cached is not None:
                 return cached
             if self.guide.running:
@@ -313,10 +319,22 @@ class XtreamCatalogue:
         return [_pick(item, _LIVE_KEYS) for item in _as_list(await self._api(cfg, "get_live_streams", extra))]
 
     async def vod_streams(self, cfg: PlayerConfig, category_id: str) -> list[dict[str, Any]]:
+        if self.guide is not None:
+            cached = self.guide.vod_streams(category_id)
+            if cached is not None:
+                return cached
+            if self.guide.running:
+                return []
         extra = {"category_id": category_id} if category_id else {}
         return [_pick(item, _VOD_KEYS) for item in _as_list(await self._api(cfg, "get_vod_streams", extra))]
 
     async def series_list(self, cfg: PlayerConfig, category_id: str) -> list[dict[str, Any]]:
+        if self.guide is not None:
+            cached = self.guide.series_list(category_id)
+            if cached is not None:
+                return cached
+            if self.guide.running:
+                return []
         extra = {"category_id": category_id} if category_id else {}
         return [_pick(item, _SERIES_KEYS) for item in _as_list(await self._api(cfg, "get_series", extra))]
 

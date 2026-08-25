@@ -11,6 +11,7 @@ Do not reuse failover playlists.yaml here — that would steal DanMain slots.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -48,13 +49,20 @@ class WatchService:
         self.slots = SlotTracker()
         self.guide = WatchGuide(root)
         self.catalogue = XtreamCatalogue(root, guide=self.guide)
+        self._cfg = None
+        self._cfg_at = 0.0
 
     def config(self):
-        return load_player_config(self.root)
+        """player.yaml is tiny, but reading it on every zap adds disk I/O to TTFB."""
+        now = time.monotonic()
+        if self._cfg is None or now - self._cfg_at > 5.0:
+            self._cfg = load_player_config(self.root)
+            self._cfg_at = now
+            self.slots.max_concurrent = max(1, int(self._cfg.max_concurrent or 5))
+        return self._cfg
 
     def sync_slot_limit(self) -> None:
-        cfg = self.config()
-        self.slots.max_concurrent = max(1, int(cfg.max_concurrent or 5))
+        self.config()
 
 
 def _root(request: Request):
@@ -243,19 +251,22 @@ def register_watch(app: FastAPI, static_dir) -> None:
         if kind not in KINDS:
             raise HTTPException(status_code=400, detail="Invalid media kind.")
         user = require_username(request, _root(request))
-        cfg = _svc(request).config()
+        svc = _svc(request)
+        cfg = svc.config()
         if not cfg.configured:
             raise HTTPException(status_code=503, detail="Watch player is not configured.")
         if not sid or len(sid) < 8:
             raise HTTPException(status_code=400, detail="Missing sid.")
-        await _require_slot(_svc(request), user, sid)
+        await _require_slot(svc, user, sid)
         url = panel_media_url(cfg, kind, stream_id, ext)
-        serializer = fetch_serializer(_root(request))
+        live_ts = kind == "live" and ext.lstrip(".").lower() == "ts"
+        serializer = None if live_ts else fetch_serializer(_root(request))
         return await proxy_url(
             url,
             serializer=serializer,
             sid=sid,
             range_header=request.headers.get("range"),
+            assume_mpegts=live_ts,
         )
 
     @app.get("/api/player/fetch")

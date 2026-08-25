@@ -1,7 +1,7 @@
 /* /watch player: Xtream catalogue + HLS/mpegts.js against same-origin /api/player.
  *
  * Site login cookie, then Live / Movies / Series lists from proxied player_api.
- * Playback tries .m3u8 (hls.js) then .ts (mpegts.js). sid is a per-tab play_id
+ * Playback: live is MPEG-TS (mpegts.js, low-latency). VOD tries the panel extension first.
  * for the 5-slot limiter. Panel user/pass never appear in this file.
  */
 
@@ -72,12 +72,14 @@ const state = {
   categoryId: "",
   items: [],
   seriesDetail: null,
+  playingLiveId: "",
 };
 
 let hls = null;
 let tsPlayer = null;
 let beatTimer = null;
 let playing = false;
+let playGen = 0;
 
 function showBanner(text, kind) {
   if (!text) {
@@ -273,41 +275,124 @@ function attachHls(url) {
   });
 }
 
-function attachMpegTs(url) {
+function playNow() {
+  const p = video.play();
+  if (p && typeof p.catch === "function") {
+    p.catch((error) => {
+      if (error && error.name === "AbortError") {
+        return;
+      }
+    });
+  }
+}
+
+function attachMpegTs(url, gen) {
   if (!window.mpegts || !window.mpegts.getFeatureList().mseLivePlayback) {
     throw new Error("MPEG-TS playback is not supported in this browser. Use Chrome or Edge.");
   }
   tsPlayer = window.mpegts.createPlayer(
-    { type: "mse", isLive: true, url, withCredentials: true },
-    { enableWorker: true, liveBufferLatencyChasing: true }
+    {
+      type: "mpegts",
+      isLive: true,
+      hasAudio: true,
+      hasVideo: true,
+      url,
+      withCredentials: true,
+    },
+    {
+      enableWorker: false,
+      enableStashBuffer: false,
+      stashInitialSize: 64,
+      liveBufferLatencyChasing: true,
+      liveBufferLatencyMaxLatency: 2,
+      liveBufferLatencyMinRemain: 0.3,
+      autoCleanupSourceBuffer: true,
+      lazyLoad: false,
+      fixAudioTimestampGap: false,
+    }
   );
+  if (window.mpegts.Events) {
+    tsPlayer.on(window.mpegts.Events.ERROR, (_type, detail) => {
+      if (gen !== playGen) {
+        return;
+      }
+      const msg = detail?.msg || detail?.code || "Stream error";
+      showBanner(String(msg), "bad");
+    });
+  }
   tsPlayer.attachMediaElement(video);
   tsPlayer.load();
+  playNow();
+  video.addEventListener(
+    "canplay",
+    () => {
+      if (gen != null && gen !== playGen) {
+        return;
+      }
+      playNow();
+    },
+    { once: true }
+  );
 }
 
-async function playSources(kind, streamId, extensions) {
-  // Try each container in order. Keep the slot across retries; release only if all fail.
+async function playSources(kind, streamId, extensions, gen) {
+  // Start the player in this turn (keep the click's autoplay gesture). Heartbeat is not on the critical path.
   stopPlayback();
-  await heartbeat();
+  if (gen != null && gen !== playGen) {
+    return;
+  }
   playing = true;
   startHeartbeat();
+  heartbeat().catch((error) => {
+    if (gen != null && gen !== playGen) {
+      return;
+    }
+    showBanner(error.message, "bad");
+  });
   let lastError = null;
   for (const ext of extensions) {
+    if (gen != null && gen !== playGen) {
+      return;
+    }
     const url = mediaUrl(kind, streamId, ext);
     try {
       if (ext === "m3u8") {
         await attachHls(url);
+        if (gen != null && gen !== playGen) {
+          return;
+        }
+        playNow();
       } else if (ext === "ts") {
-        attachMpegTs(url);
+        attachMpegTs(url, gen);
+        if (kind === "live") {
+          return;
+        }
+        await video.play().catch((error) => {
+          if (error && error.name === "AbortError") {
+            return;
+          }
+          throw error;
+        });
       } else {
         video.src = url;
+        playNow();
+        if (kind !== "live") {
+          await video.play().catch((error) => {
+            if (error && error.name === "AbortError") {
+              return;
+            }
+            throw error;
+          });
+        }
       }
-      await video.play();
       return;
     } catch (error) {
       lastError = error;
       destroyPlayers();
     }
+  }
+  if (gen != null && gen !== playGen) {
+    return;
   }
   playing = false;
   if (beatTimer) {
@@ -318,58 +403,78 @@ async function playSources(kind, streamId, extensions) {
   throw lastError || new Error("Playback failed.");
 }
 
-async function playLive(item) {
+function playLive(item) {
+  const gen = ++playGen;
+  state.playingLiveId = String(item.stream_id);
   nowTitle.textContent = item.name || `Channel ${item.stream_id}`;
   nowEpg.textContent =
-    [item.now_title, item.next_title].filter(Boolean).join(" → ") || "Loading guide…";
+    [item.now_title, item.next_title].filter(Boolean).join(" → ") || "Starting…";
   showBanner("");
   try {
-    await playSources("live", String(item.stream_id), ["m3u8", "ts"]);
-    startHeartbeat();
-    playing = true;
+    playSources("live", String(item.stream_id), ["ts"], gen).catch((error) => {
+      if (gen !== playGen) {
+        return;
+      }
+      showBanner(error.message, "bad");
+      nowEpg.textContent = "";
+    });
   } catch (error) {
+    if (gen !== playGen) {
+      return;
+    }
     showBanner(error.message, "bad");
     nowEpg.textContent = "";
     return;
   }
-  try {
-    const data = await api(`/api/player/live/epg?stream_id=${encodeURIComponent(item.stream_id)}`);
-    const rows = data.epg || [];
-    nowEpg.textContent = rows
-      .slice(0, 2)
-      .map((row) => row.title || "Programme")
-      .join(" → ") || nowEpg.textContent || "No EPG";
-  } catch {
-    /* keep now/next from the channel list */
-  }
+  api(`/api/player/live/epg?stream_id=${encodeURIComponent(item.stream_id)}`)
+    .then((data) => {
+      if (gen !== playGen) {
+        return;
+      }
+      const rows = data.epg || [];
+      nowEpg.textContent =
+        rows
+          .slice(0, 2)
+          .map((row) => row.title || "Programme")
+          .join(" → ") || nowEpg.textContent || "No EPG";
+    })
+    .catch(() => {
+      /* keep now/next from the channel list */
+    });
 }
 
 async function playVod(item) {
+  const gen = ++playGen;
+  state.playingLiveId = "";
   const ext = String(item.container_extension || "mp4").replace(/^\./, "");
   nowTitle.textContent = item.name || `Title ${item.stream_id}`;
   nowEpg.textContent = item.plot || "";
   showBanner("");
   const order = [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
   try {
-    await playSources("movie", String(item.stream_id), order);
-    startHeartbeat();
-    playing = true;
+    await playSources("movie", String(item.stream_id), order, gen);
   } catch (error) {
+    if (gen !== playGen) {
+      return;
+    }
     showBanner(error.message, "bad");
   }
 }
 
 async function playEpisode(episode, seriesName) {
+  const gen = ++playGen;
+  state.playingLiveId = "";
   const ext = String(episode.container_extension || "mp4").replace(/^\./, "");
   nowTitle.textContent = `${seriesName || "Series"} · ${episode.title || `Episode ${episode.episode_num}`}`;
   nowEpg.textContent = episode.plot || episode.info?.plot || "";
   showBanner("");
   const order = [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
   try {
-    await playSources("series", String(episode.id), order);
-    startHeartbeat();
-    playing = true;
+    await playSources("series", String(episode.id), order, gen);
   } catch (error) {
+    if (gen !== playGen) {
+      return;
+    }
     showBanner(error.message, "bad");
   }
 }
@@ -410,14 +515,15 @@ function renderItems() {
     itemList.innerHTML = rows
       .map((item) => {
         const icon = item.stream_icon
-          ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" />`
+          ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
           : "";
         const epg = item.now_title
           ? `<small>${esc(item.now_title)}</small>`
           : item.title
             ? `<small>${esc(item.title)}</small>`
             : "";
-        return `<button type="button" class="watch-item" data-live="${esc(item.stream_id)}">${icon}<span>${esc(item.name)}${epg}</span></button>`;
+        const here = String(item.stream_id) === String(state.playingLiveId) ? " is-here" : "";
+        return `<button type="button" class="watch-item${here}" data-live="${esc(item.stream_id)}">${icon}<span>${esc(item.name)}${epg}</span></button>`;
       })
       .join("");
     return;
@@ -426,7 +532,7 @@ function renderItems() {
     itemList.innerHTML = rows
       .map((item) => {
         const poster = item.stream_icon
-          ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" />`
+          ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
           : "";
         return `<button type="button" class="watch-item poster" data-vod="${esc(item.stream_id)}">${poster}<span>${esc(item.name)}</span></button>`;
       })
@@ -436,7 +542,7 @@ function renderItems() {
   itemList.innerHTML = rows
     .map((item) => {
       const poster = item.cover
-        ? `<img src="${esc(item.cover)}" alt="" referrerpolicy="no-referrer" />`
+        ? `<img src="${esc(item.cover)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
         : "";
       return `<button type="button" class="watch-item poster" data-series="${esc(item.series_id)}">${poster}<span>${esc(item.name)}</span></button>`;
     })
@@ -621,7 +727,11 @@ itemList.addEventListener("click", async (event) => {
     const item = state.items.find((row) => String(row.stream_id) === String(id));
     if (item) {
       localStorage.setItem("watch_last_live", String(id));
-      await playLive(item);
+      state.playingLiveId = String(id);
+      itemList.querySelectorAll(".watch-item[data-live]").forEach((el) => {
+        el.classList.toggle("is-here", el.getAttribute("data-live") === String(id));
+      });
+      playLive(item);
     }
     return;
   }

@@ -18,13 +18,28 @@ from fastapi.responses import Response, StreamingResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from iptv_monitor.player_xtream import PlayerConfig
-from iptv_monitor.stream import _STREAM_UA
+from iptv_monitor.stream import TS_SYNC, _STREAM_UA
 
 logger = logging.getLogger("iptv_monitor.player_proxy")
 
 FETCH_MAX_AGE = 8 * 3600
 _URI_ATTR = re.compile(r'URI="([^"]+)"')
 _HLS_HINTS = ("application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl")
+_HTTP: httpx.AsyncClient | None = None
+
+
+def http_client() -> httpx.AsyncClient:
+    """Keepalive pool so zapping a channel does not redo TLS to the panel every time."""
+    global _HTTP
+    if _HTTP is None or _HTTP.is_closed:
+        _HTTP = httpx.AsyncClient(
+            verify=False,
+            follow_redirects=True,
+            timeout=httpx.Timeout(None, connect=8.0),
+            headers={"User-Agent": _STREAM_UA, "Accept": "*/*"},
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=40, keepalive_expiry=90),
+        )
+    return _HTTP
 
 
 def panel_media_url(cfg: PlayerConfig, kind: str, stream_id: str, ext: str) -> str:
@@ -98,37 +113,50 @@ async def proxy_url(
     serializer: URLSafeTimedSerializer | None = None,
     sid: str = "",
     range_header: str | None = None,
+    assume_mpegts: bool = False,
 ) -> Response:
-    """Stream upstream bytes. If the body is HLS, rewrite it; otherwise pass through."""
+    """Stream upstream bytes. Live TS skips body-peek so the player gets headers immediately."""
     headers = {"User-Agent": _STREAM_UA, "Accept": "*/*"}
     if range_header:
         headers["Range"] = range_header
-    timeout = httpx.Timeout(None, connect=15.0)
-    client = httpx.AsyncClient(
-        verify=False,
-        follow_redirects=True,
-        timeout=timeout,
-        headers=headers,
-    )
+    client = http_client()
     try:
-        request = client.build_request("GET", url)
+        request = client.build_request("GET", url, headers=headers)
         response = await client.send(request, stream=True)
     except httpx.RequestError as exc:
-        await client.aclose()
         logger.warning("Media proxy failed: %s", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Could not reach the stream.") from exc
 
     ctype = response.headers.get("content-type") or "application/octet-stream"
     if response.status_code >= 400:
         await response.aclose()
-        await client.aclose()
         raise HTTPException(
             status_code=502,
             detail=f"Stream HTTP {response.status_code}",
         )
 
+    passthrough_headers = {
+        "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
+    }
+
+    if assume_mpegts:
+        async def _live_iter() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in response.aiter_bytes(16 * 1024):
+                    yield chunk
+            finally:
+                await response.aclose()
+
+        return StreamingResponse(
+            _live_iter(),
+            status_code=response.status_code,
+            media_type="video/mp2t",
+            headers=passthrough_headers,
+        )
+
     peek = b""
-    stream = response.aiter_bytes(64 * 1024)
+    stream = response.aiter_bytes(16 * 1024)
     try:
         peek = await anext(stream)
     except StopAsyncIteration:
@@ -143,7 +171,6 @@ async def proxy_url(
             if total > 2_000_000:
                 break
         await response.aclose()
-        await client.aclose()
         text = b"".join(chunks).decode("utf-8", errors="replace")
         body = rewrite_hls(text, serializer, str(response.url), sid)
         return Response(
@@ -160,15 +187,16 @@ async def proxy_url(
                 yield chunk
         finally:
             await response.aclose()
-            await client.aclose()
 
-    out_headers = {"Cache-Control": "no-store"}
+    media_type = ctype.split(";")[0]
+    if peek[:1] == bytes((TS_SYNC,)) and "mpegurl" not in media_type.lower():
+        media_type = "video/mp2t"
     if response.headers.get("content-range"):
-        out_headers["Content-Range"] = response.headers["content-range"]
-        out_headers["Accept-Ranges"] = "bytes"
+        passthrough_headers["Content-Range"] = response.headers["content-range"]
+        passthrough_headers["Accept-Ranges"] = "bytes"
     return StreamingResponse(
         _iter(),
         status_code=response.status_code,
-        media_type=ctype.split(";")[0],
-        headers=out_headers,
+        media_type=media_type,
+        headers=passthrough_headers,
     )
