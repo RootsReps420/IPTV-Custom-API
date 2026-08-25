@@ -32,11 +32,13 @@ const searchEl = document.getElementById("watch-search");
 const searchBtn = document.getElementById("search-btn");
 const liveBadge = document.getElementById("live-badge");
 const bufferRow = document.getElementById("buffer-row");
+const watchSpinner = document.getElementById("watch-spinner");
 
+/* Seconds of MPEG-TS to hold before/during play, like TiviMate Small/Medium/Large. */
 const BUFFER_PROFILES = {
-  small: { stash: 256 * 1024, maxLat: 2, minRemain: 0.3, chase: true, liveLag: 2.8 },
-  medium: { stash: 1024 * 1024, maxLat: 4.5, minRemain: 0.8, chase: true, liveLag: 5.5 },
-  large: { stash: 3 * 1024 * 1024, maxLat: 10, minRemain: 2, chase: false, liveLag: 12 },
+  small: { target: 2.5, low: 0.7, stash: 384 * 1024 },
+  medium: { target: 6, low: 1.5, stash: 768 * 1024 },
+  large: { target: 12, low: 3, stash: 1536 * 1024 },
 };
 
 function playId() {
@@ -103,6 +105,8 @@ let liveTimer = null;
 let playing = false;
 let playGen = 0;
 let itemsGen = 0;
+let liveHold = false;
+let liveMpeg = false;
 
 function bufferKey() {
   const key = localStorage.getItem("watch_buffer") || "medium";
@@ -123,39 +127,104 @@ function paintBufferButtons() {
   });
 }
 
-function liveLagSeconds() {
+function bufferedAhead() {
   if (!video.buffered.length) {
-    return null;
+    return 0;
   }
-  return video.buffered.end(video.buffered.length - 1) - video.currentTime;
+  return Math.max(0, video.buffered.end(video.buffered.length - 1) - video.currentTime);
+}
+
+function showWatchSpinner(on) {
+  if (!watchSpinner) {
+    return;
+  }
+  watchSpinner.hidden = !on;
+}
+
+function stopLiveWatch() {
+  liveHold = false;
+  liveMpeg = false;
+  showWatchSpinner(false);
+  if (liveTimer) {
+    clearInterval(liveTimer);
+    liveTimer = null;
+  }
 }
 
 function paintLiveBadge() {
   if (!liveBadge) {
     return;
   }
-  if (!playing || !state.playingLiveId || video.paused) {
+  if (!playing || !state.playingLiveId) {
     liveBadge.hidden = true;
     return;
   }
-  const lag = liveLagSeconds();
-  const limit = bufferProfile().liveLag;
   liveBadge.hidden = false;
-  if (lag == null || lag <= limit) {
-    liveBadge.textContent = "LIVE";
-    liveBadge.classList.remove("is-behind");
+  if (liveHold || video.readyState < 2) {
+    liveBadge.textContent = "BUFFERING";
+    liveBadge.classList.add("is-behind");
     return;
   }
-  liveBadge.textContent = `DELAY ${Math.max(1, Math.round(lag))}s`;
-  liveBadge.classList.add("is-behind");
+  liveBadge.textContent = "LIVE";
+  liveBadge.classList.remove("is-behind");
 }
 
-function startLiveBadge() {
-  paintLiveBadge();
-  if (liveTimer) {
-    clearInterval(liveTimer);
+function tickLiveBuffer() {
+  if (!playing || !state.playingLiveId || !liveMpeg || !tsPlayer) {
+    return;
   }
-  liveTimer = setInterval(paintLiveBadge, 500);
+  if (video.seeking) {
+    paintLiveBadge();
+    return;
+  }
+  const { target, low } = bufferProfile();
+  const ahead = bufferedAhead();
+  const needFill = ahead < low || (liveHold && ahead < target);
+  if (needFill) {
+    liveHold = true;
+    showWatchSpinner(true);
+    if (!video.paused) {
+      video.pause();
+    }
+    paintLiveBadge();
+    return;
+  }
+  liveHold = false;
+  showWatchSpinner(false);
+  if (video.paused) {
+    playNow();
+  }
+  paintLiveBadge();
+}
+
+function startLiveWatch() {
+  stopLiveWatch();
+  liveMpeg = true;
+  liveHold = true;
+  showWatchSpinner(true);
+  paintLiveBadge();
+  liveTimer = setInterval(tickLiveBuffer, 250);
+  tickLiveBuffer();
+}
+
+function applyBufferSize() {
+  paintBufferButtons();
+  if (!liveMpeg || !tsPlayer) {
+    return;
+  }
+  const target = bufferProfile().target;
+  const ahead = bufferedAhead();
+  if (ahead > target + 1.5 && video.buffered.length) {
+    const end = video.buffered.end(video.buffered.length - 1);
+    try {
+      video.currentTime = Math.max(0, end - target);
+    } catch {
+      /* ignore */
+    }
+  } else if (ahead < target) {
+    liveHold = true;
+  }
+  tickLiveBuffer();
 }
 
 function formatClock() {
@@ -436,14 +505,11 @@ function destroyPlayers() {
 
 function stopPlayback() {
   playing = false;
-  state.playingItem = null;
+  stopLiveWatch();
+  showWatchSpinner(false);
   if (beatTimer) {
     clearInterval(beatTimer);
     beatTimer = null;
-  }
-  if (liveTimer) {
-    clearInterval(liveTimer);
-    liveTimer = null;
   }
   if (liveBadge) {
     liveBadge.hidden = true;
@@ -530,6 +596,11 @@ function attachHls(url) {
 }
 
 function playNow() {
+  video.muted = false;
+  video.defaultMuted = false;
+  if (!Number.isFinite(video.volume) || video.volume === 0) {
+    video.volume = 1;
+  }
   const p = video.play();
   if (p && typeof p.catch === "function") {
     p.catch((error) => {
@@ -540,7 +611,7 @@ function playNow() {
   }
 }
 
-function attachMpegTs(url, gen) {
+function attachMpegTs(url, gen, live) {
   if (!window.mpegts || !window.mpegts.getFeatureList().mseLivePlayback) {
     throw new Error("MPEG-TS playback is not supported in this browser. Use Chrome or Edge.");
   }
@@ -548,7 +619,7 @@ function attachMpegTs(url, gen) {
   tsPlayer = window.mpegts.createPlayer(
     {
       type: "mpegts",
-      isLive: true,
+      isLive: Boolean(live),
       hasAudio: true,
       hasVideo: true,
       url,
@@ -558,11 +629,14 @@ function attachMpegTs(url, gen) {
       enableWorker: false,
       enableStashBuffer: true,
       stashInitialSize: buf.stash,
-      liveBufferLatencyChasing: buf.chase,
-      liveBufferLatencyMaxLatency: buf.maxLat,
-      liveBufferLatencyMinRemain: buf.minRemain,
+      isLive: Boolean(live),
+      liveBufferLatencyChasing: false,
+      liveSync: false,
       autoCleanupSourceBuffer: true,
+      autoCleanupMaxBackwardDuration: 90,
+      autoCleanupMinBackwardDuration: 20,
       lazyLoad: false,
+      deferLoadAfterSourceOpen: false,
       fixAudioTimestampGap: true,
     }
   );
@@ -583,22 +657,18 @@ function attachMpegTs(url, gen) {
   tsPlayer.attachMediaElement(video);
   tsPlayer.load();
   playNow();
-  startLiveBadge();
-  video.addEventListener(
-    "canplay",
-    () => {
-      if (gen != null && gen !== playGen) {
-        return;
-      }
-      playNow();
-    },
-    { once: true }
-  );
+  if (live) {
+    startLiveWatch();
+  }
 }
 
 async function playSources(kind, streamId, extensions, gen) {
   // Start the player in this turn (keep the click's autoplay gesture). Heartbeat is not on the critical path.
+  const keepItem = state.playingItem;
+  const keepLive = state.playingLiveId;
   stopPlayback();
+  state.playingItem = keepItem;
+  state.playingLiveId = keepLive;
   if (gen != null && gen !== playGen) {
     return;
   }
@@ -624,7 +694,7 @@ async function playSources(kind, streamId, extensions, gen) {
         }
         playNow();
       } else if (ext === "ts") {
-        attachMpegTs(url, gen);
+        attachMpegTs(url, gen, kind === "live");
         if (kind === "live") {
           return;
         }
@@ -636,14 +706,26 @@ async function playSources(kind, streamId, extensions, gen) {
         });
       } else {
         video.src = url;
-        playNow();
+        video.muted = false;
+        video.defaultMuted = false;
+        video.volume = 1;
         if (kind !== "live") {
-          await video.play().catch((error) => {
-            if (error && error.name === "AbortError") {
-              return;
-            }
-            throw error;
-          });
+          showWatchSpinner(true);
+        }
+        try {
+          playNow();
+          if (kind !== "live") {
+            await video.play().catch((error) => {
+              if (error && error.name === "AbortError") {
+                return;
+              }
+              throw error;
+            });
+          }
+        } finally {
+          if (kind !== "live") {
+            showWatchSpinner(false);
+          }
         }
       }
       return;
@@ -1009,6 +1091,8 @@ loginForm.addEventListener("submit", async (event) => {
 });
 
 document.getElementById("logout-btn").addEventListener("click", async () => {
+  state.playingItem = null;
+  state.playingLiveId = "";
   stopPlayback();
   try {
     await api("/api/watch/logout", {
@@ -1123,15 +1207,35 @@ if (bufferRow) {
       return;
     }
     localStorage.setItem("watch_buffer", key);
-    paintBufferButtons();
-    if (state.playingItem && state.playingLiveId) {
-      playLive(state.playingItem);
-    }
+    applyBufferSize();
   });
 }
 
-video.addEventListener("play", paintLiveBadge);
+video.addEventListener("play", tickLiveBuffer);
+video.addEventListener("playing", () => {
+  if (!liveMpeg) {
+    showWatchSpinner(false);
+  }
+  tickLiveBuffer();
+});
 video.addEventListener("pause", paintLiveBadge);
+video.addEventListener("waiting", () => {
+  if (!liveMpeg || !playing || !state.playingLiveId) {
+    return;
+  }
+  liveHold = true;
+  showWatchSpinner(true);
+  paintLiveBadge();
+});
+video.addEventListener("ended", () => {
+  if (!liveMpeg || !playing || !state.playingLiveId) {
+    return;
+  }
+  liveHold = true;
+  showWatchSpinner(true);
+  paintLiveBadge();
+  tickLiveBuffer();
+});
 
 window.addEventListener("pagehide", () => {
   if (playing) {

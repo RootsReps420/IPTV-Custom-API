@@ -260,13 +260,15 @@ def register_watch(app: FastAPI, static_dir) -> None:
         await _require_slot(svc, user, sid)
         url = panel_media_url(cfg, kind, stream_id, ext)
         live_ts = kind == "live" and ext.lstrip(".").lower() == "ts"
+        vod = kind in {"movie", "series"} and ext.lstrip(".").lower() not in {"m3u8", "mpd"}
         serializer = None if live_ts else fetch_serializer(_root(request))
         return await proxy_url(
             url,
             serializer=serializer,
             sid=sid,
-            range_header=request.headers.get("range"),
+            range_header=None if vod else request.headers.get("range"),
             assume_mpegts=live_ts,
+            remux_aac=vod,
         )
 
     @app.get("/api/player/fetch")

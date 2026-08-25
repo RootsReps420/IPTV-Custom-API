@@ -929,7 +929,7 @@ tr.row-down td {
   position: absolute;
   top: 10px;
   right: 10px;
-  z-index: 2;
+  z-index: 4;
   padding: 3px 8px;
   border-radius: 3px;
   background: #c81e1e;
@@ -944,6 +944,36 @@ tr.row-down td {
   background: #3d4554;
   letter-spacing: 0.04em;
   font-weight: 600;
+}
+
+.watch-spinner {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.watch-spinner[hidden] {
+  display: none;
+}
+
+.watch-spinner span {
+  width: 42px;
+  height: 42px;
+  border: 3px solid rgba(255, 255, 255, 0.22);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: watch-spin 0.75s linear infinite;
+}
+
+@keyframes watch-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .watch-buffer {

@@ -3,12 +3,17 @@
 Live/movie/series URLs are built server-side. HLS playlists are rewritten so
 every URI goes through signed /api/player/fetch. MPEG-TS is streamed in chunks
 (never loaded fully into RAM). Gzip must stay off these paths in Caddy.
+
+VOD is remuxed with ffmpeg (video copy, audio → AAC) because Chrome cannot play
+Matroska/E-AC3, which is most of this panel's movie library.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import shutil
 from collections.abc import AsyncIterator
 from urllib.parse import quote, urljoin, urlparse
 
@@ -107,6 +112,146 @@ def _is_hls(content_type: str, body: bytes) -> bool:
     return head.startswith(b"#EXTM3U")
 
 
+def ffmpeg_bin() -> str | None:
+    return shutil.which("ffmpeg")
+
+
+def _stop_proc(proc: asyncio.subprocess.Process) -> None:
+    if proc.returncode is not None:
+        return
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        return
+
+
+async def remux_vod_to_browser_mp4(url: str) -> StreamingResponse:
+    """Copy video, transcode audio to AAC stereo, mux fragmented MP4 for Chrome/Android."""
+    binary = ffmpeg_bin()
+    if not binary:
+        raise RuntimeError("ffmpeg is not installed")
+    client = http_client()
+    try:
+        request = client.build_request(
+            "GET",
+            url,
+            headers={"User-Agent": _STREAM_UA, "Accept": "*/*"},
+        )
+        response = await client.send(request, stream=True)
+    except httpx.RequestError as exc:
+        logger.warning("VOD remux source failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Could not reach the stream.") from exc
+    if response.status_code >= 400:
+        await response.aclose()
+        raise HTTPException(status_code=502, detail=f"Stream HTTP {response.status_code}")
+
+    ffmpeg_args = (
+        binary,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-probesize",
+        "5000000",
+        "-analyzeduration",
+        "5000000",
+        "-fflags",
+        "+genpts",
+        "-i",
+        "pipe:0",
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-ac",
+        "2",
+        "-b:a",
+        "192k",
+        "-max_muxing_queue_size",
+        "1024",
+        "-flush_packets",
+        "1",
+        "-movflags",
+        "frag_keyframe+empty_moov+default_base_moof",
+        "-f",
+        "mp4",
+        "pipe:1",
+    )
+    proc_kwargs: dict[str, object] = {
+        "stdin": asyncio.subprocess.PIPE,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+        "limit": 8 * 1024 * 1024,
+    }
+    try:
+        proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
+    except TypeError:
+        proc_kwargs.pop("limit", None)
+        proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
+
+    async def feed_source() -> None:
+        try:
+            async for chunk in response.aiter_bytes(64 * 1024):
+                if proc.stdin is None or proc.returncode is not None:
+                    break
+                try:
+                    proc.stdin.write(chunk)
+                    await proc.stdin.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+            if proc.stdin and proc.returncode is None:
+                proc.stdin.close()
+                await proc.stdin.wait_closed()
+        except Exception:
+            logger.warning("VOD remux input stopped")
+            _stop_proc(proc)
+        finally:
+            await response.aclose()
+
+    async def drain_stderr() -> None:
+        if proc.stderr is None:
+            return
+        try:
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    return
+                text = line.decode("utf-8", "replace").strip()
+                if text:
+                    logger.warning("VOD remux: %s", text[:180])
+        except Exception:
+            return
+
+    async def body() -> AsyncIterator[bytes]:
+        feed_task = asyncio.create_task(feed_source())
+        err_task = asyncio.create_task(drain_stderr())
+        try:
+            assert proc.stdout is not None
+            while True:
+                chunk = await proc.stdout.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            _stop_proc(proc)
+            for task in (feed_task, err_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(feed_task, err_task, proc.wait(), return_exceptions=True)
+
+    return StreamingResponse(
+        body(),
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 async def proxy_url(
     url: str,
     *,
@@ -114,8 +259,12 @@ async def proxy_url(
     sid: str = "",
     range_header: str | None = None,
     assume_mpegts: bool = False,
+    remux_aac: bool = False,
 ) -> Response:
     """Stream upstream bytes. Live TS skips body-peek so the player gets headers immediately."""
+    if remux_aac and ffmpeg_bin() and not assume_mpegts:
+        return await remux_vod_to_browser_mp4(url)
+
     headers = {"User-Agent": _STREAM_UA, "Accept": "*/*"}
     if range_header:
         headers["Range"] = range_header
@@ -197,8 +346,18 @@ async def proxy_url(
     media_type = ctype.split(";")[0]
     if peek[:1] == bytes((TS_SYNC,)) and "mpegurl" not in media_type.lower():
         media_type = "video/mp2t"
+    if not media_type or media_type == "application/octet-stream":
+        media_type = "video/mp4"
     if response.headers.get("content-range"):
         passthrough_headers["Content-Range"] = response.headers["content-range"]
+        passthrough_headers["Accept-Ranges"] = "bytes"
+        clen = response.headers.get("content-length")
+        if clen:
+            passthrough_headers["Content-Length"] = clen
+    else:
+        clen = response.headers.get("content-length")
+        if clen:
+            passthrough_headers["Content-Length"] = clen
         passthrough_headers["Accept-Ranges"] = "bytes"
     return StreamingResponse(
         _iter(),

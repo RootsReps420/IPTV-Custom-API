@@ -43,7 +43,9 @@ logger = logging.getLogger("iptv_monitor.player_sync")
 
 LIVE_TIMEOUT = httpx.Timeout(connect=15.0, read=600.0, write=60.0, pool=15.0)
 CAT_TIMEOUT = httpx.Timeout(connect=10.0, read=70.0, write=30.0, pool=10.0)
+CAT_RETRY_TIMEOUT = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=10.0)
 EPG_TIMEOUT = httpx.Timeout(connect=8.0, read=25.0, write=15.0, pool=8.0)
+FORCE_SYNC_NAME = "watch_force_sync"
 XMLTV_MAX_BYTES = 180_000_000
 EPG_HORIZON = 24 * 3600
 EPG_FLOOR = 15 * 60
@@ -171,6 +173,30 @@ class WatchSyncer:
             return False
         return (time.time() - stamp) < self._interval()
 
+    def _force_path(self) -> Path:
+        return resolve_paths(self.root).root / "state" / FORCE_SYNC_NAME
+
+    def _consume_force(self) -> bool:
+        path = self._force_path()
+        if not path.exists():
+            return False
+        try:
+            path.unlink()
+        except OSError:
+            logger.warning("Watch guide could not remove force-sync flag")
+            return True
+        return True
+
+    async def _wait_for_next(self, seconds: float) -> None:
+        """Sleep in 60s slices so a force-sync flag is noticed without a restart."""
+        remaining = max(60.0, seconds)
+        while remaining > 0:
+            if self._force_path().exists():
+                return
+            chunk = min(60.0, remaining)
+            await asyncio.sleep(chunk)
+            remaining -= chunk
+
     async def run_forever(self) -> None:
         """Sync live/EPG on the live interval; movies/shows only when missing or older than 8 hours."""
         await asyncio.sleep(8)
@@ -179,13 +205,14 @@ class WatchSyncer:
             lib_interval = self._library_interval()
             self.guide.interval_seconds = interval
             self.guide.library_interval_seconds = lib_interval
+            force = self._consume_force()
             age = self.guide.age_seconds()
             need_live = age is None or age >= interval
             need_lib = not self._library_fresh(self.guide.vod) or not self._library_fresh(self.guide.series)
             need_epg = self.guide.has_live() and not self._epg_fresh()
-            if need_live or need_lib or need_epg:
+            if force or need_live or need_lib or need_epg:
                 try:
-                    await self.sync_once()
+                    await self.sync_once(force=force)
                 except Exception:
                     logger.exception("Watch guide sync failed")
                     if not self.guide.last_error:
@@ -202,15 +229,17 @@ class WatchSyncer:
                 if lib_age is not None:
                     waits.append(lib_interval - lib_age)
             wait = min(waits) if waits else 60
-            await asyncio.sleep(max(60, wait))
+            await self._wait_for_next(wait)
 
-    async def sync_once(self) -> None:
+    async def sync_once(self, *, force: bool = False) -> None:
         async with self._lock:
             cfg = load_player_config(self.root)
             if not cfg.configured:
                 self.guide.progress = "Watch player is not configured."
                 self.guide.write_meta()
                 return
+            if force:
+                logger.info("Watch guide forced full refresh (live, movies, series, EPG)")
             self.guide.begin_sync()
             started = time.monotonic()
             interval = self._interval()
@@ -218,9 +247,9 @@ class WatchSyncer:
             self.guide.interval_seconds = interval
             self.guide.library_interval_seconds = lib_interval
             age = self.guide.age_seconds()
-            live_fresh = bool(self.guide.has_live() and age is not None and age < interval)
-            vod_fresh = self._library_fresh(self.guide.vod)
-            series_fresh = self._library_fresh(self.guide.series)
+            live_fresh = (not force) and bool(self.guide.has_live() and age is not None and age < interval)
+            vod_fresh = (not force) and self._library_fresh(self.guide.vod)
+            series_fresh = (not force) and self._library_fresh(self.guide.series)
             try:
                 if live_fresh:
                     logger.info(
@@ -238,7 +267,7 @@ class WatchSyncer:
                         len(streams),
                         time.monotonic() - started,
                     )
-                epg_ok = self._epg_fresh()
+                epg_ok = (not force) and self._epg_fresh()
                 if vod_fresh:
                     logger.info(
                         "Watch guide movies still fresh (%ss old, %s titles); skipping",
@@ -308,6 +337,7 @@ class WatchSyncer:
             item_keys=_LIVE_SYNC_KEYS,
             id_key="stream_id",
             progress="Live",
+            previous_by_cat=self.guide.data.by_cat,
         )
 
     def _download_vod(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -318,6 +348,7 @@ class WatchSyncer:
             item_keys=_VOD_KEYS,
             id_key="stream_id",
             progress="Movies",
+            previous_by_cat=self.guide.vod.by_cat,
         )
 
     def _download_series(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -328,6 +359,7 @@ class WatchSyncer:
             item_keys=_SERIES_KEYS,
             id_key="series_id",
             progress="Series",
+            previous_by_cat=self.guide.series.by_cat,
         )
 
     def _download_by_category(
@@ -339,6 +371,7 @@ class WatchSyncer:
         item_keys: tuple[str, ...],
         id_key: str,
         progress: str,
+        previous_by_cat: dict[str, list[dict[str, Any]]] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         creds = {"username": cfg.username.strip(), "password": cfg.password.strip()}
         with self._client(LIVE_TIMEOUT) as client:
@@ -376,43 +409,85 @@ class WatchSyncer:
         self.guide.set_phase(phase, message=f"{progress} 0/{total} groups", total=total)
         by_id: dict[str, dict[str, Any]] = {}
         done = 0
+        failed: list[dict[str, Any]] = []
+        previous_by_cat = previous_by_cat or {}
 
-        def fetch_group(cat: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+        def fetch_group(
+            cat: dict[str, Any], timeout: httpx.Timeout
+        ) -> tuple[str, list[dict[str, Any]], dict[str, Any], bool]:
             name = str(cat.get("category_name") or cat.get("category_id") or "").strip()
             cid = str(cat.get("category_id") or "").strip()
             self.guide.group_start(name, phase, total)
             if not cid:
-                return name, []
+                return name, [], cat, True
             try:
-                with self._client(CAT_TIMEOUT) as client:
+                with self._client(timeout) as client:
                     resp = client.get(
                         f"{cfg.base}/player_api.php",
                         params={**creds, "action": list_action, "category_id": cid},
                     )
             except Exception as exc:
                 logger.warning("Watch guide %s group %s failed: %s", progress, cid, type(exc).__name__)
-                return name, []
+                return name, [], cat, False
             if resp.status_code >= 400:
                 logger.warning("Watch guide %s group %s HTTP %s", progress, cid, resp.status_code)
-                return name, []
+                return name, [], cat, False
             try:
                 payload = resp.json()
             except Exception:
-                return name, []
+                logger.warning("Watch guide %s group %s returned invalid JSON", progress, cid)
+                return name, [], cat, False
             if isinstance(payload, dict):
                 payload = payload.get("available_channels") or payload.get("streams") or payload
-            return name, [_pick(item, item_keys) for item in _as_list(payload)]
+            return name, [_pick(item, item_keys) for item in _as_list(payload)], cat, True
+
+        def absorb(name: str, rows: list[dict[str, Any]], cat: dict[str, Any], ok: bool) -> None:
+            nonlocal done
+            done += 1
+            self.guide.group_done(name, done, total, phase)
+            if not ok:
+                failed.append(cat)
+                return
+            for row in rows:
+                sid = str(row.get(id_key) or "").strip()
+                if sid:
+                    by_id[sid] = row
 
         with ThreadPoolExecutor(max_workers=CAT_WORKERS) as pool:
-            futures = [pool.submit(fetch_group, cat) for cat in keep]
+            futures = [pool.submit(fetch_group, cat, CAT_TIMEOUT) for cat in keep]
             for fut in as_completed(futures):
-                done += 1
-                name, rows = fut.result()
-                self.guide.group_done(name, done, total, phase)
-                for row in rows:
+                absorb(*fut.result())
+
+        if failed:
+            retry_cats = list(failed)
+            failed = []
+            logger.warning("Watch guide %s: retrying %s timed-out groups", progress, len(retry_cats))
+            with ThreadPoolExecutor(max_workers=max(1, CAT_WORKERS // 2)) as pool:
+                futures = [pool.submit(fetch_group, cat, CAT_RETRY_TIMEOUT) for cat in retry_cats]
+                for fut in as_completed(futures):
+                    name, rows, cat, ok = fut.result()
+                    if not ok:
+                        failed.append(cat)
+                        continue
+                    for row in rows:
+                        sid = str(row.get(id_key) or "").strip()
+                        if sid:
+                            by_id[sid] = row
+
+        if failed:
+            kept_old = 0
+            for cat in failed:
+                cid = str(cat.get("category_id") or "").strip()
+                name = str(cat.get("category_name") or cid).strip()
+                logger.warning("Watch guide %s group still missing after retry: %s (%s)", progress, name, cid)
+                for row in previous_by_cat.get(cid, []):
                     sid = str(row.get(id_key) or "").strip()
-                    if sid:
+                    if sid and sid not in by_id:
                         by_id[sid] = row
+                        kept_old += 1
+            if kept_old:
+                logger.info("Watch guide %s: kept %s previous items from failed groups", progress, kept_old)
+
         items = list(by_id.values())
         if not items:
             raise RuntimeError(f"Panel returned no {progress.lower()} items")

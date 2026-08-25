@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=32" />
+  <link rel="stylesheet" href="/static/styles.css?v=34" />
 </head>
 <body class="watch-body">
   <div class="grid-bg" aria-hidden="true"></div>
@@ -71,14 +71,15 @@
         </div>
         <div class="watch-preview-card">
           <div class="watch-video-wrap">
-            <video id="player" controls playsinline autoplay></video>
+            <video id="player" controls playsinline webkit-playsinline></video>
+            <div id="watch-spinner" class="watch-spinner" hidden><span></span></div>
             <span id="live-badge" class="watch-live-badge" hidden>LIVE</span>
           </div>
           <div class="watch-buffer" id="buffer-row">
             <span>Buffer</span>
-            <button type="button" data-buf="small">Small</button>
-            <button type="button" data-buf="medium">Medium</button>
-            <button type="button" data-buf="large">Large</button>
+            <button type="button" data-buf="small" title="Fill about 2.5s before play">Small</button>
+            <button type="button" data-buf="medium" title="Fill about 6s before play">Medium</button>
+            <button type="button" data-buf="large" title="Fill about 12s before play">Large</button>
           </div>
           <div class="watch-now">
             <div id="now-clock" class="watch-clock"></div>
@@ -96,6 +97,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=32"></script>
+  <script src="/static/watch.js?v=34"></script>
 </body>
 </html>
