@@ -1,7 +1,7 @@
 """Background live catalogue + EPG pull for /watch.
 
-Runs beside the dashboard. Every watch_sync_seconds (default 4 hours) downloads
-live/VOD/series lists (skipping catch-all groups) and now/next via get_short_epg.
+Runs beside the dashboard. Live + EPG refresh every watch_sync_seconds (default
+4 hours). Movies/Shows refresh every watch_library_sync_seconds (default 8 hours).
 Category clicks then read disk. Credentials never go in the JSON files.
 """
 
@@ -151,15 +151,39 @@ class WatchSyncer:
             seconds = 14400
         return max(600, seconds)
 
+    def _library_interval(self) -> int:
+        try:
+            seconds = int(load_settings(resolve_paths(self.root).settings).watch_library_sync_seconds)
+        except Exception:
+            seconds = 28800
+        return max(3600, seconds)
+
+    def _library_fresh(self, lib) -> bool:
+        age = self.guide.library_age_seconds(lib)
+        return bool(lib.items and age is not None and age < self._library_interval())
+
+    def _epg_fresh(self) -> bool:
+        """Skip EPG if we already stored now/next within the live sync interval."""
+        if not self.guide.data.epg:
+            return False
+        stamp = float(self.guide.data.epg_updated_at or 0)
+        if stamp <= 0:
+            return False
+        return (time.time() - stamp) < self._interval()
+
     async def run_forever(self) -> None:
-        """First sync if the on-disk guide is missing or stale, then every 4 hours."""
+        """Sync live/EPG on the live interval; movies/shows only when missing or older than 8 hours."""
         await asyncio.sleep(8)
         while True:
             interval = self._interval()
+            lib_interval = self._library_interval()
             self.guide.interval_seconds = interval
+            self.guide.library_interval_seconds = lib_interval
             age = self.guide.age_seconds()
-            missing_libs = not self.guide.vod.items or not self.guide.series.items
-            if age is None or age >= interval or missing_libs:
+            need_live = age is None or age >= interval
+            need_lib = not self._library_fresh(self.guide.vod) or not self._library_fresh(self.guide.series)
+            need_epg = self.guide.has_live() and not self._epg_fresh()
+            if need_live or need_lib or need_epg:
                 try:
                     await self.sync_once()
                 except Exception:
@@ -169,7 +193,15 @@ class WatchSyncer:
                     self.guide.finish_sync()
                     await asyncio.sleep(120)
                     continue
-            wait = interval - (self.guide.age_seconds() or 0)
+            waits: list[float] = []
+            live_age = self.guide.age_seconds()
+            if live_age is not None:
+                waits.append(interval - live_age)
+            for lib in (self.guide.vod, self.guide.series):
+                lib_age = self.guide.library_age_seconds(lib)
+                if lib_age is not None:
+                    waits.append(lib_interval - lib_age)
+            wait = min(waits) if waits else 60
             await asyncio.sleep(max(60, wait))
 
     async def sync_once(self) -> None:
@@ -182,8 +214,13 @@ class WatchSyncer:
             self.guide.begin_sync()
             started = time.monotonic()
             interval = self._interval()
+            lib_interval = self._library_interval()
+            self.guide.interval_seconds = interval
+            self.guide.library_interval_seconds = lib_interval
             age = self.guide.age_seconds()
             live_fresh = bool(self.guide.has_live() and age is not None and age < interval)
+            vod_fresh = self._library_fresh(self.guide.vod)
+            series_fresh = self._library_fresh(self.guide.series)
             try:
                 if live_fresh:
                     logger.info(
@@ -201,23 +238,37 @@ class WatchSyncer:
                         len(streams),
                         time.monotonic() - started,
                     )
-                epg_ok = bool(self.guide.data.epg)
-                try:
-                    self.guide.set_phase("movies", message="Downloading movies…")
-                    vod_cats, vod_items = await asyncio.to_thread(self._download_vod, cfg)
-                    self.guide.replace_vod(vod_cats, vod_items)
-                    logger.info("Watch guide movies: %s titles", len(vod_items))
-                except Exception as exc:
-                    logger.warning("Watch guide movies failed: %s", exc)
-                    self.guide.last_error = (self.guide.last_error or "") + f" movies: {exc}"[:80]
-                try:
-                    self.guide.set_phase("series", message="Downloading series…")
-                    series_cats, series_items = await asyncio.to_thread(self._download_series, cfg)
-                    self.guide.replace_series(series_cats, series_items)
-                    logger.info("Watch guide series: %s titles", len(series_items))
-                except Exception as exc:
-                    logger.warning("Watch guide series failed: %s", exc)
-                    self.guide.last_error = (self.guide.last_error or "") + f" series: {exc}"[:80]
+                epg_ok = self._epg_fresh()
+                if vod_fresh:
+                    logger.info(
+                        "Watch guide movies still fresh (%ss old, %s titles); skipping",
+                        int(self.guide.library_age_seconds(self.guide.vod) or 0),
+                        len(self.guide.vod.items),
+                    )
+                else:
+                    try:
+                        self.guide.set_phase("movies", message="Downloading movies…")
+                        vod_cats, vod_items = await asyncio.to_thread(self._download_vod, cfg)
+                        self.guide.replace_vod(vod_cats, vod_items)
+                        logger.info("Watch guide movies: %s titles", len(vod_items))
+                    except Exception as exc:
+                        logger.warning("Watch guide movies failed: %s", exc)
+                        self.guide.last_error = (self.guide.last_error or "") + f" movies: {exc}"[:80]
+                if series_fresh:
+                    logger.info(
+                        "Watch guide series still fresh (%ss old, %s titles); skipping",
+                        int(self.guide.library_age_seconds(self.guide.series) or 0),
+                        len(self.guide.series.items),
+                    )
+                else:
+                    try:
+                        self.guide.set_phase("series", message="Downloading series…")
+                        series_cats, series_items = await asyncio.to_thread(self._download_series, cfg)
+                        self.guide.replace_series(series_cats, series_items)
+                        logger.info("Watch guide series: %s titles", len(series_items))
+                    except Exception as exc:
+                        logger.warning("Watch guide series failed: %s", exc)
+                        self.guide.last_error = (self.guide.last_error or "") + f" series: {exc}"[:80]
                 if live_fresh and epg_ok:
                     logger.info("Watch guide EPG already loaded (%s channels); skipping", len(self.guide.data.epg))
                 else:

@@ -196,7 +196,7 @@ class XtreamCatalogue:
         self.guide = guide
         self._cache: dict[str, tuple[float, Any]] = {}
         self._disk_loaded = False
-        self._epg_busy: set[str] = set()
+        self._epg_tasks: dict[str, asyncio.Task] = {}
 
     def _key(self, cfg: PlayerConfig, action: str, extra: str) -> str:
         return f"{cfg.base}|{cfg.username}|{action}|{extra}"
@@ -345,8 +345,9 @@ class XtreamCatalogue:
         if self.guide is not None:
             cached = self.guide.live_streams(category_id)
             if cached is not None:
-                self._schedule_epg_backfill(cfg, category_id, cached)
-                return cached
+                await self._await_epg_backfill(cfg, category_id, cached)
+                refreshed = self.guide.live_streams(category_id)
+                return refreshed if refreshed is not None else cached
             if self.guide.running:
                 return []
         extra = {"category_id": category_id} if category_id else {}
@@ -355,24 +356,28 @@ class XtreamCatalogue:
             return [self.guide.decorate(row) for row in rows]
         return rows
 
-    def _schedule_epg_backfill(self, cfg: PlayerConfig, category_id: str, rows: list[dict[str, Any]]) -> None:
-        """Fill now/next for this group in the background so the list request stays fast."""
+    async def _await_epg_backfill(
+        self, cfg: PlayerConfig, category_id: str, rows: list[dict[str, Any]]
+    ) -> None:
+        """Fill now/next for this group; wait briefly so the channel list is not empty on first paint."""
         cid = str(category_id or "").strip()
-        if not cid or cid in self._epg_busy:
+        if not cid:
             return
         missing = [
             row
             for row in rows
-            if not row.get("now_title") and str(row.get("stream_id") or "").strip()
+            if not str(row.get("now_title") or "").strip() and str(row.get("stream_id") or "").strip()
         ]
         if not missing:
             return
+        task = self._epg_tasks.get(cid)
+        if task is None or task.done():
+            task = asyncio.create_task(self._backfill_epg(cfg, cid, missing[:80]))
+            self._epg_tasks[cid] = task
         try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
+            await asyncio.wait_for(asyncio.shield(task), 3.2)
+        except (asyncio.TimeoutError, Exception):
             return
-        self._epg_busy.add(cid)
-        loop.create_task(self._backfill_epg(cfg, cid, missing[:80]))
 
     async def _backfill_epg(self, cfg: PlayerConfig, category_id: str, rows: list[dict[str, Any]]) -> None:
         sem = asyncio.Semaphore(6)
@@ -387,7 +392,9 @@ class XtreamCatalogue:
         try:
             await asyncio.gather(*(one(row) for row in rows))
         finally:
-            self._epg_busy.discard(category_id)
+            current = self._epg_tasks.get(category_id)
+            if current is not None and current.done():
+                self._epg_tasks.pop(category_id, None)
 
     async def vod_streams(self, cfg: PlayerConfig, category_id: str) -> list[dict[str, Any]]:
         if self.guide is not None:

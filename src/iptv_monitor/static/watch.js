@@ -30,6 +30,14 @@ const itemList = document.getElementById("item-list");
 const seriesPanel = document.getElementById("series-panel");
 const searchEl = document.getElementById("watch-search");
 const searchBtn = document.getElementById("search-btn");
+const liveBadge = document.getElementById("live-badge");
+const bufferRow = document.getElementById("buffer-row");
+
+const BUFFER_PROFILES = {
+  small: { stash: 256 * 1024, maxLat: 2, minRemain: 0.3, chase: true, liveLag: 2.8 },
+  medium: { stash: 1024 * 1024, maxLat: 4.5, minRemain: 0.8, chase: true, liveLag: 5.5 },
+  large: { stash: 3 * 1024 * 1024, maxLat: 10, minRemain: 2, chase: false, liveLag: 12 },
+};
 
 function playId() {
   // One UUID per tab so two tabs from the same friend consume two panel slots.
@@ -83,14 +91,72 @@ const state = {
   items: [],
   seriesDetail: null,
   playingLiveId: "",
+  playingItem: null,
   wasSyncing: false,
+  epgTries: 0,
 };
 
 let hls = null;
 let tsPlayer = null;
 let beatTimer = null;
+let liveTimer = null;
 let playing = false;
 let playGen = 0;
+let itemsGen = 0;
+
+function bufferKey() {
+  const key = localStorage.getItem("watch_buffer") || "medium";
+  return BUFFER_PROFILES[key] ? key : "medium";
+}
+
+function bufferProfile() {
+  return BUFFER_PROFILES[bufferKey()];
+}
+
+function paintBufferButtons() {
+  if (!bufferRow) {
+    return;
+  }
+  const key = bufferKey();
+  bufferRow.querySelectorAll("[data-buf]").forEach((button) => {
+    button.classList.toggle("is-here", button.getAttribute("data-buf") === key);
+  });
+}
+
+function liveLagSeconds() {
+  if (!video.buffered.length) {
+    return null;
+  }
+  return video.buffered.end(video.buffered.length - 1) - video.currentTime;
+}
+
+function paintLiveBadge() {
+  if (!liveBadge) {
+    return;
+  }
+  if (!playing || !state.playingLiveId || video.paused) {
+    liveBadge.hidden = true;
+    return;
+  }
+  const lag = liveLagSeconds();
+  const limit = bufferProfile().liveLag;
+  liveBadge.hidden = false;
+  if (lag == null || lag <= limit) {
+    liveBadge.textContent = "LIVE";
+    liveBadge.classList.remove("is-behind");
+    return;
+  }
+  liveBadge.textContent = `DELAY ${Math.max(1, Math.round(lag))}s`;
+  liveBadge.classList.add("is-behind");
+}
+
+function startLiveBadge() {
+  paintLiveBadge();
+  if (liveTimer) {
+    clearInterval(liveTimer);
+  }
+  liveTimer = setInterval(paintLiveBadge, 500);
+}
 
 function formatClock() {
   return new Date().toLocaleString(undefined, {
@@ -370,9 +436,17 @@ function destroyPlayers() {
 
 function stopPlayback() {
   playing = false;
+  state.playingItem = null;
   if (beatTimer) {
     clearInterval(beatTimer);
     beatTimer = null;
+  }
+  if (liveTimer) {
+    clearInterval(liveTimer);
+    liveTimer = null;
+  }
+  if (liveBadge) {
+    liveBadge.hidden = true;
   }
   destroyPlayers();
 }
@@ -470,6 +544,7 @@ function attachMpegTs(url, gen) {
   if (!window.mpegts || !window.mpegts.getFeatureList().mseLivePlayback) {
     throw new Error("MPEG-TS playback is not supported in this browser. Use Chrome or Edge.");
   }
+  const buf = bufferProfile();
   tsPlayer = window.mpegts.createPlayer(
     {
       type: "mpegts",
@@ -482,10 +557,10 @@ function attachMpegTs(url, gen) {
     {
       enableWorker: false,
       enableStashBuffer: true,
-      stashInitialSize: 384,
-      liveBufferLatencyChasing: true,
-      liveBufferLatencyMaxLatency: 3,
-      liveBufferLatencyMinRemain: 0.5,
+      stashInitialSize: buf.stash,
+      liveBufferLatencyChasing: buf.chase,
+      liveBufferLatencyMaxLatency: buf.maxLat,
+      liveBufferLatencyMinRemain: buf.minRemain,
       autoCleanupSourceBuffer: true,
       lazyLoad: false,
       fixAudioTimestampGap: true,
@@ -508,6 +583,7 @@ function attachMpegTs(url, gen) {
   tsPlayer.attachMediaElement(video);
   tsPlayer.load();
   playNow();
+  startLiveBadge();
   video.addEventListener(
     "canplay",
     () => {
@@ -591,6 +667,7 @@ async function playSources(kind, streamId, extensions, gen) {
 function playLive(item) {
   const gen = ++playGen;
   state.playingLiveId = String(item.stream_id);
+  state.playingItem = item;
   setPreview(item, { fallback: "Starting…" });
   showBanner("");
   try {
@@ -615,13 +692,29 @@ function playLive(item) {
       const rows = data.epg || [];
       const current = rows[0] || {};
       const upcoming = rows[1] || {};
+      const nowTitleText = current.title || item.now_title || "";
+      const nextTitleText = upcoming.title || item.next_title || "";
+      const start = current.start_timestamp || current.start || item.now_start;
+      const stop = current.stop_timestamp || current.end || item.now_stop;
       setPreview(item, {
-        now: current.title || item.now_title || "",
-        next: upcoming.title || item.next_title || "",
-        start: current.start_timestamp || current.start || item.now_start,
-        stop: current.stop_timestamp || current.end || item.now_stop,
+        now: nowTitleText,
+        next: nextTitleText,
+        start,
+        stop,
         fallback: "No programme info",
       });
+      const row = state.items.find((entry) => String(entry.stream_id) === String(item.stream_id));
+      if (row && nowTitleText) {
+        row.now_title = nowTitleText;
+        row.next_title = nextTitleText;
+        if (start) {
+          row.now_start = start;
+        }
+        if (stop) {
+          row.now_stop = stop;
+        }
+        renderItems();
+      }
     })
     .catch(() => {
       /* keep now/next from the channel list */
@@ -810,26 +903,53 @@ async function loadCategories() {
   itemList.innerHTML = `<div class="empty-events">Pick a group. Channels and what's on now show in the list; click one for a live preview.</div>`;
 }
 
-async function loadItems() {
+async function loadItems(opts) {
   seriesPanel.hidden = true;
   const kind = state.tab;
+  const refresh = !!opts?.epgRefresh;
+  if (!refresh) {
+    itemsGen += 1;
+    state.epgTries = 0;
+  }
+  const gen = itemsGen;
+  const categoryId = state.categoryId;
   if (kind === "live") {
     const data = await api(
-      `/api/player/live/streams?category_id=${encodeURIComponent(state.categoryId)}`
+      `/api/player/live/streams?category_id=${encodeURIComponent(categoryId)}`
     );
+    if (gen !== itemsGen) {
+      return;
+    }
     state.items = data.streams || [];
   } else if (kind === "movies") {
     const data = await api(
-      `/api/player/vod/streams?category_id=${encodeURIComponent(state.categoryId)}`
+      `/api/player/vod/streams?category_id=${encodeURIComponent(categoryId)}`
     );
+    if (gen !== itemsGen) {
+      return;
+    }
     state.items = data.streams || [];
   } else {
     const data = await api(
-      `/api/player/series/list?category_id=${encodeURIComponent(state.categoryId)}`
+      `/api/player/series/list?category_id=${encodeURIComponent(categoryId)}`
     );
+    if (gen !== itemsGen) {
+      return;
+    }
     state.items = data.series || [];
   }
   renderItems();
+  if (kind === "live") {
+    const missing = state.items.filter((item) => !item.now_title).length;
+    if (missing > 0 && (state.epgTries || 0) < 3) {
+      state.epgTries = (state.epgTries || 0) + 1;
+      window.setTimeout(() => {
+        if (gen === itemsGen && state.tab === "live" && state.categoryId === categoryId) {
+          loadItems({ epgRefresh: true }).catch(() => {});
+        }
+      }, 1800);
+    }
+  }
 }
 
 async function boot() {
@@ -845,6 +965,7 @@ async function boot() {
     userStat.textContent = me.username;
     setGuide(me.sync);
     showApp();
+    paintBufferButtons();
     if (!me.configured) {
       showBanner(
         "Watch is signed in, but config/player.yaml has no Xtream DNS / username / password yet.",
@@ -990,6 +1111,27 @@ if (searchBtn) {
     searchEl.select();
   });
 }
+
+if (bufferRow) {
+  bufferRow.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-buf]");
+    if (!button) {
+      return;
+    }
+    const key = button.getAttribute("data-buf");
+    if (!BUFFER_PROFILES[key]) {
+      return;
+    }
+    localStorage.setItem("watch_buffer", key);
+    paintBufferButtons();
+    if (state.playingItem && state.playingLiveId) {
+      playLive(state.playingItem);
+    }
+  });
+}
+
+video.addEventListener("play", paintLiveBadge);
+video.addEventListener("pause", paintLiveBadge);
 
 window.addEventListener("pagehide", () => {
   if (playing) {

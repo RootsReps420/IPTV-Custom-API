@@ -46,6 +46,8 @@ class Settings(BaseModel):
     history_retention_days: int = 90
     # How often Watch re-downloads live channels + EPG into state/ (seconds).
     watch_sync_seconds: int = 14400
+    # Movies/Shows catalogue. Longer than live — titles change slowly.
+    watch_library_sync_seconds: int = 28800
 
 
 class Playlist(BaseModel):

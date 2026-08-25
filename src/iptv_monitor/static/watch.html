@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=31" />
+  <link rel="stylesheet" href="/static/styles.css?v=32" />
 </head>
 <body class="watch-body">
   <div class="grid-bg" aria-hidden="true"></div>
@@ -70,7 +70,16 @@
           <div id="series-panel" class="watch-series" hidden></div>
         </div>
         <div class="watch-preview-card">
-          <video id="player" controls playsinline autoplay></video>
+          <div class="watch-video-wrap">
+            <video id="player" controls playsinline autoplay></video>
+            <span id="live-badge" class="watch-live-badge" hidden>LIVE</span>
+          </div>
+          <div class="watch-buffer" id="buffer-row">
+            <span>Buffer</span>
+            <button type="button" data-buf="small">Small</button>
+            <button type="button" data-buf="medium">Medium</button>
+            <button type="button" data-buf="large">Large</button>
+          </div>
           <div class="watch-now">
             <div id="now-clock" class="watch-clock"></div>
             <div id="now-title" class="hist-host">Select a channel</div>
@@ -87,6 +96,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=31"></script>
+  <script src="/static/watch.js?v=32"></script>
 </body>
 </html>

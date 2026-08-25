@@ -42,5 +42,7 @@ frequent_failure_window_hours: 24
 # History tab: how long to keep per-URL down events.
 history_retention_days: 90
 
-# Watch: live/VOD/series lists + now/next EPG into state/. 14400 = 4 hours.
+# Watch: live channels + now/next EPG into state/. 14400 = 4 hours.
 watch_sync_seconds: 14400
+# Movies/Shows lists. 28800 = 8 hours.
+watch_library_sync_seconds: 28800

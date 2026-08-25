@@ -219,6 +219,7 @@ class WatchGuide:
         self.progress = ""
         self.last_error = ""
         self.interval_seconds = 14400
+        self.library_interval_seconds = 28800
         self.vod = ItemLibrary()
         self.series = ItemLibrary()
         self._lock = threading.Lock()
@@ -587,6 +588,11 @@ class WatchGuide:
             return None
         return max(0.0, time.time() - self.data.updated_at)
 
+    def library_age_seconds(self, lib: ItemLibrary) -> float | None:
+        if not lib.items or not lib.updated_at:
+            return None
+        return max(0.0, time.time() - lib.updated_at)
+
     def status(self) -> dict[str, Any]:
         age = self.age_seconds()
         last_ok = None
@@ -619,6 +625,7 @@ class WatchGuide:
                 "series": len(self.series.items),
                 "epg_channels": len(self.data.epg),
                 "interval_seconds": int(self.interval_seconds),
+                "library_interval_seconds": int(self.library_interval_seconds),
                 "last_error": self.last_error or None,
             }
 
@@ -711,7 +718,20 @@ class WatchGuide:
         rows = self._epg_rows_for_stream(stream)
         if not rows:
             return None, None
-        return self._now_next_from_rows(rows, now)
+        current, nxt = self._now_next_from_rows(rows, now)
+        if current:
+            return current, nxt
+        stamp = int(now or time.time())
+        rest: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                if int(row["stop"]) > stamp:
+                    rest.append(row)
+            except (KeyError, TypeError, ValueError):
+                continue
+        if not rest:
+            return None, None
+        return rest[0], rest[1] if len(rest) > 1 else None
 
     def now_next(self, epg_id: str, now: int | None = None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         rows = self._epg_rows(epg_id)
@@ -793,4 +813,4 @@ class WatchGuide:
             )
             if len(out) >= limit:
                 break
-        return out
+        return out or None
