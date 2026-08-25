@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from ruamel.yaml import YAML
 
 from iptv_monitor.config import resolve_paths
-from iptv_monitor.player_guide import decode_xtream_text
+from iptv_monitor.player_guide import decode_xtream_text, is_uk_live_group
 from iptv_monitor.health import normalize_url
 from iptv_monitor.stream import _STREAM_UA
 
@@ -306,6 +306,8 @@ class XtreamCatalogue:
             "series": "get_series_categories",
         }[kind]
         rows = [_pick(item, _CATEGORY_KEYS) for item in _as_list(await self._api(cfg, action))]
+        if kind == "live":
+            rows = [row for row in rows if is_uk_live_group(str(row.get("category_name") or ""))]
         return rows
 
     async def live_streams(self, cfg: PlayerConfig, category_id: str) -> list[dict[str, Any]]:

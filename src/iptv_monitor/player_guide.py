@@ -12,6 +12,7 @@ import html
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,12 @@ EPG_NAME = "watch_epg.json"
 META_NAME = "watch_sync.json"
 _B64 = re.compile(r"^[A-Za-z0-9+/]{8,}={0,2}$")
 _NOT_ALNUM = re.compile(r"[^a-z0-9]+")
+_UK_GROUP = re.compile(r"^uk\s*\|", re.I)
+
+
+def is_uk_live_group(name: str) -> bool:
+    """Live groups we sync: panel names like 'UK| Sky Sports'. US/IE/4K/PPV-without-UK are out."""
+    return bool(_UK_GROUP.match((name or "").strip()))
 
 
 def norm_epg_key(value: str) -> str:
@@ -160,6 +167,18 @@ class WatchGuide:
         self.interval_seconds = 14400
         self.vod = ItemLibrary()
         self.series = ItemLibrary()
+        self._lock = threading.Lock()
+        self.sync_started_at = 0.0
+        self.phase = ""
+        self.phase_started_at = 0.0
+        self.phase_done = 0
+        self.phase_total = 0
+        self.phase_item = ""
+        self.inflight: list[str] = []
+        self.epg_bytes = 0
+        self.epg_size = 0
+        self._finished_phases: set[str] = set()
+        self._last_meta = 0.0
         self.load_disk()
 
     def paths(self) -> tuple[Path, Path, Path, Path, Path]:
@@ -337,9 +356,161 @@ class WatchGuide:
         if persist and self.data.epg_updated_at:
             self._write_epg()
 
-    def write_meta(self) -> None:
+    def write_meta(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_meta < 1.0:
+            return
+        self._last_meta = now
         *_rest, meta_path = self.paths()
         atomic_write_json(meta_path, self.status())
+
+    def begin_sync(self) -> None:
+        with self._lock:
+            self.running = True
+            self.sync_started_at = time.time()
+            self.phase = ""
+            self.phase_started_at = 0.0
+            self.phase_done = 0
+            self.phase_total = 0
+            self.phase_item = ""
+            self.inflight = []
+            self.epg_bytes = 0
+            self.epg_size = 0
+            self._finished_phases = set()
+            self.last_error = ""
+            self.progress = "Starting guide sync…"
+        self.write_meta(force=True)
+
+    def finish_sync(self) -> None:
+        with self._lock:
+            self.running = False
+            self.progress = ""
+            self.phase = ""
+            self.phase_item = ""
+            self.inflight = []
+        self.write_meta(force=True)
+
+    def set_phase(self, phase: str, *, message: str = "", total: int = 0, item: str = "") -> None:
+        with self._lock:
+            if self.phase and self.phase != phase:
+                self._finished_phases.add(self.phase)
+            self.phase = phase
+            self.phase_started_at = time.time()
+            self.phase_done = 0
+            self.phase_total = total
+            self.phase_item = item
+            self.inflight = []
+            if phase != "epg":
+                self.epg_bytes = 0
+                self.epg_size = 0
+            self.progress = message or self._progress_line_unlocked()
+        self.write_meta(force=True)
+
+    def group_start(self, name: str, phase: str, total: int) -> None:
+        label = (name or "").strip()
+        with self._lock:
+            if label and label not in self.inflight:
+                self.inflight.append(label)
+            self.phase = phase
+            self.phase_total = total
+            self.phase_item = label
+            self.progress = self._progress_line_unlocked()
+        self.write_meta()
+
+    def group_done(self, name: str, done: int, total: int, phase: str) -> None:
+        label = (name or "").strip()
+        with self._lock:
+            self.inflight = [item for item in self.inflight if item != label]
+            self.phase = phase
+            self.phase_done = done
+            self.phase_total = total
+            self.progress = self._progress_line_unlocked()
+        self.write_meta()
+
+    def set_epg_bytes(self, written: int, total: int = 0) -> None:
+        with self._lock:
+            self.epg_bytes = max(0, int(written))
+            if total:
+                self.epg_size = max(0, int(total))
+            self.progress = self._progress_line_unlocked()
+        self.write_meta()
+
+    def note(self, item: str, message: str | None = None) -> None:
+        with self._lock:
+            self.phase_item = (item or "").strip()
+            self.progress = message or self._progress_line_unlocked()
+        self.write_meta(force=True)
+
+    def _progress_line_unlocked(self) -> str:
+        phase = self.phase or "sync"
+        if phase in {"live", "movies", "series"}:
+            label = {"live": "Live", "movies": "Movies", "series": "Shows"}[phase]
+            counts = f"{self.phase_done}/{self.phase_total} groups" if self.phase_total else label
+            current = ", ".join(self.inflight[-4:]) or self.phase_item
+            if current:
+                return f"{label} {counts} · {current}"
+            return f"{label} {counts}"
+        if phase == "epg":
+            if self.phase_item:
+                return self.phase_item
+            mb = self.epg_bytes / 1_000_000
+            if self.epg_size:
+                return f"EPG {mb:.1f}/{self.epg_size / 1_000_000:.1f} MB"
+            if self.epg_bytes:
+                return f"EPG {mb:.1f} MB downloaded"
+            return "Downloading EPG…"
+        return self.progress or "Syncing…"
+
+    def _fraction_unlocked(self) -> float:
+        weights = {"live": 0.40, "epg": 0.25, "movies": 0.20, "series": 0.15}
+        done_w = sum(weights[name] for name in self._finished_phases if name in weights)
+        if self.phase in weights:
+            frac = 0.0
+            if self.phase == "epg":
+                if self.epg_size > 0 and self.epg_bytes:
+                    frac = min(0.95, self.epg_bytes / self.epg_size)
+                elif (self.phase_item or "").lower().startswith("pars"):
+                    frac = 0.85
+                elif self.epg_bytes > 0:
+                    frac = min(0.7, 0.12 + self.epg_bytes / 80_000_000)
+            elif self.phase_total > 0:
+                frac = self.phase_done / self.phase_total
+            done_w += weights[self.phase] * frac
+        return min(0.99, max(0.0, done_w))
+
+    def _eta_unlocked(self) -> int | None:
+        if not self.running or not self.phase_started_at:
+            return None
+        phase_elapsed = max(0.1, time.time() - self.phase_started_at)
+        remain: float | None = None
+        if self.phase in {"live", "movies", "series"}:
+            if self.phase_done >= 2 and self.phase_total:
+                rate = phase_elapsed / self.phase_done
+                remain = max(0.0, (self.phase_total - self.phase_done) * rate)
+        elif self.phase == "epg":
+            if self.epg_size > 0 and self.epg_bytes > 400_000:
+                speed = self.epg_bytes / phase_elapsed
+                if speed > 0:
+                    remain = max(0.0, (self.epg_size - self.epg_bytes) / speed) + 40
+            elif self.epg_bytes > 800_000 and phase_elapsed > 8:
+                assume = max(self.epg_bytes * 1.4, 35_000_000)
+                speed = self.epg_bytes / phase_elapsed
+                if speed > 0:
+                    remain = max(20.0, (assume - self.epg_bytes) / speed)
+            elif (self.phase_item or "").lower().startswith("pars"):
+                remain = 40.0
+        if remain is None:
+            return None
+        hints = {"epg": 180, "movies": 240, "series": 240}
+        seen = False
+        extra = 0
+        for name in ("live", "epg", "movies", "series"):
+            if name == self.phase:
+                seen = True
+                continue
+            if seen:
+                extra += hints.get(name, 120)
+        return min(int(remain + extra), 4 * 3600)
 
     def has_live(self) -> bool:
         return bool(self.data.streams)
@@ -354,31 +525,60 @@ class WatchGuide:
         last_ok = None
         if self.data.updated_at:
             last_ok = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.data.updated_at))
-        return {
-            "ready": self.has_live(),
-            "running": self.running,
-            "progress": self.progress,
-            "last_ok": last_ok,
-            "age_seconds": None if age is None else int(age),
-            "categories": len(self.data.categories),
-            "streams": len(self.data.streams),
-            "movies": len(self.vod.items),
-            "series": len(self.series.items),
-            "epg_channels": len(self.data.epg),
-            "interval_seconds": int(self.interval_seconds),
-            "last_error": self.last_error or None,
-        }
+        with self._lock:
+            elapsed = None
+            if self.running and self.sync_started_at:
+                elapsed = int(max(0, time.time() - self.sync_started_at))
+            percent = int(round(self._fraction_unlocked() * 100)) if self.running else None
+            eta = self._eta_unlocked() if self.running else None
+            return {
+                "ready": self.has_live(),
+                "running": self.running,
+                "progress": self.progress,
+                "phase": self.phase or None,
+                "phase_done": self.phase_done,
+                "phase_total": self.phase_total,
+                "phase_item": self.phase_item or None,
+                "inflight": list(self.inflight),
+                "elapsed_seconds": elapsed,
+                "eta_seconds": eta,
+                "percent": percent,
+                "epg_bytes": self.epg_bytes,
+                "last_ok": last_ok,
+                "age_seconds": None if age is None else int(age),
+                "categories": len(self.data.categories),
+                "streams": len(self.data.streams),
+                "movies": len(self.vod.items),
+                "series": len(self.series.items),
+                "epg_channels": len(self.data.epg),
+                "interval_seconds": int(self.interval_seconds),
+                "last_error": self.last_error or None,
+            }
 
     def live_categories(self) -> list[dict[str, Any]] | None:
         if not self.has_live():
             return None
-        return self.data.categories
+        return [
+            row
+            for row in self.data.categories
+            if is_uk_live_group(str(row.get("category_name") or ""))
+        ]
 
     def live_streams(self, category_id: str) -> list[dict[str, Any]] | None:
         if not self.has_live():
             return None
         cid = str(category_id or "").strip()
         if not cid:
+            return []
+        cat = next(
+            (
+                row
+                for row in self.data.categories
+                if str(row.get("category_id") or "") == cid
+            ),
+            None,
+        )
+        if not cat or not is_uk_live_group(str(cat.get("category_name") or "")):
             return []
         rows = self.data.by_cat.get(cid, [])
         return [self.decorate(stream) for stream in rows]

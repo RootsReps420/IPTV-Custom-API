@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=29" />
+  <link rel="stylesheet" href="/static/styles.css?v=30" />
 </head>
 <body class="watch-body">
   <div class="grid-bg" aria-hidden="true"></div>
@@ -36,6 +36,14 @@
 
   <div id="app-panel" class="watch-app" hidden>
     <p id="watch-banner" class="watch-banner" hidden></p>
+    <div id="watch-sync" class="watch-sync" hidden>
+      <div class="watch-sync-row">
+        <strong id="watch-sync-label">Guide sync</strong>
+        <span id="watch-sync-eta"></span>
+      </div>
+      <div class="watch-sync-bar" aria-hidden="true"><span id="watch-sync-fill"></span></div>
+      <div id="watch-sync-detail" class="watch-sync-detail"></div>
+    </div>
     <div class="watch-shell">
       <nav class="watch-rail" aria-label="Library">
         <p class="watch-brand">Watch</p>
@@ -79,6 +87,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=29"></script>
+  <script src="/static/watch.js?v=30"></script>
 </body>
 </html>

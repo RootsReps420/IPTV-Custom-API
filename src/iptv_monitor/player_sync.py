@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 
 from iptv_monitor.config import load_settings, resolve_paths
-from iptv_monitor.player_guide import WatchGuide, decode_xtream_text, epg_alias_keys
+from iptv_monitor.player_guide import WatchGuide, decode_xtream_text, epg_alias_keys, is_uk_live_group
 from iptv_monitor.player_xtream import (
     _CATEGORY_KEYS,
     _LIVE_KEYS,
@@ -155,9 +155,9 @@ class WatchSyncer:
                     await self.sync_once()
                 except Exception:
                     logger.exception("Watch guide sync failed")
-                    self.guide.last_error = "sync failed"
-                    self.guide.running = False
-                    self.guide.write_meta()
+                    if not self.guide.last_error:
+                        self.guide.last_error = "sync failed"
+                    self.guide.finish_sync()
                     await asyncio.sleep(120)
                     continue
             wait = interval - (self.guide.age_seconds() or 0)
@@ -170,12 +170,10 @@ class WatchSyncer:
                 self.guide.progress = "Watch player is not configured."
                 self.guide.write_meta()
                 return
-            self.guide.running = True
-            self.guide.last_error = ""
+            self.guide.begin_sync()
             started = time.monotonic()
             try:
-                self.guide.progress = "Downloading live channels…"
-                self.guide.write_meta()
+                self.guide.set_phase("live", message="Downloading live channels…")
                 categories, streams = await asyncio.to_thread(self._download_live, cfg)
                 self.guide.replace_live(categories, streams)
                 logger.info(
@@ -184,8 +182,7 @@ class WatchSyncer:
                     len(streams),
                     time.monotonic() - started,
                 )
-                self.guide.progress = "Downloading EPG…"
-                self.guide.write_meta()
+                self.guide.set_phase("epg", message="Downloading EPG…")
                 epg_started = time.monotonic()
                 try:
                     channels, aliases = await asyncio.to_thread(self._download_epg, cfg)
@@ -200,8 +197,7 @@ class WatchSyncer:
                     logger.warning("Watch guide EPG failed: %s", exc)
                     self.guide.last_error = f"channels ok; EPG failed ({exc})"[:180]
                 try:
-                    self.guide.progress = "Downloading movies…"
-                    self.guide.write_meta()
+                    self.guide.set_phase("movies", message="Downloading movies…")
                     vod_cats, vod_items = await asyncio.to_thread(self._download_vod, cfg)
                     self.guide.replace_vod(vod_cats, vod_items)
                     logger.info("Watch guide movies: %s titles", len(vod_items))
@@ -209,8 +205,7 @@ class WatchSyncer:
                     logger.warning("Watch guide movies failed: %s", exc)
                     self.guide.last_error = (self.guide.last_error or "") + f" movies: {exc}"[:80]
                 try:
-                    self.guide.progress = "Downloading series…"
-                    self.guide.write_meta()
+                    self.guide.set_phase("series", message="Downloading series…")
                     series_cats, series_items = await asyncio.to_thread(self._download_series, cfg)
                     self.guide.replace_series(series_cats, series_items)
                     logger.info("Watch guide series: %s titles", len(series_items))
@@ -223,9 +218,7 @@ class WatchSyncer:
                 self.guide.last_error = str(exc)[:180]
                 raise
             finally:
-                self.guide.running = False
-                self.guide.progress = ""
-                self.guide.write_meta()
+                self.guide.finish_sync()
 
     def _client(self, timeout: httpx.Timeout) -> httpx.Client:
         return httpx.Client(
@@ -285,21 +278,30 @@ class WatchSyncer:
             raise RuntimeError(f"{progress} categories HTTP {cats_resp.status_code}")
         categories = [_pick(item, _CATEGORY_KEYS) for item in _as_list(cats_resp.json())]
         keep = [row for row in categories if not is_catch_all_category(str(row.get("category_name") or ""))]
-        skipped = len(categories) - len(keep)
+        skipped_all = len(categories) - len(keep)
+        if progress == "Live":
+            uk = [row for row in keep if is_uk_live_group(str(row.get("category_name") or ""))]
+            logger.info(
+                "Watch guide Live: kept %s UK groups, skipped %s others",
+                len(uk),
+                len(keep) - len(uk),
+            )
+            keep = uk
+        skipped = skipped_all
         total = len(keep)
         if skipped:
             logger.info("Watch guide %s: skipped %s catch-all groups", progress, skipped)
-        self.guide.progress = f"{progress} 0/{total} groups" + (
-            f" ({skipped} catch-all skipped)" if skipped else ""
-        )
-        self.guide.write_meta()
+        phase = {"Live": "live", "Movies": "movies", "Series": "series"}.get(progress, progress.lower())
+        self.guide.set_phase(phase, message=f"{progress} 0/{total} groups", total=total)
         by_id: dict[str, dict[str, Any]] = {}
         done = 0
 
-        def fetch_group(cat: dict[str, Any]) -> list[dict[str, Any]]:
+        def fetch_group(cat: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+            name = str(cat.get("category_name") or cat.get("category_id") or "").strip()
             cid = str(cat.get("category_id") or "").strip()
+            self.guide.group_start(name, phase, total)
             if not cid:
-                return []
+                return name, []
             try:
                 with self._client(CAT_TIMEOUT) as client:
                     resp = client.get(
@@ -308,26 +310,25 @@ class WatchSyncer:
                     )
             except Exception as exc:
                 logger.warning("Watch guide %s group %s failed: %s", progress, cid, type(exc).__name__)
-                return []
+                return name, []
             if resp.status_code >= 400:
                 logger.warning("Watch guide %s group %s HTTP %s", progress, cid, resp.status_code)
-                return []
+                return name, []
             try:
                 payload = resp.json()
             except Exception:
-                return []
+                return name, []
             if isinstance(payload, dict):
                 payload = payload.get("available_channels") or payload.get("streams") or payload
-            return [_pick(item, item_keys) for item in _as_list(payload)]
+            return name, [_pick(item, item_keys) for item in _as_list(payload)]
 
         with ThreadPoolExecutor(max_workers=CAT_WORKERS) as pool:
             futures = [pool.submit(fetch_group, cat) for cat in keep]
             for fut in as_completed(futures):
                 done += 1
-                self.guide.progress = f"{progress} {done}/{total} groups…"
-                if done % 3 == 0 or done == total:
-                    self.guide.write_meta()
-                for row in fut.result():
+                name, rows = fut.result()
+                self.guide.group_done(name, done, total, phase)
+                for row in rows:
                     sid = str(row.get(id_key) or "").strip()
                     if sid:
                         by_id[sid] = row
@@ -346,6 +347,11 @@ class WatchSyncer:
                 with client.stream("GET", f"{cfg.base}/xmltv.php", params=creds) as response:
                     if response.status_code >= 400:
                         raise RuntimeError(f"xmltv HTTP {response.status_code}")
+                    size = 0
+                    try:
+                        size = int(response.headers.get("content-length") or 0)
+                    except (TypeError, ValueError):
+                        size = 0
                     written = 0
                     with tmp.open("wb") as handle:
                         for chunk in response.iter_bytes():
@@ -353,7 +359,9 @@ class WatchSyncer:
                             if written > XMLTV_MAX_BYTES:
                                 raise RuntimeError("xmltv larger than 180MB, aborting")
                             handle.write(chunk)
+                            self.guide.set_epg_bytes(written, size)
             logger.info("Watch guide xmltv downloaded (%s bytes)", tmp.stat().st_size)
+            self.guide.note("Parsing XMLTV…", "Parsing EPG…")
             return parse_xmltv_file(tmp, int(time.time()))
         finally:
             tmp.unlink(missing_ok=True)

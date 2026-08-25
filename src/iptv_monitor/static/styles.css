@@ -747,6 +747,67 @@ tr.row-down td {
   color: var(--warn);
 }
 
+.watch-sync {
+  flex-shrink: 0;
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #0d1512;
+}
+
+.watch-sync.is-bad {
+  background: #1a1010;
+}
+
+.watch-sync-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.watch-sync-row strong {
+  color: var(--up);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.watch-sync.is-bad .watch-sync-row strong {
+  color: var(--down);
+}
+
+#watch-sync-eta {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.watch-sync-bar {
+  margin-top: 8px;
+  height: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.watch-sync-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--up);
+  transition: width 0.4s ease;
+}
+
+.watch-sync.is-bad .watch-sync-bar span {
+  background: var(--down);
+}
+
+.watch-sync-detail {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .watch-shell {
   flex: 1;
   min-height: 0;

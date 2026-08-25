@@ -13,6 +13,11 @@ const slotStat = document.getElementById("slot-stat");
 const userStat = document.getElementById("user-stat");
 const guideStat = document.getElementById("guide-stat");
 const banner = document.getElementById("watch-banner");
+const syncPanel = document.getElementById("watch-sync");
+const syncLabel = document.getElementById("watch-sync-label");
+const syncEta = document.getElementById("watch-sync-eta");
+const syncFill = document.getElementById("watch-sync-fill");
+const syncDetail = document.getElementById("watch-sync-detail");
 const video = document.getElementById("player");
 const nowTitle = document.getElementById("now-title");
 const nowEpg = document.getElementById("now-epg");
@@ -78,6 +83,7 @@ const state = {
   items: [],
   seriesDetail: null,
   playingLiveId: "",
+  wasSyncing: false,
 };
 
 let hls = null;
@@ -159,7 +165,93 @@ function showBanner(text, kind) {
   banner.className = `watch-banner ${kind || ""}`;
 }
 
+function formatEta(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) {
+    return "calculating…";
+  }
+  if (n < 75) {
+    return `~${Math.max(10, Math.round(n / 5) * 5)}s left`;
+  }
+  if (n < 3600) {
+    return `~${Math.round(n / 60)} min left`;
+  }
+  const hours = Math.floor(n / 3600);
+  const mins = Math.round((n % 3600) / 60);
+  return `~${hours}h ${mins}m left`;
+}
+
+function formatElapsed(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) {
+    return "";
+  }
+  if (n < 60) {
+    return `${n}s elapsed`;
+  }
+  return `${Math.floor(n / 60)}m ${String(n % 60).padStart(2, "0")}s elapsed`;
+}
+
+function phaseLabel(phase) {
+  if (phase === "live") {
+    return "Live groups";
+  }
+  if (phase === "epg") {
+    return "EPG";
+  }
+  if (phase === "movies") {
+    return "Movies";
+  }
+  if (phase === "series") {
+    return "Shows";
+  }
+  return "Guide";
+}
+
+function renderSyncPanel(sync) {
+  if (!syncPanel) {
+    return;
+  }
+  if (sync?.running) {
+    syncPanel.hidden = false;
+    syncPanel.className = "watch-sync";
+    const done = Number(sync.phase_done) || 0;
+    const total = Number(sync.phase_total) || 0;
+    const counts = total ? ` ${done}/${total}` : "";
+    syncLabel.textContent = `Syncing ${phaseLabel(sync.phase)}${counts}`;
+    const etaBits = [formatElapsed(sync.elapsed_seconds), formatEta(sync.eta_seconds)].filter(Boolean);
+    syncEta.textContent = etaBits.join(" · ");
+    const pct = Math.max(2, Math.min(100, Number(sync.percent) || 0));
+    if (syncFill) {
+      syncFill.style.width = `${pct}%`;
+    }
+    const inflight = Array.isArray(sync.inflight) ? sync.inflight.filter(Boolean) : [];
+    if (sync.phase === "epg") {
+      syncDetail.textContent = sync.progress || "Downloading XMLTV from the panel…";
+    } else {
+      const current = inflight.length ? inflight.join(" · ") : sync.phase_item || sync.progress || "";
+      syncDetail.textContent = current
+        ? `Now: ${current}`
+        : "Working… programme titles appear when EPG finishes.";
+    }
+    return;
+  }
+  if (sync?.last_error && !(Number(sync.epg_channels) > 0)) {
+    syncPanel.hidden = false;
+    syncPanel.className = "watch-sync is-bad";
+    syncLabel.textContent = "Guide sync issue";
+    syncEta.textContent = "";
+    if (syncFill) {
+      syncFill.style.width = "100%";
+    }
+    syncDetail.textContent = sync.last_error;
+    return;
+  }
+  syncPanel.hidden = true;
+}
+
 function setGuide(sync) {
+  renderSyncPanel(sync);
   if (!guideStat) {
     return;
   }
@@ -168,7 +260,12 @@ function setGuide(sync) {
     return;
   }
   if (sync.running) {
-    guideStat.textContent = sync.progress || "Updating…";
+    const eta = formatEta(sync.eta_seconds);
+    const counts =
+      sync.phase_total != null && Number(sync.phase_total) > 0
+        ? `${sync.phase_done || 0}/${sync.phase_total}`
+        : "";
+    guideStat.textContent = [counts || "syncing", eta !== "calculating…" ? eta : ""].filter(Boolean).join(" · ");
     return;
   }
   if (!sync.ready) {
@@ -192,28 +289,44 @@ function setGuide(sync) {
 }
 
 let guideTimer = null;
+let guidePollMs = 0;
 
-function startGuidePoll() {
-  if (guideTimer) {
+async function tickGuide() {
+  try {
+    const me = await api("/api/watch/me");
+    setSlots(me.slots);
+    const running = !!me.sync?.running;
+    if (running) {
+      state.wasSyncing = true;
+    }
+    setGuide(me.sync);
+    if (state.wasSyncing && me.sync?.ready && !running) {
+      state.wasSyncing = false;
+      showBanner("");
+      await loadCategories();
+      if (state.categoryId) {
+        await loadItems();
+      }
+    }
+    const want = running ? 2000 : 8000;
+    if (want !== guidePollMs) {
+      startGuidePoll(want);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function startGuidePoll(ms) {
+  const interval = ms || 2000;
+  if (guideTimer && guidePollMs === interval) {
     return;
   }
-  guideTimer = setInterval(async () => {
-    try {
-      const me = await api("/api/watch/me");
-      setGuide(me.sync);
-      if (me.sync?.ready && !me.sync?.running) {
-        clearInterval(guideTimer);
-        guideTimer = null;
-        await loadCategories();
-        if (state.categoryId) {
-          await loadItems();
-        }
-        showBanner("");
-      }
-    } catch {
-      /* ignore */
-    }
-  }, 4000);
+  if (guideTimer) {
+    clearInterval(guideTimer);
+  }
+  guidePollMs = interval;
+  guideTimer = setInterval(tickGuide, interval);
 }
 
 function setSlots(slots) {
@@ -734,15 +847,10 @@ async function boot() {
       );
       return;
     }
-    if (!me.sync?.ready) {
-      showBanner(
-        me.sync?.progress ||
-          me.sync?.last_error ||
-          "Downloading the channel list and EPG. Groups stay usable; programme titles appear when the guide finishes.",
-        "warn"
-      );
-      startGuidePoll();
+    if (me.sync?.running) {
+      state.wasSyncing = true;
     }
+    startGuidePoll(me.sync?.running ? 2000 : 8000);
     try {
       await loadCategories();
     } catch (error) {
