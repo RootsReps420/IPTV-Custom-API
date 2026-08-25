@@ -91,10 +91,16 @@ def create_app(monitor: Monitor) -> FastAPI:
 
 async def serve_dashboard(monitor: Monitor, host: str, port: int) -> None:
     """Run uvicorn beside the monitor loop. access_log off to avoid leaking stream URLs."""
+    import asyncio
+
     import uvicorn
 
+    from iptv_monitor.player_sync import WatchSyncer
+
+    app = create_app(monitor)
+    syncer = WatchSyncer(monitor.root, app.state.watch.guide)
     config = uvicorn.Config(
-        create_app(monitor),
+        app,
         host=host,
         port=port,
         log_level="warning",
@@ -103,4 +109,4 @@ async def serve_dashboard(monitor: Monitor, host: str, port: int) -> None:
     )
     server = uvicorn.Server(config)
     logger.info("Dashboard listening on http://%s:%s", host, port)
-    await server.serve()
+    await asyncio.gather(server.serve(), syncer.run_forever())

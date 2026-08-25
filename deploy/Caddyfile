@@ -20,7 +20,13 @@ vps-4f889186.vps.ovh.net {
 		dan REPLACE_WITH_BASE64_HASH
 	}
 	# flush_interval -1: stream MPEG-TS to the browser without waiting for full responses.
+	# Catalogue JSON from this panel can take ~60s; default upstream timeout is too short.
 	reverse_proxy 127.0.0.1:8787 {
 		flush_interval -1
+		transport http {
+			dial_timeout 10s
+			read_timeout 120s
+			write_timeout 120s
+		}
 	}
 }

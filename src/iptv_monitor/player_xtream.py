@@ -1,14 +1,17 @@
 """Xtream player_api client for the /watch catalogue. Credentials stay on the server.
 
 Fetches categories, streams, EPG, VOD info, series info. Responses are
-whitelisted field-by-field before JSON hits the browser. Results cache ~8 minutes.
+whitelisted field-by-field before JSON hits the browser. Stream lists are
+cached ~30 minutes because this panel can take a minute to return them.
 Placeholder dns hosts (portal.example) count as unconfigured.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -17,14 +20,25 @@ from pydantic import BaseModel
 from ruamel.yaml import YAML
 
 from iptv_monitor.config import resolve_paths
+from iptv_monitor.player_guide import decode_xtream_text
 from iptv_monitor.health import normalize_url
 from iptv_monitor.stream import _STREAM_UA
 
 logger = logging.getLogger("iptv_monitor.player_xtream")
 
-CACHE_TTL = 480.0
+CACHE_TTL = 1800.0
 API_TIMEOUT = 25.0
+SLOW_READ_TIMEOUT = 90.0
 _PLACEHOLDER_DNS = ("portal.example", "your-live-portal.example")
+_SLOW_ACTIONS = frozenset(
+    {
+        "get_live_streams",
+        "get_vod_streams",
+        "get_series",
+        "get_vod_info",
+        "get_series_info",
+    }
+)
 
 
 class PlayerConfig(BaseModel):
@@ -93,6 +107,9 @@ _LIVE_KEYS = (
     "tv_archive_duration",
     "is_adult",
     "custom_sid",
+    "title",
+    "description",
+    "category_ids",
 )
 _VOD_KEYS = (
     "num",
@@ -147,13 +164,58 @@ _EPISODE_KEYS = (
 
 
 class XtreamCatalogue:
-    def __init__(self) -> None:
+    def __init__(self, root: Path | None = None, guide=None) -> None:
+        self._root = root
+        self.guide = guide
         self._cache: dict[str, tuple[float, Any]] = {}
+        self._disk_loaded = False
 
     def _key(self, cfg: PlayerConfig, action: str, extra: str) -> str:
         return f"{cfg.base}|{cfg.username}|{action}|{extra}"
 
+    def _disk_path(self) -> Path:
+        return resolve_paths(self._root).root / "state" / "watch_catalogue.json"
+
+    def _load_disk(self) -> None:
+        if self._disk_loaded:
+            return
+        self._disk_loaded = True
+        path = self._disk_path()
+        if not path.exists():
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.warning("Could not read Watch catalogue cache")
+            return
+        if not isinstance(raw, dict):
+            return
+        now = time.time()
+        for key, row in raw.items():
+            if not isinstance(row, dict) or "payload" not in row:
+                continue
+            exp = float(row.get("exp") or 0)
+            if exp <= now:
+                continue
+            self._cache[str(key)] = (time.monotonic() + max(1.0, exp - now), row["payload"])
+
+    def _save_disk(self) -> None:
+        path = self._disk_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        now_mono = time.monotonic()
+        now = time.time()
+        out: dict[str, Any] = {}
+        for key, (expires, value) in self._cache.items():
+            remaining = expires - now_mono
+            if remaining <= 0:
+                continue
+            out[key] = {"exp": now + remaining, "payload": value}
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(out, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(path)
+
     def _get_cached(self, key: str) -> Any | None:
+        self._load_disk()
         hit = self._cache.get(key)
         if not hit:
             return None
@@ -163,11 +225,20 @@ class XtreamCatalogue:
             return None
         return value
 
-    def _put(self, key: str, value: Any) -> Any:
+    def _put(self, key: str, value: Any, *, persist: bool = False) -> Any:
         self._cache[key] = (time.monotonic() + CACHE_TTL, value)
+        if persist:
+            try:
+                self._save_disk()
+            except Exception:
+                logger.warning("Could not write Watch catalogue cache")
         return value
 
-async def _api(
+    def _timeout(self, action: str | None) -> httpx.Timeout:
+        read = SLOW_READ_TIMEOUT if action in _SLOW_ACTIONS else API_TIMEOUT
+        return httpx.Timeout(connect=10.0, read=read, write=30.0, pool=10.0)
+
+    async def _api(
         self,
         cfg: PlayerConfig,
         action: str | None = None,
@@ -191,14 +262,21 @@ async def _api(
         if action:
             params["action"] = action
         params.update(extra)
-        timeout = httpx.Timeout(API_TIMEOUT, connect=10.0)
-        async with httpx.AsyncClient(
-            verify=False,
-            follow_redirects=True,
-            timeout=timeout,
-            headers={"User-Agent": _STREAM_UA, "Accept": "application/json"},
-        ) as client:
-            response = await client.get(f"{cfg.base}/player_api.php", params=params)
+        started = time.monotonic()
+        try:
+            async with httpx.AsyncClient(
+                verify=False,
+                follow_redirects=True,
+                timeout=self._timeout(action),
+                headers={"User-Agent": _STREAM_UA, "Accept": "application/json"},
+            ) as client:
+                response = await client.get(f"{cfg.base}/player_api.php", params=params)
+        except httpx.TimeoutException as exc:
+            raise RuntimeError(
+                "Panel timed out returning the channel list. Wait a moment and try the category again."
+            ) from exc
+        elapsed = time.monotonic() - started
+        logger.info("Watch %s in %.1fs (%s bytes)", action or "auth", elapsed, len(response.content))
         if response.status_code >= 400:
             raise RuntimeError(f"Panel HTTP {response.status_code}")
         try:
@@ -206,10 +284,16 @@ async def _api(
         except Exception as exc:
             raise RuntimeError("Panel returned non-JSON") from exc
         if cache:
-            return self._put(cache_key, payload)
+            return self._put(cache_key, payload, persist=action in _SLOW_ACTIONS)
         return payload
 
     async def categories(self, cfg: PlayerConfig, kind: str) -> list[dict[str, Any]]:
+        if kind == "live" and self.guide is not None:
+            cached = self.guide.live_categories()
+            if cached is not None:
+                return cached
+            if self.guide.running:
+                return []
         action = {
             "live": "get_live_categories",
             "vod": "get_vod_categories",
@@ -219,6 +303,12 @@ async def _api(
         return rows
 
     async def live_streams(self, cfg: PlayerConfig, category_id: str) -> list[dict[str, Any]]:
+        if self.guide is not None:
+            cached = self.guide.live_streams(category_id)
+            if cached is not None:
+                return cached
+            if self.guide.running:
+                return []
         extra = {"category_id": category_id} if category_id else {}
         return [_pick(item, _LIVE_KEYS) for item in _as_list(await self._api(cfg, "get_live_streams", extra))]
 
@@ -271,6 +361,10 @@ async def _api(
         }
 
     async def short_epg(self, cfg: PlayerConfig, stream_id: str) -> list[dict[str, Any]]:
+        if self.guide is not None:
+            cached = self.guide.listings_for_stream(stream_id)
+            if cached is not None:
+                return cached
         payload = await self._api(
             cfg, "get_short_epg", {"stream_id": stream_id, "limit": "8"}, cache=True
         )
@@ -279,4 +373,10 @@ async def _api(
             listings = payload.get("epg_listings") or []
         if not isinstance(listings, list):
             return []
-        return [_pick(item, _EPG_KEYS) for item in listings if isinstance(item, dict)]
+        rows = [_pick(item, _EPG_KEYS) for item in listings if isinstance(item, dict)]
+        for row in rows:
+            if "title" in row:
+                row["title"] = decode_xtream_text(str(row["title"]))
+            if "description" in row:
+                row["description"] = decode_xtream_text(str(row["description"]))
+        return rows

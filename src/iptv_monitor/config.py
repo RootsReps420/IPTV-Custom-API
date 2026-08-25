@@ -44,6 +44,8 @@ class Settings(BaseModel):
     frequent_failure_down_events: int = 3
     frequent_failure_window_hours: int = 24
     history_retention_days: int = 90
+    # How often Watch re-downloads live channels + XMLTV into state/ (seconds).
+    watch_sync_seconds: int = 7200
 
 
 class Playlist(BaseModel):

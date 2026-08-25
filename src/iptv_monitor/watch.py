@@ -28,6 +28,7 @@ from iptv_monitor.player_auth import (
     set_session,
 )
 from iptv_monitor.player_proxy import load_signed_url, panel_media_url, proxy_url
+from iptv_monitor.player_guide import WatchGuide
 from iptv_monitor.player_slots import SlotTracker
 from iptv_monitor.player_xtream import XtreamCatalogue, load_player_config
 
@@ -41,11 +42,12 @@ class SlotBody(BaseModel):
 
 
 class WatchService:
-    """Per-process Watch state: slot table + Xtream catalogue cache. Reloads player.yaml each request."""
+    """Per-process Watch state: slot table, shared live guide, Xtream fallback."""
     def __init__(self, root) -> None:
         self.root = root
         self.slots = SlotTracker()
-        self.catalogue = XtreamCatalogue()
+        self.guide = WatchGuide(root)
+        self.catalogue = XtreamCatalogue(root, guide=self.guide)
 
     def config(self):
         return load_player_config(self.root)
@@ -113,6 +115,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
             "configured": cfg.configured,
             "max_concurrent": cfg.max_concurrent,
             "slots": snap,
+            "sync": svc.guide.status(),
         }
 
     @app.post("/api/player/slot/heartbeat")

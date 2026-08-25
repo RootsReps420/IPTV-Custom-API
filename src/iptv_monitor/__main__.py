@@ -162,6 +162,7 @@ def configure_logging(root: Path | None) -> None:
     )
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     if sys.stderr is not None:
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(formatter)

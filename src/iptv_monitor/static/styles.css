@@ -841,10 +841,15 @@ tr.row-down td {
   gap: 4px;
 }
 
-.watch-item {
+.watch-item span {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.watch-item small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .watch-item img {

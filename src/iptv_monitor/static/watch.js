@@ -11,6 +11,7 @@ const loginForm = document.getElementById("login-form");
 const loginError = document.getElementById("login-error");
 const slotStat = document.getElementById("slot-stat");
 const userStat = document.getElementById("user-stat");
+const guideStat = document.getElementById("guide-stat");
 const banner = document.getElementById("watch-banner");
 const video = document.getElementById("player");
 const nowTitle = document.getElementById("now-title");
@@ -88,6 +89,62 @@ function showBanner(text, kind) {
   banner.hidden = false;
   banner.textContent = text;
   banner.className = `watch-banner ${kind || ""}`;
+}
+
+function setGuide(sync) {
+  if (!guideStat) {
+    return;
+  }
+  if (!sync) {
+    guideStat.textContent = "—";
+    return;
+  }
+  if (sync.running) {
+    guideStat.textContent = sync.progress || "Updating…";
+    return;
+  }
+  if (!sync.ready) {
+    guideStat.textContent = "not ready";
+    return;
+  }
+  const age = Number(sync.age_seconds);
+  if (!Number.isFinite(age)) {
+    guideStat.textContent = `${sync.streams || 0} ch`;
+    return;
+  }
+  if (age < 120) {
+    guideStat.textContent = "just now";
+    return;
+  }
+  if (age < 3600) {
+    guideStat.textContent = `${Math.floor(age / 60)}m ago`;
+    return;
+  }
+  guideStat.textContent = `${Math.floor(age / 3600)}h ago`;
+}
+
+let guideTimer = null;
+
+function startGuidePoll() {
+  if (guideTimer) {
+    return;
+  }
+  guideTimer = setInterval(async () => {
+    try {
+      const me = await api("/api/watch/me");
+      setGuide(me.sync);
+      if (me.sync && !me.sync.running) {
+        clearInterval(guideTimer);
+        guideTimer = null;
+        if (me.sync.ready && state.tab === "live") {
+          await loadCategories();
+          showBanner("");
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, 4000);
 }
 
 function setSlots(slots) {
@@ -263,7 +320,8 @@ async function playSources(kind, streamId, extensions) {
 
 async function playLive(item) {
   nowTitle.textContent = item.name || `Channel ${item.stream_id}`;
-  nowEpg.textContent = "Loading guide…";
+  nowEpg.textContent =
+    [item.now_title, item.next_title].filter(Boolean).join(" → ") || "Loading guide…";
   showBanner("");
   try {
     await playSources("live", String(item.stream_id), ["m3u8", "ts"]);
@@ -280,9 +338,9 @@ async function playLive(item) {
     nowEpg.textContent = rows
       .slice(0, 2)
       .map((row) => row.title || "Programme")
-      .join(" → ") || "No EPG";
+      .join(" → ") || nowEpg.textContent || "No EPG";
   } catch {
-    nowEpg.textContent = "";
+    /* keep now/next from the channel list */
   }
 }
 
@@ -318,10 +376,14 @@ async function playEpisode(episode, seriesName) {
 
 function visibleItems() {
   const query = (searchEl.value || "").trim().toLowerCase();
-  if (!query) {
-    return state.items;
+  let rows = state.items;
+  if (query) {
+    rows = rows.filter((item) => {
+      const hay = `${item.name || ""} ${item.now_title || ""} ${item.next_title || ""}`.toLowerCase();
+      return hay.includes(query);
+    });
   }
-  return state.items.filter((item) => String(item.name || "").toLowerCase().includes(query));
+  return rows.slice(0, 800);
 }
 
 function renderCategories() {
@@ -329,7 +391,11 @@ function renderCategories() {
     .map((cat) => {
       const id = String(cat.category_id ?? "");
       const here = id === String(state.categoryId) ? " is-here" : "";
-      return `<button type="button" class="watch-cat${here}" data-cat="${esc(id)}">${esc(cat.category_name || id)}</button>`;
+      const count =
+        cat.stream_count != null && cat.stream_count !== ""
+          ? ` (${esc(cat.stream_count)})`
+          : "";
+      return `<button type="button" class="watch-cat${here}" data-cat="${esc(id)}">${esc(cat.category_name || id)}${count}</button>`;
     })
     .join("");
 }
@@ -346,7 +412,12 @@ function renderItems() {
         const icon = item.stream_icon
           ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" />`
           : "";
-        return `<button type="button" class="watch-item" data-live="${esc(item.stream_id)}">${icon}<span>${esc(item.name)}</span></button>`;
+        const epg = item.now_title
+          ? `<small>${esc(item.now_title)}</small>`
+          : item.title
+            ? `<small>${esc(item.title)}</small>`
+            : "";
+        return `<button type="button" class="watch-item" data-live="${esc(item.stream_id)}">${icon}<span>${esc(item.name)}${epg}</span></button>`;
       })
       .join("");
     return;
@@ -401,11 +472,23 @@ async function loadCategories() {
       : kind === "vod"
         ? "/api/player/vod/categories"
         : "/api/player/series/categories";
+  categoryList.innerHTML = `<div class="empty-events">Loading categories…</div>`;
+  itemList.innerHTML = `<div class="empty-events">Loading…</div>`;
   const data = await api(path);
   state.categories = data.categories || [];
-  state.categoryId = state.categories[0] ? String(state.categories[0].category_id) : "";
+  state.categoryId = "";
   renderCategories();
-  await loadItems();
+  if (!state.categories.length) {
+    const me = await api("/api/watch/me").catch(() => ({}));
+    setGuide(me.sync);
+    if (me.sync?.running) {
+      itemList.innerHTML = `<div class="empty-events">Downloading the full channel guide. This can take a few minutes, then every group is instant.</div>`;
+    } else {
+      itemList.innerHTML = `<div class="empty-events">No categories from the panel.</div>`;
+    }
+    return;
+  }
+  itemList.innerHTML = `<div class="empty-events">Pick a category. Channels and what's on now load from the local guide.</div>`;
 }
 
 async function loadItems() {
@@ -441,6 +524,7 @@ async function boot() {
     state.user = me.username;
     state.configured = me.configured;
     userStat.textContent = me.username;
+    setGuide(me.sync);
     showApp();
     if (!me.configured) {
       showBanner(
@@ -449,7 +533,20 @@ async function boot() {
       );
       return;
     }
-    await loadCategories();
+    if (me.sync?.running && !me.sync?.ready) {
+      showBanner(
+        me.sync.progress ||
+          "Downloading the full channel list and EPG. This can take a few minutes; after that, groups are instant for everyone.",
+        "warn"
+      );
+      startGuidePoll();
+    }
+    try {
+      await loadCategories();
+    } catch (error) {
+      showBanner(error.message, "bad");
+      itemList.innerHTML = `<div class="empty-events">${esc(error.message)}</div>`;
+    }
   } catch (error) {
     showLogin();
     loginError.hidden = false;
