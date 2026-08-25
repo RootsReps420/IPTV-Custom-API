@@ -8,6 +8,7 @@ Placeholder dns hosts (portal.example) count as unconfigured.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -19,8 +20,13 @@ import httpx
 from pydantic import BaseModel
 from ruamel.yaml import YAML
 
-from iptv_monitor.config import resolve_paths
-from iptv_monitor.player_guide import decode_xtream_text, is_uk_live_group
+from iptv_monitor.config import load_playlists, resolve_paths
+from iptv_monitor.player_guide import (
+    decode_xtream_text,
+    is_uk_live_group,
+    is_wanted_library_group,
+    listings_to_guide_rows,
+)
 from iptv_monitor.health import normalize_url
 from iptv_monitor.stream import _STREAM_UA
 
@@ -66,17 +72,38 @@ class PlayerConfig(BaseModel):
             return ""
 
 
+def _follow_playlist_dns(root, cfg: PlayerConfig) -> PlayerConfig:
+    """Use the matching playlist's current_dns so Watch follows failovers."""
+    user = cfg.username.strip()
+    if not user:
+        return cfg
+    path = resolve_paths(root).playlists
+    if not path.exists():
+        return cfg
+    try:
+        playlists = load_playlists(path)
+    except Exception:
+        return cfg
+    for item in playlists:
+        if item.username.strip() != user or not item.current_dns.strip():
+            continue
+        return cfg.model_copy(update={"dns": item.current_dns.strip()})
+    return cfg
+
+
 def load_player_config(root=None) -> PlayerConfig:
     """Read config/player.yaml. Missing/invalid file → empty unconfigured config."""
-    path = resolve_paths(root).player
+    paths = resolve_paths(root)
+    path = paths.player
     if not path.exists():
         return PlayerConfig()
     try:
         raw = YAML(typ="safe").load(path.read_text(encoding="utf-8")) or {}
-        return PlayerConfig.model_validate(raw)
+        cfg = PlayerConfig.model_validate(raw)
     except Exception:
         logger.warning("Could not read player config from %s", path)
         return PlayerConfig()
+    return _follow_playlist_dns(root, cfg)
 
 
 def _as_list(payload: object) -> list[dict[str, Any]]:
@@ -169,6 +196,7 @@ class XtreamCatalogue:
         self.guide = guide
         self._cache: dict[str, tuple[float, Any]] = {}
         self._disk_loaded = False
+        self._epg_busy: set[str] = set()
 
     def _key(self, cfg: PlayerConfig, action: str, extra: str) -> str:
         return f"{cfg.base}|{cfg.username}|{action}|{extra}"
@@ -276,7 +304,8 @@ class XtreamCatalogue:
                 "Panel timed out returning the channel list. Wait a moment and try the category again."
             ) from exc
         elapsed = time.monotonic() - started
-        logger.info("Watch %s in %.1fs (%s bytes)", action or "auth", elapsed, len(response.content))
+        if action != "get_short_epg":
+            logger.info("Watch %s in %.1fs (%s bytes)", action or "auth", elapsed, len(response.content))
         if response.status_code >= 400:
             raise RuntimeError(f"Panel HTTP {response.status_code}")
         try:
@@ -308,12 +337,15 @@ class XtreamCatalogue:
         rows = [_pick(item, _CATEGORY_KEYS) for item in _as_list(await self._api(cfg, action))]
         if kind == "live":
             rows = [row for row in rows if is_uk_live_group(str(row.get("category_name") or ""))]
+        elif kind in {"vod", "series"}:
+            rows = [row for row in rows if is_wanted_library_group(str(row.get("category_name") or ""))]
         return rows
 
     async def live_streams(self, cfg: PlayerConfig, category_id: str) -> list[dict[str, Any]]:
         if self.guide is not None:
             cached = self.guide.live_streams(category_id)
             if cached is not None:
+                self._schedule_epg_backfill(cfg, category_id, cached)
                 return cached
             if self.guide.running:
                 return []
@@ -322,6 +354,40 @@ class XtreamCatalogue:
         if self.guide is not None:
             return [self.guide.decorate(row) for row in rows]
         return rows
+
+    def _schedule_epg_backfill(self, cfg: PlayerConfig, category_id: str, rows: list[dict[str, Any]]) -> None:
+        """Fill now/next for this group in the background so the list request stays fast."""
+        cid = str(category_id or "").strip()
+        if not cid or cid in self._epg_busy:
+            return
+        missing = [
+            row
+            for row in rows
+            if not row.get("now_title") and str(row.get("stream_id") or "").strip()
+        ]
+        if not missing:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._epg_busy.add(cid)
+        loop.create_task(self._backfill_epg(cfg, cid, missing[:80]))
+
+    async def _backfill_epg(self, cfg: PlayerConfig, category_id: str, rows: list[dict[str, Any]]) -> None:
+        sem = asyncio.Semaphore(6)
+
+        async def one(row: dict[str, Any]) -> None:
+            async with sem:
+                try:
+                    await self.short_epg(cfg, str(row.get("stream_id") or ""))
+                except Exception:
+                    return
+
+        try:
+            await asyncio.gather(*(one(row) for row in rows))
+        finally:
+            self._epg_busy.discard(category_id)
 
     async def vod_streams(self, cfg: PlayerConfig, category_id: str) -> list[dict[str, Any]]:
         if self.guide is not None:
@@ -402,4 +468,9 @@ class XtreamCatalogue:
                 row["title"] = decode_xtream_text(str(row["title"]))
             if "description" in row:
                 row["description"] = decode_xtream_text(str(row["description"]))
+        if self.guide is not None:
+            stream = self.guide.data.by_id.get(str(stream_id).strip())
+            guide_rows = listings_to_guide_rows(rows)
+            if stream and guide_rows:
+                self.guide.ingest_short_epg(stream, guide_rows)
         return rows

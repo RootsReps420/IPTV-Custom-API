@@ -1,8 +1,8 @@
-"""Background live catalogue + XMLTV pull for /watch.
+"""Background live catalogue + EPG pull for /watch.
 
 Runs beside the dashboard. Every watch_sync_seconds (default 4 hours) downloads
-live/VOD/series lists (skipping catch-all "All Channels" groups) and xmltv.php
-into state/. Category clicks then read disk. Credentials never go in the JSON files.
+live/VOD/series lists (skipping catch-all groups) and now/next via get_short_epg.
+Category clicks then read disk. Credentials never go in the JSON files.
 """
 
 from __future__ import annotations
@@ -20,7 +20,14 @@ from typing import Any
 import httpx
 
 from iptv_monitor.config import load_settings, resolve_paths
-from iptv_monitor.player_guide import WatchGuide, decode_xtream_text, epg_alias_keys, is_uk_live_group
+from iptv_monitor.player_guide import (
+    WatchGuide,
+    decode_xtream_text,
+    epg_alias_keys,
+    is_uk_live_group,
+    is_wanted_library_group,
+    listings_to_guide_rows,
+)
 from iptv_monitor.player_xtream import (
     _CATEGORY_KEYS,
     _LIVE_KEYS,
@@ -36,12 +43,13 @@ logger = logging.getLogger("iptv_monitor.player_sync")
 
 LIVE_TIMEOUT = httpx.Timeout(connect=15.0, read=600.0, write=60.0, pool=15.0)
 CAT_TIMEOUT = httpx.Timeout(connect=10.0, read=70.0, write=30.0, pool=10.0)
-EPG_TIMEOUT = httpx.Timeout(connect=15.0, read=600.0, write=60.0, pool=15.0)
+EPG_TIMEOUT = httpx.Timeout(connect=8.0, read=25.0, write=15.0, pool=8.0)
 XMLTV_MAX_BYTES = 180_000_000
 EPG_HORIZON = 24 * 3600
 EPG_FLOOR = 15 * 60
 EPG_PER_CHANNEL = 40
 CAT_WORKERS = 4
+EPG_WORKERS = 8
 _LIVE_SYNC_KEYS = _LIVE_KEYS
 _CATCH_ALL = re.compile(
     r"^(all|all\s*(channels?|tvs?|tv|live|streams?)|for you)$",
@@ -150,7 +158,8 @@ class WatchSyncer:
             interval = self._interval()
             self.guide.interval_seconds = interval
             age = self.guide.age_seconds()
-            if age is None or age >= interval:
+            missing_libs = not self.guide.vod.items or not self.guide.series.items
+            if age is None or age >= interval or missing_libs:
                 try:
                     await self.sync_once()
                 except Exception:
@@ -172,30 +181,27 @@ class WatchSyncer:
                 return
             self.guide.begin_sync()
             started = time.monotonic()
+            interval = self._interval()
+            age = self.guide.age_seconds()
+            live_fresh = bool(self.guide.has_live() and age is not None and age < interval)
             try:
-                self.guide.set_phase("live", message="Downloading live channels…")
-                categories, streams = await asyncio.to_thread(self._download_live, cfg)
-                self.guide.replace_live(categories, streams)
-                logger.info(
-                    "Watch guide live: %s categories, %s streams in %.1fs",
-                    len(categories),
-                    len(streams),
-                    time.monotonic() - started,
-                )
-                self.guide.set_phase("epg", message="Downloading EPG…")
-                epg_started = time.monotonic()
-                try:
-                    channels, aliases = await asyncio.to_thread(self._download_epg, cfg)
-                    self.guide.replace_epg(channels, aliases)
+                if live_fresh:
                     logger.info(
-                        "Watch guide EPG: %s channels in %.1fs",
-                        len(channels),
-                        time.monotonic() - epg_started,
+                        "Watch guide live still fresh (%ss old, %s streams); skipping live download",
+                        int(age or 0),
+                        len(self.guide.data.streams),
                     )
-                    self.guide.last_error = ""
-                except Exception as exc:
-                    logger.warning("Watch guide EPG failed: %s", exc)
-                    self.guide.last_error = f"channels ok; EPG failed ({exc})"[:180]
+                else:
+                    self.guide.set_phase("live", message="Downloading live channels…")
+                    categories, streams = await asyncio.to_thread(self._download_live, cfg)
+                    self.guide.replace_live(categories, streams)
+                    logger.info(
+                        "Watch guide live: %s categories, %s streams in %.1fs",
+                        len(categories),
+                        len(streams),
+                        time.monotonic() - started,
+                    )
+                epg_ok = bool(self.guide.data.epg)
                 try:
                     self.guide.set_phase("movies", message="Downloading movies…")
                     vod_cats, vod_items = await asyncio.to_thread(self._download_vod, cfg)
@@ -212,6 +218,21 @@ class WatchSyncer:
                 except Exception as exc:
                     logger.warning("Watch guide series failed: %s", exc)
                     self.guide.last_error = (self.guide.last_error or "") + f" series: {exc}"[:80]
+                if live_fresh and epg_ok:
+                    logger.info("Watch guide EPG already loaded (%s channels); skipping", len(self.guide.data.epg))
+                else:
+                    self.guide.set_phase("epg", message="Downloading EPG…")
+                    epg_started = time.monotonic()
+                    try:
+                        filled = await asyncio.to_thread(self._download_short_epg, cfg)
+                        logger.info(
+                            "Watch guide EPG: %s channels in %.1fs",
+                            filled,
+                            time.monotonic() - epg_started,
+                        )
+                    except Exception as exc:
+                        logger.warning("Watch guide EPG failed: %s", exc)
+                        self.guide.last_error = f"channels ok; EPG failed ({exc})"[:180]
                 self.guide.progress = ""
                 logger.info("Watch guide sync finished in %.1fs", time.monotonic() - started)
             except Exception as exc:
@@ -287,6 +308,15 @@ class WatchSyncer:
                 len(keep) - len(uk),
             )
             keep = uk
+        elif progress in {"Movies", "Series"}:
+            wanted = [row for row in keep if is_wanted_library_group(str(row.get("category_name") or ""))]
+            logger.info(
+                "Watch guide %s: kept %s groups, skipped %s Arabic/Turkish/MENA",
+                progress,
+                len(wanted),
+                len(keep) - len(wanted),
+            )
+            keep = wanted
         skipped = skipped_all
         total = len(keep)
         if skipped:
@@ -337,31 +367,60 @@ class WatchSyncer:
             raise RuntimeError(f"Panel returned no {progress.lower()} items")
         return keep, items
 
-    def _download_epg(self, cfg) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
+    def _download_short_epg(self, cfg) -> int:
+        """Now/next for UK live streams via get_short_epg. xmltv.php is too large/slow on this panel."""
+        streams = list(self.guide.data.streams)
+        total = len(streams)
+        self.guide.set_phase("epg", message=f"EPG 0/{total} channels", total=total)
+        if not total:
+            return 0
         creds = {"username": cfg.username.strip(), "password": cfg.password.strip()}
-        folder = resolve_paths(self.root).root / "state"
-        folder.mkdir(parents=True, exist_ok=True)
-        tmp = folder / "watch_epg.xml.tmp"
-        try:
-            with self._client(EPG_TIMEOUT) as client:
-                with client.stream("GET", f"{cfg.base}/xmltv.php", params=creds) as response:
-                    if response.status_code >= 400:
-                        raise RuntimeError(f"xmltv HTTP {response.status_code}")
-                    size = 0
-                    try:
-                        size = int(response.headers.get("content-length") or 0)
-                    except (TypeError, ValueError):
-                        size = 0
-                    written = 0
-                    with tmp.open("wb") as handle:
-                        for chunk in response.iter_bytes():
-                            written += len(chunk)
-                            if written > XMLTV_MAX_BYTES:
-                                raise RuntimeError("xmltv larger than 180MB, aborting")
-                            handle.write(chunk)
-                            self.guide.set_epg_bytes(written, size)
-            logger.info("Watch guide xmltv downloaded (%s bytes)", tmp.stat().st_size)
-            self.guide.note("Parsing XMLTV…", "Parsing EPG…")
-            return parse_xmltv_file(tmp, int(time.time()))
-        finally:
-            tmp.unlink(missing_ok=True)
+        filled = 0
+        done = 0
+        limits = httpx.Limits(max_connections=EPG_WORKERS, max_keepalive_connections=EPG_WORKERS)
+
+        def fetch(stream: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+            sid = str(stream.get("stream_id") or "").strip()
+            if not sid:
+                return stream, []
+            try:
+                resp = client.get(
+                    f"{cfg.base}/player_api.php",
+                    params={**creds, "action": "get_short_epg", "stream_id": sid, "limit": "4"},
+                )
+            except Exception:
+                return stream, []
+            if resp.status_code >= 400:
+                return stream, []
+            try:
+                payload = resp.json()
+            except Exception:
+                return stream, []
+            listings = payload.get("epg_listings") if isinstance(payload, dict) else payload
+            if not isinstance(listings, list):
+                return stream, []
+            return stream, listings_to_guide_rows(listings)
+
+        with httpx.Client(
+            verify=False,
+            follow_redirects=True,
+            timeout=EPG_TIMEOUT,
+            headers={"User-Agent": _STREAM_UA, "Accept": "application/json"},
+            limits=limits,
+        ) as client:
+            with ThreadPoolExecutor(max_workers=EPG_WORKERS) as pool:
+                futures = [pool.submit(fetch, stream) for stream in streams]
+                for fut in as_completed(futures):
+                    done += 1
+                    stream, rows = fut.result()
+                    name = str(stream.get("name") or stream.get("stream_id") or "").strip()
+                    if rows:
+                        self.guide.ingest_short_epg(stream, rows)
+                        filled += 1
+                    self.guide.group_done(name, done, total, "epg")
+                    if done % 80 == 0:
+                        self.guide.persist_epg()
+        self.guide.persist_epg()
+        tmp = resolve_paths(self.root).root / "state" / "watch_epg.xml.tmp"
+        tmp.unlink(missing_ok=True)
+        return filled

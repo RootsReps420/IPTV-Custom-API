@@ -481,14 +481,14 @@ function attachMpegTs(url, gen) {
     },
     {
       enableWorker: false,
-      enableStashBuffer: false,
-      stashInitialSize: 64,
+      enableStashBuffer: true,
+      stashInitialSize: 384,
       liveBufferLatencyChasing: true,
-      liveBufferLatencyMaxLatency: 2,
-      liveBufferLatencyMinRemain: 0.3,
+      liveBufferLatencyMaxLatency: 3,
+      liveBufferLatencyMinRemain: 0.5,
       autoCleanupSourceBuffer: true,
       lazyLoad: false,
-      fixAudioTimestampGap: false,
+      fixAudioTimestampGap: true,
     }
   );
   if (window.mpegts.Events) {
@@ -496,8 +496,13 @@ function attachMpegTs(url, gen) {
       if (gen !== playGen) {
         return;
       }
-      const msg = detail?.msg || detail?.code || "Stream error";
-      showBanner(String(msg), "bad");
+      const raw = detail?.msg || detail?.code || "Stream error";
+      const msg = String(raw);
+      if (/network|http|status|eof|unrecoverable/i.test(msg)) {
+        showBanner("Could not play this channel. If the portal is blocked, failover will pick a new DNS shortly.", "bad");
+      } else {
+        showBanner(msg, "bad");
+      }
     });
   }
   tsPlayer.attachMediaElement(video);

@@ -18,7 +18,7 @@ from fastapi.responses import Response, StreamingResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from iptv_monitor.player_xtream import PlayerConfig
-from iptv_monitor.stream import TS_SYNC, _STREAM_UA
+from iptv_monitor.stream import TS_SYNC, _STREAM_UA, _is_blocked_stream_url
 
 logger = logging.getLogger("iptv_monitor.player_proxy")
 
@@ -133,6 +133,12 @@ async def proxy_url(
         raise HTTPException(
             status_code=502,
             detail=f"Stream HTTP {response.status_code}",
+        )
+    if assume_mpegts and _is_blocked_stream_url(str(response.url)):
+        await response.aclose()
+        raise HTTPException(
+            status_code=502,
+            detail="This portal is not serving a live stream. Waiting for DNS failover.",
         )
 
     passthrough_headers = {

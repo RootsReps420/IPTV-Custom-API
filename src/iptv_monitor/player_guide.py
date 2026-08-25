@@ -30,11 +30,65 @@ META_NAME = "watch_sync.json"
 _B64 = re.compile(r"^[A-Za-z0-9+/]{8,}={0,2}$")
 _NOT_ALNUM = re.compile(r"[^a-z0-9]+")
 _UK_GROUP = re.compile(r"^uk\s*\|", re.I)
+_ARABIC_SCRIPT = re.compile(r"[\u0600-\u06FF]")
+_SKIP_LIBRARY = re.compile(
+    r"("
+    r"\b(mena|osn|turkish|turksih|turkce|turk|arabic|hindi|urdu|farsi|persian|kurdish)\b"
+    r"|netflix\s*asia"
+    r"|disney\+?\s*asia"
+    r"|arab(?:ic)?[\s\-_/]*audio"
+    r"|audio[\s\-_/]*arab(?:ic)?"
+    r")",
+    re.I,
+)
 
 
 def is_uk_live_group(name: str) -> bool:
     """Live groups we sync: panel names like 'UK| Sky Sports'. US/IE/4K/PPV-without-UK are out."""
     return bool(_UK_GROUP.match((name or "").strip()))
+
+
+def is_wanted_library_group(name: str) -> bool:
+    """Movies/Shows: English/Western catalogues. No Arabic/Turkish/MENA, Netflix/Disney+ Asia, or Arabic audio."""
+    text = (name or "").strip()
+    if not text:
+        return False
+    if _ARABIC_SCRIPT.search(text):
+        return False
+    if _SKIP_LIBRARY.search(text):
+        return False
+    return True
+
+
+def listings_to_guide_rows(listings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Xtream get_short_epg rows → the start/stop/title shape decorate() expects."""
+    rows: list[dict[str, Any]] = []
+    for item in listings:
+        if not isinstance(item, dict):
+            continue
+        start = item.get("start_timestamp")
+        if start in (None, "", 0, "0"):
+            start = item.get("start")
+        stop = item.get("stop_timestamp")
+        if stop in (None, "", 0, "0"):
+            stop = item.get("end") or item.get("stop")
+        try:
+            start_i = int(float(str(start)))
+            stop_i = int(float(str(stop)))
+        except (TypeError, ValueError):
+            continue
+        if stop_i <= start_i:
+            continue
+        rows.append(
+            {
+                "start": start_i,
+                "stop": stop_i,
+                "title": decode_xtream_text(str(item.get("title") or "")),
+                "desc": decode_xtream_text(str(item.get("description") or item.get("desc") or ""))[:400],
+            }
+        )
+    rows.sort(key=lambda row: int(row["start"]))
+    return rows
 
 
 def norm_epg_key(value: str) -> str:
@@ -314,6 +368,27 @@ class WatchGuide:
         self.data.epg_updated_at = now
         self.link_stream_aliases(persist=True)
 
+    def ingest_short_epg(self, stream: dict[str, Any], rows: list[dict[str, Any]], *, persist: bool = False) -> None:
+        """Store now/next for one live stream from get_short_epg (no xmltv.php)."""
+        sid = str(stream.get("stream_id") or "").strip()
+        if not sid or not rows:
+            return
+        epg_id = str(stream.get("epg_channel_id") or "").strip()
+        with self._lock:
+            self.data.epg[sid] = rows
+            if epg_id:
+                self.data.epg.setdefault(epg_id, rows)
+            for raw in (sid, epg_id, str(stream.get("name") or "").strip()):
+                for key in epg_alias_keys(raw):
+                    self.data.aliases.setdefault(key, sid)
+            self.data.epg_updated_at = time.time()
+        if persist:
+            self._write_epg()
+
+    def persist_epg(self) -> None:
+        if self.data.epg_updated_at:
+            self._write_epg()
+
     def _write_epg(self) -> None:
         _live, _vod, _series, epg_path, _meta = self.paths()
         atomic_write_json(
@@ -451,6 +526,12 @@ class WatchGuide:
                 return f"{label} {counts} · {current}"
             return f"{label} {counts}"
         if phase == "epg":
+            if self.phase_total:
+                counts = f"{self.phase_done}/{self.phase_total} channels"
+                current = self.phase_item
+                if current:
+                    return f"EPG {counts} · {current}"
+                return f"EPG {counts}"
             if self.phase_item:
                 return self.phase_item
             mb = self.epg_bytes / 1_000_000
@@ -462,19 +543,17 @@ class WatchGuide:
         return self.progress or "Syncing…"
 
     def _fraction_unlocked(self) -> float:
-        weights = {"live": 0.40, "epg": 0.25, "movies": 0.20, "series": 0.15}
+        weights = {"live": 0.35, "movies": 0.25, "series": 0.20, "epg": 0.20}
         done_w = sum(weights[name] for name in self._finished_phases if name in weights)
         if self.phase in weights:
             frac = 0.0
-            if self.phase == "epg":
+            if self.phase_total > 0:
+                frac = self.phase_done / self.phase_total
+            elif self.phase == "epg":
                 if self.epg_size > 0 and self.epg_bytes:
                     frac = min(0.95, self.epg_bytes / self.epg_size)
-                elif (self.phase_item or "").lower().startswith("pars"):
-                    frac = 0.85
                 elif self.epg_bytes > 0:
                     frac = min(0.7, 0.12 + self.epg_bytes / 80_000_000)
-            elif self.phase_total > 0:
-                frac = self.phase_done / self.phase_total
             done_w += weights[self.phase] * frac
         return min(0.99, max(0.0, done_w))
 
@@ -483,28 +562,16 @@ class WatchGuide:
             return None
         phase_elapsed = max(0.1, time.time() - self.phase_started_at)
         remain: float | None = None
-        if self.phase in {"live", "movies", "series"}:
+        if self.phase in {"live", "movies", "series", "epg"}:
             if self.phase_done >= 2 and self.phase_total:
                 rate = phase_elapsed / self.phase_done
                 remain = max(0.0, (self.phase_total - self.phase_done) * rate)
-        elif self.phase == "epg":
-            if self.epg_size > 0 and self.epg_bytes > 400_000:
-                speed = self.epg_bytes / phase_elapsed
-                if speed > 0:
-                    remain = max(0.0, (self.epg_size - self.epg_bytes) / speed) + 40
-            elif self.epg_bytes > 800_000 and phase_elapsed > 8:
-                assume = max(self.epg_bytes * 1.4, 35_000_000)
-                speed = self.epg_bytes / phase_elapsed
-                if speed > 0:
-                    remain = max(20.0, (assume - self.epg_bytes) / speed)
-            elif (self.phase_item or "").lower().startswith("pars"):
-                remain = 40.0
         if remain is None:
             return None
-        hints = {"epg": 180, "movies": 240, "series": 240}
+        hints = {"movies": 240, "series": 240, "epg": 180}
         seen = False
         extra = 0
-        for name in ("live", "epg", "movies", "series"):
+        for name in ("live", "movies", "series", "epg"):
             if name == self.phase:
                 seen = True
                 continue
@@ -586,13 +653,23 @@ class WatchGuide:
     def _library_categories(self, lib: ItemLibrary) -> list[dict[str, Any]] | None:
         if not lib.items:
             return None
-        return lib.categories
+        return [
+            row
+            for row in lib.categories
+            if is_wanted_library_group(str(row.get("category_name") or ""))
+        ]
 
     def _library_items(self, lib: ItemLibrary, category_id: str) -> list[dict[str, Any]] | None:
         if not lib.items:
             return None
         cid = str(category_id or "").strip()
         if not cid:
+            return []
+        cat = next(
+            (row for row in lib.categories if str(row.get("category_id") or "") == cid),
+            None,
+        )
+        if not cat or not is_wanted_library_group(str(cat.get("category_name") or "")):
             return []
         return list(lib.by_cat.get(cid, []))
 
