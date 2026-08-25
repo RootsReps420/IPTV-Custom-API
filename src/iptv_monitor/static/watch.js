@@ -201,6 +201,13 @@ async function api(path, options = {}) {
   if (!response.ok) {
     const error = new Error(apiError(data, `HTTP ${response.status}`));
     error.status = response.status;
+    if (response.status === 401 && appPanel && !appPanel.hidden) {
+      state.playingItem = null;
+      state.playingLiveId = "";
+      stopPlayback();
+      showLogin();
+      showBanner("You were signed out.", "bad");
+    }
     throw error;
   }
   return data;

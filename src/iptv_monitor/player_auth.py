@@ -116,13 +116,22 @@ def username_from_media_token(root: Path, token: str) -> str | None:
     if not raw:
         return None
     try:
-        payload = media_serializer(root).loads(raw, max_age=MEDIA_TOKEN_MAX_AGE)
+        loaded = media_serializer(root).loads(
+            raw, max_age=MEDIA_TOKEN_MAX_AGE, return_timestamp=True
+        )
     except (BadSignature, SignatureExpired, TypeError, ValueError):
         return None
+    if isinstance(loaded, tuple) and len(loaded) == 2:
+        payload, stamped = loaded
+        issued = stamped.timestamp() if hasattr(stamped, "timestamp") else float(stamped)
+    else:
+        payload, issued = loaded, 0.0
     if not isinstance(payload, dict):
         return None
     name = str(payload.get("u") or "").strip()
-    return name or None
+    if not name or is_kicked(name, issued):
+        return None
+    return name
 
 
 def cookie_secure(request: Request) -> bool:
@@ -135,7 +144,7 @@ def cookie_secure(request: Request) -> bool:
 class WatchSession:
     username: str
     session_id: str = ""
-    issued_at: int = 0
+    issued_at: float = 0
 
 
 def client_ip(request: Request) -> str:
@@ -157,7 +166,7 @@ def set_session(
     issued_at: int | None = None,
 ) -> str:
     sid = (session_id or "").strip() or uuid.uuid4().hex
-    issued = int(issued_at or time.time())
+    issued = float(issued_at or time.time())
     token = _serializer(root).dumps({"u": username, "sid": sid, "t": issued})
     response.set_cookie(
         COOKIE,
@@ -175,6 +184,35 @@ def clear_session(response: Response) -> None:
     response.delete_cookie(COOKIE, path="/")
 
 
+# Username -> unix time. Cookies and media tokens issued at or before this are dead
+# until the person signs in again. In-memory: a process restart clears kicks.
+_kicked_at: dict[str, float] = {}
+
+
+def kick_username(username: str) -> float:
+    """Invalidate every Watch cookie/token for this site user."""
+    name = (username or "").strip()
+    if not name:
+        raise ValueError("username")
+    at = time.time()
+    _kicked_at[name] = at
+    return at
+
+
+def is_kicked(username: str, issued_at: float) -> bool:
+    name = (username or "").strip()
+    if not name:
+        return False
+    at = _kicked_at.get(name)
+    if at is None:
+        return False
+    try:
+        issued = float(issued_at or 0)
+    except (TypeError, ValueError):
+        issued = 0.0
+    return issued < at
+
+
 def read_session(request: Request, root: Path) -> WatchSession | None:
     token = request.cookies.get(COOKIE)
     if not token:
@@ -189,9 +227,11 @@ def read_session(request: Request, root: Path) -> WatchSession | None:
     if not name:
         return None
     try:
-        issued = int(payload.get("t") or 0)
+        issued = float(payload.get("t") or 0)
     except (TypeError, ValueError):
-        issued = 0
+        issued = 0.0
+    if is_kicked(name, issued):
+        return None
     return WatchSession(
         username=name,
         session_id=str(payload.get("sid") or "").strip(),

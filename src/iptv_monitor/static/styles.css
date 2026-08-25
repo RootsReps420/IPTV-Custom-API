@@ -544,9 +544,13 @@ tr:last-child td {
   text-transform: uppercase;
 }
 
-.switch-btn.revert {
-  border-color: var(--warn);
-  color: var(--warn);
+.switch-btn.kick {
+  border-color: var(--down);
+  color: var(--down);
+}
+
+.switch-btn.kick:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.12);
 }
 
 .switch-btn.revert:hover:not(:disabled) {

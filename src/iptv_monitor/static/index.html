@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=42" />
+  <link rel="stylesheet" href="/static/styles.css?v=43" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -88,7 +88,7 @@
       <h2>Watch sessions</h2>
       <span id="watchers-count" class="count"></span>
     </div>
-    <p class="history-note">Who is signed in on /watch: one row per tab (duplicates from cookie remints are collapsed). Bandwidth is counted on the VPS from bytes already proxied. Buffering stats ride the existing /me and heartbeat calls — no extra stream traffic.</p>
+    <p class="history-note">Who is signed in on /watch: one row per tab (duplicates from cookie remints are collapsed). Bandwidth is counted on the VPS from bytes already proxied. Buffering stats ride the existing /me and heartbeat calls — no extra stream traffic. Log out signs that Watch user out on every tab and device until they sign in again.</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -99,6 +99,7 @@
             <th>Status</th>
             <th>Quality</th>
             <th>Watching</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="watchers-body"></tbody>
@@ -129,6 +130,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=28"></script>
+  <script src="/static/app.js?v=29"></script>
 </body>
 </html>

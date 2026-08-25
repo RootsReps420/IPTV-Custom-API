@@ -1,10 +1,11 @@
 """HTTP surface for the whole product (status UI, owner APIs, History, Watch).
 
 Public (no login): `/`, `/history`, `/api/public`, `/api/history`, `/static`, `/key`
-Owner (Caddy basicauth): `/owner`, `/api/status`, `/api/switch`, `/api/switch-back`
+Owner (Caddy basicauth): `/owner`, `/api/status`, `/api/switch`, `/api/switch-back`, `/api/kick-watch`
 Watch (app cookie): `/watch`, `/api/watch/*`, `/api/player/*` — registered in watch.py
 iOS native HLS may omit cookies; media uses signed `k` query as well.
 `/api/status` includes in-memory /watch sessions (not the public snapshot).
+POST `/api/status` with `{kick: true, username}` also signs a Watch user out (same Caddy path).
 
 The app binds 127.0.0.1:8787 in production; Caddy terminates HTTPS.
 """
@@ -31,6 +32,11 @@ class SwitchBody(BaseModel):
     target_url: str | None = None
 
 
+class KickWatchBody(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    kick: bool = False
+
+
 def create_app(monitor: Monitor) -> FastAPI:
     """Build the FastAPI app. Watch routes register first; /static must mount last."""
     app = FastAPI(title="IPTV Portal Monitor", docs_url=None, redoc_url=None)
@@ -49,6 +55,17 @@ def create_app(monitor: Monitor) -> FastAPI:
             counts["watch_online"] = data["watch"].get("online", 0)
             counts["watch_playing"] = data["watch"].get("playing", 0)
         return data
+
+    @app.post("/api/status")
+    @app.post("/api/kick-watch")
+    async def kick_watch_user(request: Request, body: KickWatchBody) -> dict:
+        """Sign a /watch user out on every device. Behind Caddy (POST /api/status is already owner-only)."""
+        if not body.kick:
+            raise HTTPException(status_code=400, detail="Set kick: true to sign a Watch user out.")
+        watch = getattr(request.app.state, "watch", None)
+        if watch is None:
+            raise HTTPException(status_code=503, detail="Watch is not running.")
+        return await watch.kick_user(body.username)
 
     @app.get("/api/public")
     async def public_status() -> dict:

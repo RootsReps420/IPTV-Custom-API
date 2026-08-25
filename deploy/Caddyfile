@@ -14,7 +14,7 @@ vps-4f889186.vps.ovh.net {
 	}
 	encode @notplayer gzip
 	@owner {
-		path /owner /owner/ /api/status /api/switch /api/switch-back
+		path /owner /owner/ /api/status /api/switch /api/switch-back /api/kick-watch
 	}
 	basicauth @owner {
 		dan REPLACE_WITH_BASE64_HASH

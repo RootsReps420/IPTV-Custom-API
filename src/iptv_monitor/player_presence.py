@@ -267,6 +267,16 @@ class PresenceTracker:
                 ]:
                     self._rows.pop(key, None)
 
+    async def drop_user(self, username: str) -> int:
+        name = (username or "").strip()
+        if not name:
+            return 0
+        async with self._lock:
+            keys = [key for key, row in self._rows.items() if row.username == name]
+            for key in keys:
+                self._rows.pop(key, None)
+            return len(keys)
+
     def _quality(self, row: Presence, now: float) -> str:
         if not row.playing:
             return ""

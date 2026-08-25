@@ -437,7 +437,7 @@ function renderWatchers(watch) {
       : "none";
   }
   if (!sessions.length) {
-    watchersBody.innerHTML = `<tr><td colspan="6">Nobody is signed in to /watch right now.</td></tr>`;
+    watchersBody.innerHTML = `<tr><td colspan="7">Nobody is signed in to /watch right now.</td></tr>`;
     return;
   }
   watchersBody.innerHTML = sessions
@@ -478,9 +478,11 @@ function renderWatchers(watch) {
       if (playingNow && row.drop_pct) {
         qualExtra.push(`${row.drop_pct}% drops`);
       }
+      const who = String(row.username || "");
+      const kicking = switching.has(`kick:${who}`);
       return `
         <tr>
-          <td>${esc(row.username)}</td>
+          <td>${esc(who)}</td>
           <td>${esc(fmtAge(row.logged_in_seconds))}</td>
           <td>${esc(row.ip || "—")}</td>
           <td class="${playingNow ? "status-play" : ""}">${playingNow ? "playing" : "idle"}</td>
@@ -488,6 +490,11 @@ function renderWatchers(watch) {
             qualExtra.length ? `<span class="muted">${esc(qualExtra.join(" · "))}</span>` : ""
           }</td>
           <td class="watching-cell">${esc(watching)}${extra.join("")}</td>
+          <td>
+            <button type="button" class="switch-btn kick${kicking ? " busy" : ""}" data-kick="${esc(who)}" ${
+              kicking ? "disabled" : ""
+            } title="Sign ${esc(who)} out of /watch on every tab and device">Log out</button>
+          </td>
         </tr>
       `;
     })
@@ -539,6 +546,41 @@ function switchBackPlaylist(playlistId) {
   return postSwitch("/api/switch-back", playlistId, "Switch back failed");
 }
 
+async function kickWatchUser(username) {
+  const who = String(username || "").trim();
+  const key = `kick:${who}`;
+  if (!who || switching.has(key)) {
+    return;
+  }
+  if (!window.confirm(`Sign ${who} out of Watch on every tab and device?`)) {
+    return;
+  }
+  switching.add(key);
+  if (latest) {
+    renderWatchers(latest.watch);
+  }
+  try {
+    const response = await fetch("/api/status", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: who, kick: true }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(apiError(data, `HTTP ${response.status}`));
+    }
+    await refresh();
+  } catch (error) {
+    renderAlerts([`Could not sign ${who} out: ${error.message}`]);
+  } finally {
+    switching.delete(key);
+    if (latest) {
+      renderWatchers(latest.watch);
+    }
+  }
+}
+
 if (playlistBody) {
   playlistBody.addEventListener("click", (event) => {
     const revert = event.target.closest("[data-revert]");
@@ -588,6 +630,16 @@ if (playlistBody) {
         }
       }
     }
+  });
+}
+
+if (watchersBody) {
+  watchersBody.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-kick]");
+    if (!button || button.disabled) {
+      return;
+    }
+    kickWatchUser(button.getAttribute("data-kick"));
   });
 }
 

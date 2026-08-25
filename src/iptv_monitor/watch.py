@@ -25,6 +25,7 @@ from iptv_monitor.player_auth import (
     clear_session,
     client_ip,
     fetch_serializer,
+    kick_username,
     mint_media_token,
     read_session,
     require_player_user,
@@ -94,6 +95,23 @@ class WatchService:
         presence = await self.presence.snapshot()
         slots = await self.slots.snapshot()
         return {**presence, "slots": slots}
+
+    async def kick_user(self, username: str) -> dict[str, Any]:
+        """Owner force-logout: revoke cookies, drop presence, free slots."""
+        name = (username or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing username.")
+        kicked_at = kick_username(name)
+        dropped = await self.presence.drop_user(name)
+        released = await self.slots.release_user(name)
+        logger.info("Owner signed out Watch user %s (%s sessions, %s slots)", name, dropped, released)
+        return {
+            "ok": True,
+            "username": name,
+            "dropped": dropped,
+            "slots_released": released,
+            "kicked_at": int(kicked_at),
+        }
 
 
 def _root(request: Request):

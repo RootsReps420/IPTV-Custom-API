@@ -64,6 +64,17 @@ class SlotTracker:
             self._prune_unlocked(time.monotonic())
             return {"used": len(self._slots), "max": self.max_concurrent}
 
+    async def release_user(self, username: str) -> int:
+        name = (username or "").strip()
+        if not name:
+            return 0
+        async with self._lock:
+            keys = [key for key, slot in self._slots.items() if slot.username == name]
+            for key in keys:
+                self._slots.pop(key, None)
+            self._prune_unlocked(time.monotonic())
+            return len(keys)
+
     async def has(self, play_id: str) -> bool:
         play_id = (play_id or "").strip()
         now = time.monotonic()
