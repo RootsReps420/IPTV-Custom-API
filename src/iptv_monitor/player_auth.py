@@ -16,6 +16,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
 
+from iptv_monitor.config import resolve_paths
 from iptv_monitor.hash_password import verify_password
 
 logger = logging.getLogger("iptv_monitor.player_auth")
@@ -65,12 +66,12 @@ def authenticate(path: Path, username: str, password: str) -> str | None:
     return None
 
 
-def session_secret(root: Path) -> str:
+def session_secret(root: Path | None) -> str:
     """Env WATCH_SESSION_SECRET, else persist a random secret under state/ (gitignored)."""
     env = os.getenv("WATCH_SESSION_SECRET", "").strip()
     if env:
         return env
-    path = root / "state" / "watch_secret.txt"
+    path = resolve_paths(root).root / "state" / "watch_secret.txt"
     if path.exists():
         value = path.read_text(encoding="utf-8").strip()
         if value:
@@ -81,11 +82,11 @@ def session_secret(root: Path) -> str:
     return value
 
 
-def _serializer(root: Path) -> URLSafeTimedSerializer:
+def _serializer(root: Path | None) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(session_secret(root), salt="iptv-watch-session")
 
 
-def fetch_serializer(root: Path) -> URLSafeTimedSerializer:
+def fetch_serializer(root: Path | None) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(session_secret(root), salt="iptv-watch-fetch")
 
 

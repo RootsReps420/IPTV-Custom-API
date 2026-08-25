@@ -56,7 +56,8 @@ class WatchService:
 
 
 def _root(request: Request):
-    return request.app.state.watch.root
+    """Project root. systemd does not pass --root, so WatchService.root can be None."""
+    return resolve_paths(request.app.state.watch.root).root
 
 
 def _svc(request: Request) -> WatchService:
