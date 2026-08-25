@@ -2,10 +2,10 @@
  *
  * Site login cookie, then Live / Movies / Series lists from proxied player_api.
  * Playback: live is MPEG-TS (mpegts.js) on Chrome/Edge/Android. Safari and
- * every iOS browser use native HLS. Live TS: fill once, then play. Never
- * pause/seek to "hold" buffer (that fights 1x bitrate and drops the panel
- * socket). If the cushion thins, ease playbackRate to 0.97 until it recovers;
- * reconnect only after a real stall. Panel user/pass never appear here.
+ * every iOS browser use native HLS. Live TS: play() in the same click as
+ * the channel (Chrome autoplay). Never pause to "fill" — that blocks the
+ * later play() and drops the panel socket. Stash + 0.97× if the cushion
+ * thins; reconnect only after a real stall. Panel user/pass never appear here.
  */
 
 const loginPanel = document.getElementById("login-panel");
@@ -39,12 +39,13 @@ const liveBadge = document.getElementById("live-badge");
 const bufferRow = document.getElementById("buffer-row");
 const watchSpinner = document.getElementById("watch-spinner");
 
-/* Seconds of live MPEG-TS to gather BEFORE playback starts, plus mpegts.js
- * stash size. After go-live we never pause/seek. Safari/iOS use native HLS. */
+/* mpegts.js default stash is 384KB. Multi-MB stash (old Medium/Large) waits
+ * to fill before the first MSE append, so FHD live never shows a frame.
+ * Small/Medium/Large only change how much cushion we try to keep after play. */
 const BUFFER_PROFILES = {
-  small: { target: 4, stash: 3 * 1024 * 1024, maxWait: 10000 },
-  medium: { target: 8, stash: 6 * 1024 * 1024, maxWait: 15000 },
-  large: { target: 12, stash: 10 * 1024 * 1024, maxWait: 20000 },
+  small: { target: 3, stash: 256 * 1024 },
+  medium: { target: 6, stash: 384 * 1024 },
+  large: { target: 10, stash: 512 * 1024 },
 };
 
 function playId() {
@@ -241,6 +242,8 @@ let liveReconnectTimer = null;
 let liveStallTimer = null;
 let liveReconnectTries = 0;
 let lastLiveResume = 0;
+let lastMediaTime = 0;
+let lastMediaTimeAt = 0;
 let vodRuntimeSec = null;
 let memoryPlayId = "";
 let stallReports = 0;
@@ -323,8 +326,43 @@ function paintLiveBadge() {
   liveBadge.classList.remove("is-behind");
 }
 
+function tickLiveFrozen() {
+  /* Play-button freeze (paused/ended/EOF) never fires `waiting`, so the 4.5s
+   * stall reconnect never runs. If currentTime is stuck ~4s while we still
+   * own the channel, re-open the TS socket. Leave a real user pause alone. */
+  if (!playing || !state.playingLiveId || !liveMpeg || !liveTsUrl || liveHold) {
+    return;
+  }
+  if (liveReconnectTimer) {
+    return;
+  }
+  const t = video.currentTime;
+  const now = performance.now();
+  if (Math.abs(t - lastMediaTime) > 0.05) {
+    lastMediaTime = t;
+    lastMediaTimeAt = now;
+    return;
+  }
+  if (!lastMediaTimeAt) {
+    lastMediaTimeAt = now;
+    return;
+  }
+  if (now - lastMediaTimeAt < 4000) {
+    return;
+  }
+  if (video.paused && !video.ended && bufferedAhead() > 1.5) {
+    return;
+  }
+  lastMediaTimeAt = now;
+  scheduleLiveReconnect(liveTsUrl, playGen);
+}
+
 function tickLivePace() {
-  if (!playing || !state.playingLiveId || liveHold || video.paused) {
+  if (!playing || !state.playingLiveId || liveHold) {
+    return;
+  }
+  tickLiveFrozen();
+  if (video.paused) {
     return;
   }
   if (lastLiveResume && performance.now() - lastLiveResume > 30000) {
@@ -344,26 +382,28 @@ function tickLivePace() {
 }
 
 function tickLiveFill() {
-  /* Startup fill only for MPEG-TS. After go-live: never pause; ease rate if
-   * the cushion thins so we do not underrun every couple of minutes. */
+  /* Spinner until the first media, then pace. Never pause the element. */
   if (!playing || !state.playingLiveId) {
     return;
   }
   paintLiveBadge();
   if (liveMpeg && liveHold && tsPlayer) {
-    const { target, maxWait } = bufferProfile();
     const ahead = bufferedAhead();
     const waited = liveFillAt ? performance.now() - liveFillAt : 0;
-    if (ahead >= target || waited >= maxWait) {
+    if (ahead >= 0.4 || video.readyState >= 3 || waited >= 4000) {
       liveHold = false;
       lastLiveResume = performance.now();
-      showWatchSpinner(false);
-      playNow();
+      if (ahead >= 0.3 || video.readyState >= 3) {
+        showWatchSpinner(false);
+      }
+      if (video.playbackRate !== 1) {
+        video.playbackRate = 1;
+      }
       paintLiveBadge();
       return;
     }
-    if (!video.paused) {
-      video.pause();
+    if (video.paused) {
+      playNow();
     }
     showWatchSpinner(true);
     return;
@@ -429,11 +469,11 @@ function startLiveWatch() {
   liveMpeg = true;
   liveHold = true;
   liveFillAt = performance.now();
+  lastMediaTime = 0;
+  lastMediaTimeAt = performance.now();
   showWatchSpinner(true);
   paintLiveBadge();
-  if (!video.paused) {
-    video.pause();
-  }
+  playNow();
   liveTimer = setInterval(tickLiveFill, 200);
   tickLiveFill();
 }
@@ -936,6 +976,9 @@ function playNow() {
       if (error && error.name === "AbortError") {
         return;
       }
+      if (error && error.name === "NotAllowedError") {
+        showBanner("Click the video to start playback.", "bad");
+      }
     });
   }
 }
@@ -962,13 +1005,13 @@ function attachMpegTs(url, gen, live) {
     {
       enableWorker: false,
       enableStashBuffer: true,
-      stashInitialSize: buf.stash,
+      stashInitialSize: live ? Math.min(buf.stash, 512 * 1024) : buf.stash,
       isLive: Boolean(live),
       liveBufferLatencyChasing: false,
       liveSync: false,
       autoCleanupSourceBuffer: true,
-      autoCleanupMaxBackwardDuration: 120,
-      autoCleanupMinBackwardDuration: 15,
+      autoCleanupMaxBackwardDuration: live ? 40 : 120,
+      autoCleanupMinBackwardDuration: live ? 10 : 15,
       lazyLoad: false,
       deferLoadAfterSourceOpen: false,
       accurateSeek: false,
@@ -998,6 +1041,14 @@ function attachMpegTs(url, gen, live) {
         showBanner(msg, "bad");
       }
     });
+    if (live && window.mpegts.Events.LOADING_COMPLETE) {
+      tsPlayer.on(window.mpegts.Events.LOADING_COMPLETE, () => {
+        if (gen !== playGen) {
+          return;
+        }
+        scheduleLiveReconnect(url, gen);
+      });
+    }
   }
   tsPlayer.attachMediaElement(video);
   tsPlayer.load();
@@ -1820,6 +1871,11 @@ video.addEventListener("playing", () => {
   paintLiveBadge();
 });
 video.addEventListener("pause", paintLiveBadge);
+video.addEventListener("ended", () => {
+  if (playing && state.playingLiveId && liveMpeg && liveTsUrl) {
+    scheduleLiveReconnect(liveTsUrl, playGen);
+  }
+});
 video.addEventListener("waiting", () => {
   if (!playing) {
     return;
