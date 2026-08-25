@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=41" />
+  <link rel="stylesheet" href="/static/styles.css?v=42" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -88,16 +88,16 @@
       <h2>Watch sessions</h2>
       <span id="watchers-count" class="count"></span>
     </div>
-    <p class="history-note">Who is signed in on /watch right now: username, login time, IP, and what they are playing. Idle tabs stay listed while the page is open; they drop a few minutes after the tab closes. This is in-memory on the VPS and is not shown on the public page.</p>
+    <p class="history-note">Who is signed in on /watch: one row per tab (duplicates from cookie remints are collapsed). Bandwidth is counted on the VPS from bytes already proxied. Buffering stats ride the existing /me and heartbeat calls — no extra stream traffic.</p>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
             <th>User</th>
             <th>Logged in</th>
-            <th>Last seen</th>
             <th>IP</th>
             <th>Status</th>
+            <th>Quality</th>
             <th>Watching</th>
           </tr>
         </thead>
@@ -129,6 +129,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=27"></script>
+  <script src="/static/app.js?v=28"></script>
 </body>
 </html>

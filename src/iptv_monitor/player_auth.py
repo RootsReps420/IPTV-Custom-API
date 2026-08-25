@@ -99,6 +99,32 @@ def fetch_serializer(root: Path | None) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(session_secret(root), salt="iptv-watch-fetch")
 
 
+def media_serializer(root: Path | None) -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(session_secret(root), salt="iptv-watch-media")
+
+
+MEDIA_TOKEN_MAX_AGE = 8 * 3600
+
+
+def mint_media_token(root: Path, username: str) -> str:
+    """Short-lived token for <video> HLS on iOS, which often omits cookies."""
+    return media_serializer(root).dumps({"u": username})
+
+
+def username_from_media_token(root: Path, token: str) -> str | None:
+    raw = (token or "").strip()
+    if not raw:
+        return None
+    try:
+        payload = media_serializer(root).loads(raw, max_age=MEDIA_TOKEN_MAX_AGE)
+    except (BadSignature, SignatureExpired, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    name = str(payload.get("u") or "").strip()
+    return name or None
+
+
 def cookie_secure(request: Request) -> bool:
     """Secure flag on HTTPS (including Caddy's X-Forwarded-Proto). HTTP local dashboard stays off."""
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "").lower()
@@ -180,6 +206,18 @@ def current_username(request: Request, root: Path) -> str | None:
 
 def require_username(request: Request, root: Path) -> str:
     name = current_username(request, root)
+    if not name:
+        raise HTTPException(status_code=401, detail="Sign in to watch.")
+    return name
+
+
+def require_player_user(request: Request, root: Path) -> str:
+    """Cookie first; media token `k` for iOS native HLS (AVPlayer skips cookies)."""
+    name = current_username(request, root)
+    if name:
+        return name
+    token = (request.query_params.get("k") or "").strip()
+    name = username_from_media_token(root, token)
     if not name:
         raise HTTPException(status_code=401, detail="Sign in to watch.")
     return name

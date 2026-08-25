@@ -396,6 +396,30 @@ function renderPlaylists(items) {
   }
 }
 
+function fmtMbps(kbps) {
+  const n = Number(kbps) || 0;
+  if (n <= 0) {
+    return "";
+  }
+  if (n >= 1000) {
+    return `${(n / 1000).toFixed(1)} Mb/s`;
+  }
+  return `${Math.round(n)} kb/s`;
+}
+
+function qualityClass(level) {
+  if (level === "good") {
+    return "status-play";
+  }
+  if (level === "ok") {
+    return "status-warn";
+  }
+  if (level === "poor") {
+    return "status-down";
+  }
+  return "";
+}
+
 function renderWatchers(watch) {
   if (!watchersSection || !watchersBody) {
     return;
@@ -425,17 +449,45 @@ function renderWatchers(watch) {
       const watching = playingNow
         ? `${kind ? `${kind} · ` : ""}${title || "Playing…"}`
         : "Browsing";
-      const extra = playingNow && detail && detail !== title
-        ? `<span class="muted">${esc(detail)}</span>`
-        : "";
+      const extra = [];
+      if (playingNow && detail && detail !== title) {
+        extra.push(`<span class="muted">${esc(detail)}</span>`);
+      }
+      if (playingNow && row.watching_seconds) {
+        extra.push(`<span class="muted">on this ${esc(fmtAge(row.watching_seconds))}</span>`);
+      }
+      const bits = [];
+      if (row.quality) {
+        bits.push(row.quality);
+      }
+      const rate = fmtMbps(row.kbps);
+      if (rate) {
+        bits.push(rate);
+      }
+      if (row.width && row.height) {
+        bits.push(`${row.width}×${row.height}`);
+      }
+      const qualMain = bits.length ? bits.join(" · ") : playingNow ? "measuring…" : "—";
+      const qualExtra = [];
+      if (playingNow && row.buffer_s) {
+        qualExtra.push(`${row.buffer_s}s buffer`);
+      }
+      if (playingNow && row.stalls_60s) {
+        qualExtra.push(`${row.stalls_60s} stall${row.stalls_60s === 1 ? "" : "s"}/min`);
+      }
+      if (playingNow && row.drop_pct) {
+        qualExtra.push(`${row.drop_pct}% drops`);
+      }
       return `
         <tr>
           <td>${esc(row.username)}</td>
           <td>${esc(fmtAge(row.logged_in_seconds))}</td>
-          <td>${esc(row.idle_seconds === 0 ? "now" : `${fmtAge(row.idle_seconds)} ago`)}</td>
           <td>${esc(row.ip || "—")}</td>
           <td class="${playingNow ? "status-play" : ""}">${playingNow ? "playing" : "idle"}</td>
-          <td class="watching-cell">${esc(watching)}${extra}</td>
+          <td class="quality-cell ${qualityClass(row.quality)}">${esc(qualMain)}${
+            qualExtra.length ? `<span class="muted">${esc(qualExtra.join(" · "))}</span>` : ""
+          }</td>
+          <td class="watching-cell">${esc(watching)}${extra.join("")}</td>
         </tr>
       `;
     })

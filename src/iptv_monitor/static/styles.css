@@ -491,11 +491,13 @@ tr:last-child td {
   color: var(--up);
 }
 
-.watching-cell {
+.watching-cell,
+.quality-cell {
   max-width: 360px;
 }
 
-.watching-cell .muted {
+.watching-cell .muted,
+.quality-cell .muted {
   display: block;
   margin-top: 2px;
   font-size: 11px;

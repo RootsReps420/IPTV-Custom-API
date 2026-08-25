@@ -3,6 +3,7 @@
 Public (no login): `/`, `/history`, `/api/public`, `/api/history`, `/static`, `/key`
 Owner (Caddy basicauth): `/owner`, `/api/status`, `/api/switch`, `/api/switch-back`
 Watch (app cookie): `/watch`, `/api/watch/*`, `/api/player/*` — registered in watch.py
+iOS native HLS may omit cookies; media uses signed `k` query as well.
 `/api/status` includes in-memory /watch sessions (not the public snapshot).
 
 The app binds 127.0.0.1:8787 in production; Caddy terminates HTTPS.

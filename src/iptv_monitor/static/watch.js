@@ -1,8 +1,11 @@
 /* /watch player: Xtream catalogue + HLS/mpegts.js against same-origin /api/player.
  *
  * Site login cookie, then Live / Movies / Series lists from proxied player_api.
- * Playback: live is MPEG-TS (mpegts.js, low-latency). VOD tries the panel extension first.
- * for the 5-slot limiter. Panel user/pass never appear in this file.
+ * Playback: live is MPEG-TS (mpegts.js) on Chrome/Edge/Android. Safari and
+ * every iOS browser use native HLS. Live TS: fill once, then play. Never
+ * pause/seek to "hold" buffer (that fights 1x bitrate and drops the panel
+ * socket). If the cushion thins, ease playbackRate to 0.97 until it recovers;
+ * reconnect only after a real stall. Panel user/pass never appear here.
  */
 
 const loginPanel = document.getElementById("login-panel");
@@ -36,25 +39,110 @@ const liveBadge = document.getElementById("live-badge");
 const bufferRow = document.getElementById("buffer-row");
 const watchSpinner = document.getElementById("watch-spinner");
 
-/* Seconds of MPEG-TS to hold before/during play, like TiviMate Small/Medium/Large. */
+/* Seconds of live MPEG-TS to gather BEFORE playback starts, plus mpegts.js
+ * stash size. After go-live we never pause/seek. Safari/iOS use native HLS. */
 const BUFFER_PROFILES = {
-  small: { target: 2.5, low: 0.7, stash: 384 * 1024 },
-  medium: { target: 6, low: 1.5, stash: 768 * 1024 },
-  large: { target: 12, low: 3, stash: 1536 * 1024 },
+  small: { target: 4, stash: 3 * 1024 * 1024, maxWait: 10000 },
+  medium: { target: 8, stash: 6 * 1024 * 1024, maxWait: 15000 },
+  large: { target: 12, stash: 10 * 1024 * 1024, maxWait: 20000 },
 };
 
 function playId() {
   // One UUID per tab so two tabs from the same friend consume two panel slots.
-  let id = sessionStorage.getItem("watch_play_id");
-  if (!id) {
-    id = crypto.randomUUID();
-    sessionStorage.setItem("watch_play_id", id);
+  try {
+    let id = sessionStorage.getItem("watch_play_id");
+    if (!id) {
+      id = crypto.randomUUID();
+      sessionStorage.setItem("watch_play_id", id);
+    }
+    return id;
+  } catch {
+    if (!memoryPlayId) {
+      memoryPlayId = crypto.randomUUID();
+    }
+    return memoryPlayId;
   }
-  return id;
+}
+
+function canPlayMpegTs() {
+  try {
+    return Boolean(window.mpegts && window.mpegts.getFeatureList().mseLivePlayback);
+  } catch {
+    return false;
+  }
+}
+
+function canPlayNativeHls() {
+  return Boolean(video.canPlayType && video.canPlayType("application/vnd.apple.mpegurl"));
+}
+
+function preferNativeHls() {
+  // Safari, all iOS browsers (Chrome/Firefox/Edge on iPhone are WebKit),
+  // and any engine without MPEG-TS MSE: use HLS instead of mpegts.js.
+  return !canPlayMpegTs() && canPlayNativeHls();
+}
+
+function liveExtensions() {
+  if (canPlayMpegTs()) {
+    return ["ts"];
+  }
+  // Safari / iOS native HLS, or hls.js MSE (Firefox, etc.).
+  return ["m3u8"];
+}
+
+function vodExtensions(preferred) {
+  const ext = String(preferred || "mp4").replace(/^\./, "") || "mp4";
+  if (preferNativeHls()) {
+    return [...new Set(["m3u8", ext, "mp4", "mkv"])];
+  }
+  return [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
 }
 
 function meUrl() {
-  return `/api/watch/me?play_id=${encodeURIComponent(playId())}`;
+  const params = new URLSearchParams({ play_id: playId() });
+  if (playing) {
+    const q = playbackQuality();
+    if (q.buffer_s) {
+      params.set("buffer_s", String(q.buffer_s));
+    }
+    if (q.stalls) {
+      params.set("stalls", String(q.stalls));
+    }
+    if (q.dropped) {
+      params.set("dropped", String(q.dropped));
+    }
+    if (q.decoded) {
+      params.set("decoded", String(q.decoded));
+    }
+    if (q.width) {
+      params.set("width", String(q.width));
+    }
+    if (q.height) {
+      params.set("height", String(q.height));
+    }
+    stallReports = 0;
+  }
+  return `/api/watch/me?${params}`;
+}
+
+function playbackQuality() {
+  const q = video.getVideoPlaybackQuality?.();
+  const dropped = q && Number.isFinite(q.droppedVideoFrames) ? q.droppedVideoFrames : 0;
+  const decoded = q && Number.isFinite(q.totalVideoFrames) ? q.totalVideoFrames : 0;
+  let bufferS = 0;
+  try {
+    bufferS = Math.round(bufferedAhead() * 10) / 10;
+  } catch {
+    bufferS = 0;
+  }
+  return {
+    buffer_s: bufferS,
+    stalls: stallReports,
+    dropped,
+    decoded,
+    width: video.videoWidth || 0,
+    height: video.videoHeight || 0,
+  };
 }
 
 function nowPlayingBody() {
@@ -73,6 +161,14 @@ function nowPlayingBody() {
   if (detail) {
     body.detail = detail.slice(0, 200);
   }
+  const q = playbackQuality();
+  body.buffer_s = q.buffer_s;
+  body.stalls = q.stalls;
+  body.dropped = q.dropped;
+  body.decoded = q.decoded;
+  body.width = q.width;
+  body.height = q.height;
+  stallReports = 0;
   return body;
 }
 
@@ -120,6 +216,7 @@ const state = {
   playingLiveId: "",
   playingItem: null,
   playingKind: "",
+  mediaToken: "",
   wasSyncing: false,
   epgTries: 0,
   searchKind: "all",
@@ -138,7 +235,15 @@ let searchGen = 0;
 let searchTimer = null;
 let liveHold = false;
 let liveMpeg = false;
+let liveFillAt = 0;
+let liveTsUrl = "";
+let liveReconnectTimer = null;
+let liveStallTimer = null;
+let liveReconnectTries = 0;
+let lastLiveResume = 0;
 let vodRuntimeSec = null;
+let memoryPlayId = "";
+let stallReports = 0;
 
 function bufferKey() {
   const key = localStorage.getItem("watch_buffer") || "medium";
@@ -153,6 +258,7 @@ function paintBufferButtons() {
   if (!bufferRow) {
     return;
   }
+  bufferRow.hidden = !canPlayMpegTs();
   const key = bufferKey();
   bufferRow.querySelectorAll("[data-buf]").forEach((button) => {
     button.classList.toggle("is-here", button.getAttribute("data-buf") === key);
@@ -173,13 +279,29 @@ function showWatchSpinner(on) {
   watchSpinner.hidden = !on;
 }
 
+function clearLiveStallTimer() {
+  if (liveStallTimer) {
+    clearTimeout(liveStallTimer);
+    liveStallTimer = null;
+  }
+}
+
 function stopLiveWatch() {
   liveHold = false;
   liveMpeg = false;
+  liveFillAt = 0;
+  clearLiveStallTimer();
   showWatchSpinner(false);
   if (liveTimer) {
     clearInterval(liveTimer);
     liveTimer = null;
+  }
+  try {
+    if (video.playbackRate !== 1) {
+      video.playbackRate = 1;
+    }
+  } catch {
+    /* ignore */
   }
 }
 
@@ -192,7 +314,7 @@ function paintLiveBadge() {
     return;
   }
   liveBadge.hidden = false;
-  if (liveHold || video.readyState < 2) {
+  if (liveHold) {
     liveBadge.textContent = "BUFFERING";
     liveBadge.classList.add("is-behind");
     return;
@@ -201,62 +323,132 @@ function paintLiveBadge() {
   liveBadge.classList.remove("is-behind");
 }
 
-function tickLiveBuffer() {
-  if (!playing || !state.playingLiveId || !liveMpeg || !tsPlayer) {
+function tickLivePace() {
+  if (!playing || !state.playingLiveId || liveHold || video.paused) {
     return;
   }
-  if (video.seeking) {
-    paintLiveBadge();
-    return;
+  if (lastLiveResume && performance.now() - lastLiveResume > 30000) {
+    liveReconnectTries = 0;
   }
-  const { target, low } = bufferProfile();
   const ahead = bufferedAhead();
-  const needFill = ahead < low || (liveHold && ahead < target);
-  if (needFill) {
-    liveHold = true;
-    showWatchSpinner(true);
+  const { target } = bufferProfile();
+  const low = Math.min(2.5, Math.max(1.2, target * 0.28));
+  const recover = Math.min(target * 0.55, Math.max(low + 1.5, 4));
+  if (ahead > 0.2 && ahead < low) {
+    if (Math.abs(video.playbackRate - 0.97) > 0.001) {
+      video.playbackRate = 0.97;
+    }
+  } else if (ahead >= recover && video.playbackRate !== 1) {
+    video.playbackRate = 1;
+  }
+}
+
+function tickLiveFill() {
+  /* Startup fill only for MPEG-TS. After go-live: never pause; ease rate if
+   * the cushion thins so we do not underrun every couple of minutes. */
+  if (!playing || !state.playingLiveId) {
+    return;
+  }
+  paintLiveBadge();
+  if (liveMpeg && liveHold && tsPlayer) {
+    const { target, maxWait } = bufferProfile();
+    const ahead = bufferedAhead();
+    const waited = liveFillAt ? performance.now() - liveFillAt : 0;
+    if (ahead >= target || waited >= maxWait) {
+      liveHold = false;
+      lastLiveResume = performance.now();
+      showWatchSpinner(false);
+      playNow();
+      paintLiveBadge();
+      return;
+    }
     if (!video.paused) {
       video.pause();
     }
-    paintLiveBadge();
+    showWatchSpinner(true);
     return;
   }
-  liveHold = false;
-  showWatchSpinner(false);
-  if (video.paused) {
-    playNow();
+  tickLivePace();
+}
+
+function beginStallRecover() {
+  /* Do not pause here: that stops the TS loader and IPTV panels drop the
+   * socket. If we are still starved after a few seconds, reconnect. */
+  if (!playing || !state.playingLiveId || liveHold) {
+    return;
   }
-  paintLiveBadge();
+  if (lastLiveResume && performance.now() - lastLiveResume < 2500) {
+    return;
+  }
+  if (!liveMpeg || !liveTsUrl || liveStallTimer || liveReconnectTimer) {
+    return;
+  }
+  liveStallTimer = window.setTimeout(() => {
+    liveStallTimer = null;
+    if (!playing || !state.playingLiveId || liveHold) {
+      return;
+    }
+    if (bufferedAhead() >= 1.5 && video.readyState >= 3) {
+      return;
+    }
+    scheduleLiveReconnect(liveTsUrl, playGen);
+  }, 4500);
+}
+
+function scheduleLiveReconnect(url, gen) {
+  if (!url || gen !== playGen || liveReconnectTimer) {
+    return;
+  }
+  if (liveReconnectTries >= 6) {
+    showBanner("Live stream dropped. Click the channel again.", "bad");
+    return;
+  }
+  liveReconnectTries += 1;
+  liveReconnectTimer = window.setTimeout(() => {
+    liveReconnectTimer = null;
+    if (gen !== playGen || !playing || !state.playingLiveId) {
+      return;
+    }
+    if (tsPlayer) {
+      try {
+        tsPlayer.pause();
+        tsPlayer.unload();
+        tsPlayer.detachMediaElement();
+        tsPlayer.destroy();
+      } catch {
+        /* ignore */
+      }
+      tsPlayer = null;
+    }
+    attachMpegTs(url, gen, true);
+  }, 700);
 }
 
 function startLiveWatch() {
   stopLiveWatch();
   liveMpeg = true;
   liveHold = true;
+  liveFillAt = performance.now();
   showWatchSpinner(true);
   paintLiveBadge();
-  liveTimer = setInterval(tickLiveBuffer, 250);
-  tickLiveBuffer();
+  if (!video.paused) {
+    video.pause();
+  }
+  liveTimer = setInterval(tickLiveFill, 200);
+  tickLiveFill();
+}
+
+function startLivePaceOnly() {
+  stopLiveWatch();
+  liveMpeg = false;
+  liveHold = false;
+  paintLiveBadge();
+  liveTimer = setInterval(tickLiveFill, 250);
 }
 
 function applyBufferSize() {
   paintBufferButtons();
-  if (!liveMpeg || !tsPlayer) {
-    return;
-  }
-  const target = bufferProfile().target;
-  const ahead = bufferedAhead();
-  if (ahead > target + 1.5 && video.buffered.length) {
-    const end = video.buffered.end(video.buffered.length - 1);
-    try {
-      video.currentTime = Math.max(0, end - target);
-    } catch {
-      /* ignore */
-    }
-  } else if (ahead < target) {
-    liveHold = true;
-  }
-  tickLiveBuffer();
+  // Size is startup stash + first-fill. Changing it mid-stream does not seek.
 }
 
 function formatClock() {
@@ -548,6 +740,9 @@ let guidePollMs = 0;
 async function tickGuide() {
   try {
     const me = await api(meUrl());
+    if (me.media_token) {
+      state.mediaToken = me.media_token;
+    }
     setSlots(me.slots);
     const running = !!me.sync?.running;
     if (running) {
@@ -624,6 +819,12 @@ function destroyPlayers() {
 
 function stopPlayback() {
   playing = false;
+  liveTsUrl = "";
+  liveReconnectTries = 0;
+  if (liveReconnectTimer) {
+    clearTimeout(liveReconnectTimer);
+    liveReconnectTimer = null;
+  }
   stopLiveWatch();
   showWatchSpinner(false);
   if (beatTimer) {
@@ -668,7 +869,11 @@ function startHeartbeat() {
 }
 
 function mediaUrl(kind, streamId, ext) {
-  return `/api/player/media/${kind}/${encodeURIComponent(streamId)}.${ext}?sid=${encodeURIComponent(playId())}`;
+  const params = new URLSearchParams({ sid: playId() });
+  if (state.mediaToken) {
+    params.set("k", state.mediaToken);
+  }
+  return `/api/player/media/${kind}/${encodeURIComponent(streamId)}.${ext}?${params}`;
 }
 
 function attachHls(url) {
@@ -700,6 +905,8 @@ function attachHls(url) {
       xhrSetup(xhr) {
         xhr.withCredentials = true;
       },
+      liveSyncDurationCount: 5,
+      liveMaxLatencyDurationCount: 12,
     });
     const onError = (_event, info) => {
       if (info?.fatal) {
@@ -720,6 +927,9 @@ function playNow() {
   if (!Number.isFinite(video.volume) || video.volume === 0) {
     video.volume = 1;
   }
+  if (!liveHold && video.playbackRate !== 1) {
+    video.playbackRate = 1;
+  }
   const p = video.play();
   if (p && typeof p.catch === "function") {
     p.catch((error) => {
@@ -731,10 +941,15 @@ function playNow() {
 }
 
 function attachMpegTs(url, gen, live) {
-  if (!window.mpegts || !window.mpegts.getFeatureList().mseLivePlayback) {
-    throw new Error("MPEG-TS playback is not supported in this browser. Use Chrome or Edge.");
+  if (!canPlayMpegTs()) {
+    throw new Error(
+      preferNativeHls() || canPlayNativeHls()
+        ? "MPEG-TS is not available here; use HLS instead."
+        : "This browser cannot play MPEG-TS. Safari and iPhone need HLS; Chrome/Edge on desktop or Android can play the live TS stream."
+    );
   }
   const buf = bufferProfile();
+  liveTsUrl = url;
   tsPlayer = window.mpegts.createPlayer(
     {
       type: "mpegts",
@@ -752,20 +967,31 @@ function attachMpegTs(url, gen, live) {
       liveBufferLatencyChasing: false,
       liveSync: false,
       autoCleanupSourceBuffer: true,
-      autoCleanupMaxBackwardDuration: 90,
-      autoCleanupMinBackwardDuration: 20,
+      autoCleanupMaxBackwardDuration: 120,
+      autoCleanupMinBackwardDuration: 15,
       lazyLoad: false,
       deferLoadAfterSourceOpen: false,
-      fixAudioTimestampGap: true,
+      accurateSeek: false,
+      fixAudioTimestampGap: !live,
     }
   );
   if (window.mpegts.Events) {
-    tsPlayer.on(window.mpegts.Events.ERROR, (_type, detail) => {
+    tsPlayer.on(window.mpegts.Events.ERROR, (errorType, detail) => {
       if (gen !== playGen) {
         return;
       }
-      const raw = detail?.msg || detail?.code || "Stream error";
+      const kind = String(errorType || "");
+      const raw = detail?.msg || detail?.code || kind || "Stream error";
       const msg = String(raw);
+      if (
+        live &&
+        (kind === "NetworkError" ||
+          kind === "MediaError" ||
+          /network|http|status|eof|unrecoverable|mediaerror|loader/i.test(`${kind} ${msg}`))
+      ) {
+        scheduleLiveReconnect(url, gen);
+        return;
+      }
       if (/network|http|status|eof|unrecoverable/i.test(msg)) {
         showBanner("Could not play this channel. If the portal is blocked, failover will pick a new DNS shortly.", "bad");
       } else {
@@ -775,9 +1001,10 @@ function attachMpegTs(url, gen, live) {
   }
   tsPlayer.attachMediaElement(video);
   tsPlayer.load();
-  playNow();
   if (live) {
     startLiveWatch();
+  } else {
+    playNow();
   }
 }
 
@@ -809,11 +1036,23 @@ async function playSources(kind, streamId, extensions, gen) {
     const url = mediaUrl(kind, streamId, ext);
     try {
       if (ext === "m3u8") {
-        await attachHls(url);
-        if (gen != null && gen !== playGen) {
-          return;
+        // iOS AVPlayer: play() must stay in the tap turn; awaiting hls.js loses the gesture.
+        if (canPlayNativeHls() && !(window.Hls && window.Hls.isSupported())) {
+          video.src = url;
+          playNow();
+          if (kind === "live") {
+            startLivePaceOnly();
+          }
+        } else {
+          await attachHls(url);
+          if (gen != null && gen !== playGen) {
+            return;
+          }
+          playNow();
+          if (kind === "live") {
+            startLivePaceOnly();
+          }
         }
-        playNow();
       } else if (ext === "ts") {
         attachMpegTs(url, gen, kind === "live");
         if (kind === "live") {
@@ -869,6 +1108,7 @@ async function playSources(kind, streamId, extensions, gen) {
 
 function playLive(item) {
   const gen = ++playGen;
+  liveReconnectTries = 0;
   clearVodRuntime();
   state.playingLiveId = String(item.stream_id);
   state.playingKind = "live";
@@ -876,7 +1116,7 @@ function playLive(item) {
   setPreview(item, { fallback: "Starting…" });
   showBanner("");
   try {
-    playSources("live", String(item.stream_id), ["ts"], gen).catch((error) => {
+    playSources("live", String(item.stream_id), liveExtensions(), gen).catch((error) => {
       if (gen !== playGen) {
         return;
       }
@@ -952,7 +1192,7 @@ async function playVod(item) {
       setVodRuntime(parseRuntime(info.duration_secs, { seconds: true }) || parseRuntime(info.duration));
     })
     .catch(() => {});
-  const order = [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
+  const order = vodExtensions(ext);
   try {
     await playSources("movie", String(item.stream_id), order, gen);
   } catch (error) {
@@ -984,7 +1224,7 @@ async function playEpisode(episode, seriesName) {
     nowNext.textContent = "Runtime…";
   }
   showBanner("");
-  const order = [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
+  const order = vodExtensions(ext);
   try {
     await playSources("series", String(episode.id), order, gen);
   } catch (error) {
@@ -1333,6 +1573,9 @@ async function loadItems(opts) {
 async function boot() {
   try {
     const me = await api(meUrl());
+    if (me.media_token) {
+      state.mediaToken = me.media_token;
+    }
     setSlots(me.slots);
     if (!me.username) {
       showLogin();
@@ -1343,6 +1586,9 @@ async function boot() {
     userStat.textContent = me.username;
     setGuide(me.sync);
     showApp();
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    video.playsInline = true;
     paintBufferButtons();
     if (!me.configured) {
       showBanner(
@@ -1565,30 +1811,39 @@ if (bufferRow) {
 }
 
 video.addEventListener("timeupdate", paintVodRuntime);
-video.addEventListener("play", tickLiveBuffer);
 video.addEventListener("playing", () => {
-  if (!liveMpeg) {
-    showWatchSpinner(false);
+  clearLiveStallTimer();
+  if (liveHold) {
+    return;
   }
-  tickLiveBuffer();
+  showWatchSpinner(false);
+  paintLiveBadge();
 });
 video.addEventListener("pause", paintLiveBadge);
 video.addEventListener("waiting", () => {
-  if (!liveMpeg || !playing || !state.playingLiveId) {
+  if (!playing) {
     return;
   }
-  liveHold = true;
+  if (liveHold) {
+    showWatchSpinner(true);
+    paintLiveBadge();
+    return;
+  }
+  stallReports += 1;
   showWatchSpinner(true);
-  paintLiveBadge();
+  if (state.playingLiveId) {
+    beginStallRecover();
+    if (liveBadge && !liveBadge.hidden) {
+      liveBadge.textContent = "BUFFERING";
+      liveBadge.classList.add("is-behind");
+    }
+    return;
+  }
 });
-video.addEventListener("ended", () => {
-  if (!liveMpeg || !playing || !state.playingLiveId) {
-    return;
+video.addEventListener("stalled", () => {
+  if (playing && state.playingLiveId && !liveHold) {
+    beginStallRecover();
   }
-  liveHold = true;
-  showWatchSpinner(true);
-  paintLiveBadge();
-  tickLiveBuffer();
 });
 
 window.addEventListener("pagehide", () => {

@@ -25,7 +25,9 @@ from iptv_monitor.player_auth import (
     clear_session,
     client_ip,
     fetch_serializer,
+    mint_media_token,
     read_session,
+    require_player_user,
     require_username,
     set_session,
 )
@@ -47,6 +49,12 @@ class SlotBody(BaseModel):
     stream_id: str = Field(default="", max_length=80)
     title: str = Field(default="", max_length=200)
     detail: str = Field(default="", max_length=200)
+    buffer_s: float = Field(default=0, ge=0, le=120)
+    stalls: int = Field(default=0, ge=0, le=50)
+    dropped: int = Field(default=0, ge=0, le=1_000_000)
+    decoded: int = Field(default=0, ge=0, le=10_000_000)
+    width: int = Field(default=0, ge=0, le=7680)
+    height: int = Field(default=0, ge=0, le=4320)
 
 
 class SyncBody(BaseModel):
@@ -107,20 +115,31 @@ async def _touch_presence(
     stream_id: str = "",
     title: str = "",
     detail: str = "",
+    username: str | None = None,
+    buffer_s: float = 0,
+    stalls: int = 0,
+    dropped: int = 0,
+    decoded: int = 0,
+    width: int = 0,
+    height: int = 0,
 ) -> None:
     """Record presence from requests /watch already makes. Optional cookie sid mint."""
     root = _root(request)
     session = read_session(request, root)
-    if not session:
+    name = (username or "").strip() or (session.username if session else "")
+    if not name:
         return
-    sid = session.session_id
+    sid = session.session_id if session else ""
+    ip = client_ip(request)
     if response is not None and not sid:
+        reused = await _svc(request).presence.reuse_sid(name, ip)
         sid = set_session(
             response,
             request,
             root,
-            session.username,
-            issued_at=session.issued_at or None,
+            name,
+            session_id=reused or None,
+            issued_at=(session.issued_at if session else 0) or None,
         )
     looked_title = title
     looked_detail = detail
@@ -129,16 +148,22 @@ async def _touch_presence(
         looked_title = title or guide_title
         looked_detail = detail or guide_detail
     await _svc(request).presence.touch(
-        username=session.username,
-        session_id=sid or session.username,
-        ip=client_ip(request),
-        issued_at=float(session.issued_at or 0),
+        username=name,
+        session_id=sid or play_id,
+        ip=ip,
+        issued_at=float(session.issued_at if session else 0),
         play_id=play_id,
         playing=playing,
         kind=kind,
         stream_id=stream_id,
         title=looked_title,
         detail=looked_detail,
+        buffer_s=buffer_s,
+        stalls=stalls,
+        dropped=dropped,
+        decoded=decoded,
+        width=width,
+        height=height,
     )
 
 
@@ -192,22 +217,41 @@ def register_watch(app: FastAPI, static_dir) -> None:
         return response
 
     @app.get("/api/watch/me")
-    async def watch_me(request: Request, play_id: str = Query(default="", max_length=80)) -> JSONResponse:
+    async def watch_me(
+        request: Request,
+        play_id: str = Query(default="", max_length=80),
+        buffer_s: float = Query(default=0, ge=0, le=120),
+        stalls: int = Query(default=0, ge=0, le=50),
+        dropped: int = Query(default=0, ge=0, le=1_000_000),
+        decoded: int = Query(default=0, ge=0, le=10_000_000),
+        width: int = Query(default=0, ge=0, le=7680),
+        height: int = Query(default=0, ge=0, le=4320),
+    ) -> JSONResponse:
         svc = _svc(request)
         cfg = svc.config()
         session = read_session(request, _root(request))
         snap = await svc.slots.snapshot()
-        response = JSONResponse(
-            {
-                "username": session.username if session else None,
-                "configured": cfg.configured,
-                "max_concurrent": cfg.max_concurrent,
-                "slots": snap,
-                "sync": svc.guide.status(),
-            }
-        )
+        payload = {
+            "username": session.username if session else None,
+            "configured": cfg.configured,
+            "max_concurrent": cfg.max_concurrent,
+            "slots": snap,
+            "sync": svc.guide.status(),
+            "media_token": mint_media_token(_root(request), session.username) if session else None,
+        }
+        response = JSONResponse(payload)
         if session:
-            await _touch_presence(request, response, play_id=play_id)
+            await _touch_presence(
+                request,
+                response,
+                play_id=play_id,
+                buffer_s=buffer_s,
+                stalls=stalls,
+                dropped=dropped,
+                decoded=decoded,
+                width=width,
+                height=height,
+            )
         return response
 
     @app.post("/api/player/sync")
@@ -244,6 +288,12 @@ def register_watch(app: FastAPI, static_dir) -> None:
             stream_id=body.stream_id,
             title=body.title,
             detail=body.detail,
+            buffer_s=body.buffer_s,
+            stalls=body.stalls,
+            dropped=body.dropped,
+            decoded=body.decoded,
+            width=body.width,
+            height=body.height,
         )
         snap = await _svc(request).slots.snapshot()
         return {"ok": True, "slots": snap}
@@ -370,7 +420,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
         """Proxy live/movie/series. sid is the tab play_id required to hold a slot."""
         if kind not in KINDS:
             raise HTTPException(status_code=400, detail="Invalid media kind.")
-        user = require_username(request, _root(request))
+        user = require_player_user(request, _root(request))
         svc = _svc(request)
         cfg = svc.config()
         if not cfg.configured:
@@ -384,11 +434,13 @@ def register_watch(app: FastAPI, static_dir) -> None:
             playing=True,
             kind=kind,
             stream_id=stream_id,
+            username=user,
         )
         url = panel_media_url(cfg, kind, stream_id, ext)
         live_ts = kind == "live" and ext.lstrip(".").lower() == "ts"
         vod = kind in {"movie", "series"} and ext.lstrip(".").lower() not in {"m3u8", "mpd"}
         serializer = None if live_ts else fetch_serializer(_root(request))
+        presence = svc.presence
         return await proxy_url(
             url,
             serializer=serializer,
@@ -396,6 +448,8 @@ def register_watch(app: FastAPI, static_dir) -> None:
             range_header=None if vod else request.headers.get("range"),
             assume_mpegts=live_ts,
             remux_aac=vod,
+            access_token=mint_media_token(_root(request), user),
+            on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n),
         )
 
     @app.get("/api/player/fetch")
@@ -405,15 +459,18 @@ def register_watch(app: FastAPI, static_dir) -> None:
         sid: str = Query(min_length=8),
     ) -> Response:
         """Follow a signed HLS segment URL minted while rewriting a playlist."""
-        user = require_username(request, _root(request))
+        user = require_player_user(request, _root(request))
         await _require_slot(_svc(request), user, sid)
         serializer = fetch_serializer(_root(request))
         url = load_signed_url(serializer, t)
+        presence = _svc(request).presence
         return await proxy_url(
             url,
             serializer=serializer,
             sid=sid,
             range_header=request.headers.get("range"),
+            access_token=mint_media_token(_root(request), user),
+            on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n),
         )
 
     @app.get("/watch")
