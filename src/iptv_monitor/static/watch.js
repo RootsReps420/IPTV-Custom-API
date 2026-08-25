@@ -111,6 +111,7 @@ let searchGen = 0;
 let searchTimer = null;
 let liveHold = false;
 let liveMpeg = false;
+let vodRuntimeSec = null;
 
 function bufferKey() {
   const key = localStorage.getItem("watch_buffer") || "medium";
@@ -247,6 +248,81 @@ function formatTime(ts) {
     return "";
   }
   return new Date(n * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function parseRuntime(value, { seconds } = {}) {
+  if (value == null || value === "") {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    if (seconds || value >= 1000) {
+      return Math.round(value);
+    }
+    return Math.round(value * 60);
+  }
+  const text = String(value).trim();
+  if (!text || text === "0" || text === "00:00" || text === "00:00:00") {
+    return null;
+  }
+  if (/^\d+(\.\d+)?$/.test(text)) {
+    const n = Number(text);
+    if (!Number.isFinite(n) || n <= 0) {
+      return null;
+    }
+    if (seconds || n >= 1000) {
+      return Math.round(n);
+    }
+    return Math.round(n * 60);
+  }
+  const parts = text.split(":").map((part) => Number(part));
+  if (parts.some((part) => !Number.isFinite(part) || part < 0)) {
+    return null;
+  }
+  if (parts.length === 3) {
+    return Math.round(parts[0] * 3600 + parts[1] * 60 + parts[2]);
+  }
+  if (parts.length === 2) {
+    return Math.round(parts[0] * 60 + parts[1]);
+  }
+  return null;
+}
+
+function formatRuntime(seconds) {
+  const n = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(n / 3600);
+  const mins = Math.floor((n % 3600) / 60);
+  const secs = n % 60;
+  if (hours > 0) {
+    return `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }
+  return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
+function paintVodRuntime() {
+  if (!vodRuntimeSec || state.playingLiveId) {
+    return;
+  }
+  const played = Math.max(0, video.currentTime || 0);
+  if (nowNext) {
+    nowNext.textContent = `${formatRuntime(played)} / ${formatRuntime(vodRuntimeSec)}`;
+  }
+  if (nowProgressWrap && nowProgress) {
+    nowProgressWrap.hidden = false;
+    nowProgress.style.width = `${Math.min(100, (played / vodRuntimeSec) * 100)}%`;
+  }
+}
+
+function setVodRuntime(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) {
+    return;
+  }
+  vodRuntimeSec = n;
+  paintVodRuntime();
+}
+
+function clearVodRuntime() {
+  vodRuntimeSec = null;
 }
 
 function progressPct(start, stop) {
@@ -752,6 +828,7 @@ async function playSources(kind, streamId, extensions, gen) {
 
 function playLive(item) {
   const gen = ++playGen;
+  clearVodRuntime();
   state.playingLiveId = String(item.stream_id);
   state.playingItem = item;
   setPreview(item, { fallback: "Starting…" });
@@ -813,11 +890,24 @@ async function playVod(item) {
   const ext = String(item.container_extension || "mp4").replace(/^\./, "");
   nowTitle.textContent = item.name || `Title ${item.stream_id}`;
   nowEpg.textContent = item.plot || "";
-  if (nowNext) {
-    nowNext.textContent = "";
-  }
   setProgress(0, 0);
+  setVodRuntime(parseRuntime(item.duration_secs, { seconds: true }) || parseRuntime(item.duration));
+  if (!vodRuntimeSec && nowNext) {
+    nowNext.textContent = "Runtime…";
+  }
   showBanner("");
+  api(`/api/player/vod/info?vod_id=${encodeURIComponent(item.stream_id)}`)
+    .then((data) => {
+      if (gen !== playGen) {
+        return;
+      }
+      const info = data.info || {};
+      if (!item.plot && info.plot) {
+        nowEpg.textContent = info.plot;
+      }
+      setVodRuntime(parseRuntime(info.duration_secs, { seconds: true }) || parseRuntime(info.duration));
+    })
+    .catch(() => {});
   const order = [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
   try {
     await playSources("movie", String(item.stream_id), order, gen);
@@ -835,10 +925,14 @@ async function playEpisode(episode, seriesName) {
   const ext = String(episode.container_extension || "mp4").replace(/^\./, "");
   nowTitle.textContent = `${seriesName || "Series"} · ${episode.title || `Episode ${episode.episode_num}`}`;
   nowEpg.textContent = episode.plot || episode.info?.plot || "";
-  if (nowNext) {
-    nowNext.textContent = "";
-  }
   setProgress(0, 0);
+  setVodRuntime(
+    parseRuntime(episode.duration_secs || episode.info?.duration_secs, { seconds: true }) ||
+      parseRuntime(episode.duration || episode.info?.duration)
+  );
+  if (!vodRuntimeSec && nowNext) {
+    nowNext.textContent = "Runtime…";
+  }
   showBanner("");
   const order = [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
   try {
@@ -960,7 +1054,7 @@ function renderSeries(detail, seriesName) {
     .map((season) => {
       const list = (episodes[season] || [])
         .map((ep) => {
-          return `<button type="button" class="watch-item" data-episode="${esc(ep.id)}" data-ext="${esc(ep.container_extension || "")}" data-title="${esc(ep.title || "")}" data-plot="${esc(ep.plot || ep.info?.plot || "")}" data-series-name="${esc(seriesName)}">E${esc(ep.episode_num ?? ep.id)} ${esc(ep.title || "")}</button>`;
+          return `<button type="button" class="watch-item" data-episode="${esc(ep.id)}" data-ext="${esc(ep.container_extension || "")}" data-title="${esc(ep.title || "")}" data-plot="${esc(ep.plot || ep.info?.plot || "")}" data-duration="${esc(ep.duration || ep.info?.duration || "")}" data-duration-secs="${esc(ep.duration_secs || ep.info?.duration_secs || "")}" data-series-name="${esc(seriesName)}">E${esc(ep.episode_num ?? ep.id)} ${esc(ep.title || "")}</button>`;
         })
         .join("");
       return `<div class="watch-season"><h3>Season ${esc(season)}</h3><div class="watch-season-eps">${list}</div></div>`;
@@ -1351,6 +1445,8 @@ seriesPanel.addEventListener("click", async (event) => {
       title: button.getAttribute("data-title"),
       container_extension: button.getAttribute("data-ext"),
       plot: button.getAttribute("data-plot"),
+      duration: button.getAttribute("data-duration"),
+      duration_secs: button.getAttribute("data-duration-secs"),
     },
     button.getAttribute("data-series-name")
   );
@@ -1389,6 +1485,7 @@ if (bufferRow) {
   });
 }
 
+video.addEventListener("timeupdate", paintVodRuntime);
 video.addEventListener("play", tickLiveBuffer);
 video.addEventListener("playing", () => {
   if (!liveMpeg) {

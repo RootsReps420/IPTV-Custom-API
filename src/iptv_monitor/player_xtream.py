@@ -155,6 +155,7 @@ _VOD_KEYS = (
     "releasedate",
     "youtube_trailer",
     "duration",
+    "duration_secs",
     "cover_big",
     "backdrop_path",
 )
@@ -423,7 +424,7 @@ class XtreamCatalogue:
         info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
         movie = payload.get("movie_data") if isinstance(payload.get("movie_data"), dict) else {}
         return {
-            "info": _pick(info, _VOD_KEYS + ("name", "cover_big", "youtube_trailer", "duration", "plot")),
+            "info": _pick(info, _VOD_KEYS + ("name", "cover_big", "youtube_trailer", "duration", "duration_secs", "plot")),
             "movie_data": _pick(movie, _VOD_KEYS),
         }
 
@@ -445,7 +446,7 @@ class XtreamCatalogue:
                 if isinstance(item.get("info"), dict):
                     row["info"] = _pick(
                         item["info"],
-                        ("duration", "plot", "rating", "movie_image", "release_date", "name"),
+                        ("duration", "duration_secs", "plot", "rating", "movie_image", "release_date", "name"),
                     )
                 cleaned.append(row)
             episodes[str(season)] = cleaned
