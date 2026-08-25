@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from iptv_monitor.config import AppConfig, Playlist, Secrets
+from iptv_monitor.config import AppConfig, Playlist, Secrets, normalize_pool
 
 logger = logging.getLogger("iptv_monitor.notify")
 
@@ -181,6 +181,11 @@ async def notify_swap(
     ]
     if test:
         description = "Dry run. EPGenius was not called and playlist DNS was not changed."
+    elif normalize_pool(playlist.pool) == "magnum":
+        description = (
+            "Watch DNS updated on the VPS (player.yaml). EPGenius was not called. "
+            "/watch applies this after a playlist refresh."
+        )
     elif manual:
         description = "Manual switch — EPGenius was updated without waiting for a down check."
     else:

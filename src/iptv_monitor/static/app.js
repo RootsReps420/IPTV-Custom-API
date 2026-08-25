@@ -182,6 +182,8 @@ function renderGrouped(el, countEl, items, emptyText, grid) {
 }
 
 const switching = new Set();
+let switchNotice = "";
+let switchNoticeUntil = 0;
 // Keep Choose URL open across 4s re-renders.
 let pickOpen = null;
 let pickValue = "";
@@ -286,9 +288,14 @@ function renderPlaylists(items) {
       const autoOff = item.failover === false;
       const target = item.next_standby;
       const canSwitch = Boolean(target) && !dryRun;
+      const magnum = item.pool === "magnum";
       const title = target
-        ? `Switch to ${hostOf(target)}`
-        : "No healthy standby right now";
+        ? magnum
+          ? `Update Watch DNS to ${hostOf(target)} (no EPGenius). /watch refreshes the list after this.`
+          : `Switch to ${hostOf(target)}`
+        : magnum
+          ? "No healthy Magnum standby right now"
+          : "No healthy standby right now";
       const btnLabel = busy ? "Switching…" : "Switch";
       const revertTo = item.revert_dns;
       const canRevert = Boolean(revertTo) && !dryRun;
@@ -314,7 +321,7 @@ function renderPlaylists(items) {
             <div class="switch-actions">
               ${
                 autoOff
-                  ? `<span class="monitor-only" title="No automatic EPGenius swap. Switch stays inside the Magnum URL pool.">Manual only</span>`
+                  ? `<span class="monitor-only" title="No automatic swap. Switch writes Watch DNS on the VPS (player.yaml), not EPGenius.">Manual only</span>`
                   : ""
               }
               <button
@@ -378,6 +385,10 @@ async function postSwitch(path, playlistId, failPrefix, extra = {}) {
     }
     pickOpen = null;
     pickValue = "";
+    if (data.mode === "watch") {
+      switchNotice = `Watch DNS is now ${hostOf(data.to)}. /watch will refresh the list shortly (EPGenius was not called).`;
+      switchNoticeUntil = Date.now() + 20000;
+    }
     await refresh();
   } catch (error) {
     renderAlerts([`${failPrefix}: ${error.message}`]);
@@ -477,11 +488,19 @@ function alertClass(text) {
   if (lower.startsWith("all portal urls are up")) {
     return "alert ok";
   }
+  if (lower.startsWith("watch dns")) {
+    return "alert ok";
+  }
   return "alert";
 }
 
 function renderAlerts(items, fallbackError) {
   const messages = [...(items || [])];
+  if (switchNotice && Date.now() < switchNoticeUntil) {
+    messages.unshift(switchNotice);
+  } else {
+    switchNotice = "";
+  }
   if (fallbackError && !messages.includes(fallbackError)) {
     messages.unshift(fallbackError);
   }

@@ -60,7 +60,7 @@
       <h2>Playlists</h2>
       <span id="playlist-count" class="count"></span>
     </div>
-    <p class="history-note">Strong 8K and Magnum use separate URL pools so credentials never cross. Magnum has no automatic failover — Switch / Choose URL only move it to another Magnum host.</p>
+    <p class="history-note">Strong 8K and Magnum use separate URL pools so credentials never cross. Magnum has no automatic failover. Switch / Choose URL write Watch DNS on the VPS (<code>player.yaml</code>) — EPGenius is not called — then /watch refreshes the list from the new host.</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -102,6 +102,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=25"></script>
+  <script src="/static/app.js?v=26"></script>
 </body>
 </html>

@@ -28,6 +28,7 @@ from iptv_monitor.config import (
     normalize_pool,
     pool_label,
     resolve_paths,
+    update_player_dns,
     update_playlist_dns,
     DEFAULT_POOL,
 )
@@ -255,6 +256,8 @@ class Monitor:
         self.last_plans: list[FailoverPlan] = []
         self.status_board = DiscordStatusBoard()
         self._swap_lock = asyncio.Lock()
+        self.watch_syncer = None
+        self.watch_service = None
         self._load_failure_history()
         days = 90
         try:
@@ -760,6 +763,7 @@ class Monitor:
                 "name": playlist.name,
                 "from": old_url,
                 "to": candidate,
+                "mode": "watch" if normalize_pool(playlist.pool) == "magnum" else "epgenius",
             }
 
     def _resolve_chosen_url(self, cfg: AppConfig, playlist: Playlist, raw: str) -> str:
@@ -850,7 +854,64 @@ class Monitor:
                 "name": playlist.name,
                 "from": current,
                 "to": target,
+                "mode": "watch" if normalize_pool(playlist.pool) == "magnum" else "epgenius",
             }
+
+    def _kick_watch_refresh(self) -> None:
+        """Reload player.yaml immediately and queue a /watch catalogue pull."""
+        from iptv_monitor.player_sync import queue_watch_force
+
+        queue_watch_force(self.root, "playlist")
+        watch = getattr(self, "watch_service", None)
+        if watch is not None and hasattr(watch, "invalidate_config"):
+            watch.invalidate_config()
+        syncer = getattr(self, "watch_syncer", None)
+        if syncer is not None and hasattr(syncer, "wake"):
+            syncer.wake()
+
+    async def _swap_watch_dns(
+        self,
+        cfg: AppConfig,
+        playlist: Playlist,
+        old_url: str,
+        new_url: str,
+        *,
+        manual: bool = False,
+        revert: bool = False,
+    ) -> None:
+        """Point /watch at a Magnum DNS by writing player.yaml. No EPGenius call."""
+        try:
+            update_player_dns(cfg.paths.player, new_url)
+        except Exception as exc:
+            logger.exception("Could not update player.yaml for %s", playlist.name)
+            raise SwitchError(f"Could not update Watch DNS on the VPS: {exc}", 500) from exc
+
+        origin_kw: dict[str, Any] = {}
+        if revert:
+            playlist.manual_from_dns = None
+            origin_kw["manual_from_dns"] = None
+        elif manual and not playlist.manual_from_dns:
+            playlist.manual_from_dns = old_url
+            origin_kw["manual_from_dns"] = old_url
+
+        try:
+            update_playlist_dns(
+                cfg.paths.playlists, playlist.playlist_id, new_url, **origin_kw
+            )
+        except Exception:
+            logger.exception("player.yaml updated but failed to persist current_dns for %s", playlist.name)
+        playlist.current_dns = new_url
+        self._kick_watch_refresh()
+        logger.info("Watch DNS swapped %s from %s to %s", playlist.name, old_url, new_url)
+        prefix = "manual revert " if revert else ("manual " if manual else "")
+        self.shared.add_event(
+            "swap",
+            f"{prefix}{playlist.name}: {old_url} -> {new_url} (Watch DNS, no EPGenius)",
+        )
+        if manual or revert:
+            asyncio.create_task(self._after_manual_notify(cfg, playlist, old_url, new_url))
+            return
+        await notify_swap(cfg.secrets, playlist, old_url, new_url)
 
     async def _swap_playlist(
         self,
@@ -862,6 +923,11 @@ class Monitor:
         manual: bool = False,
         revert: bool = False,
     ) -> None:
+        if normalize_pool(playlist.pool) == "magnum":
+            await self._swap_watch_dns(
+                cfg, playlist, old_url, new_url, manual=manual, revert=revert
+            )
+            return
         timeout = 12 if (manual or revert) else 20
         try:
             await update_creds(cfg.secrets, playlist, new_url, timeout_seconds=timeout)

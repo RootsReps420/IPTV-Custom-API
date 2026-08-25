@@ -279,3 +279,17 @@ def update_playlist_dns(
     with tmp.open("w", encoding="utf-8") as handle:
         yaml.dump(data, handle)
     tmp.replace(playlists_path)
+
+
+def update_player_dns(player_path: Path, new_dns: str) -> None:
+    """Write Watch's portal DNS in player.yaml. Magnum switches do not call EPGenius."""
+    yaml = _yaml()
+    if not player_path.exists():
+        raise FileNotFoundError(f"Missing player file: {player_path}")
+    with player_path.open(encoding="utf-8") as handle:
+        data = yaml.load(handle) or {}
+    data["dns"] = new_dns
+    tmp = player_path.with_suffix(".yaml.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        yaml.dump(data, handle)
+    tmp.replace(player_path)

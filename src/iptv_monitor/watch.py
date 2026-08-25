@@ -57,6 +57,11 @@ class WatchService:
         self._cfg = None
         self._cfg_at = 0.0
 
+    def invalidate_config(self) -> None:
+        """Drop the player.yaml cache so Magnum DNS switches apply on the next stream."""
+        self._cfg = None
+        self._cfg_at = 0.0
+
     def config(self):
         """player.yaml is tiny, but reading it on every zap adds disk I/O to TTFB."""
         now = time.monotonic()

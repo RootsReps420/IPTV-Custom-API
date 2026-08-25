@@ -1,5 +1,6 @@
 # Copy to player.yaml (gitignored). Shared /watch Xtream account (max 5 streams).
-# Overview: NOT a failover playlist. Watch never reads playlists.yaml.
+# Overview: Watch portal DNS. Magnum Switch on /owner writes this `dns` field
+# (no EPGenius). /watch follows it after a playlist refresh.
 # Empty username/password = Watch shows "not configured".
 # Put the dedicated 5-connection credentials here on the VPS only. Never commit.
 
