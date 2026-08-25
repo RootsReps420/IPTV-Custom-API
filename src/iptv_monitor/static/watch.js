@@ -96,6 +96,8 @@ const state = {
   playingItem: null,
   wasSyncing: false,
   epgTries: 0,
+  searchKind: "all",
+  searchHits: { live: [], movies: [], series: [] },
 };
 
 let hls = null;
@@ -105,6 +107,8 @@ let liveTimer = null;
 let playing = false;
 let playGen = 0;
 let itemsGen = 0;
+let searchGen = 0;
+let searchTimer = null;
 let liveHold = false;
 let liveMpeg = false;
 
@@ -850,10 +854,16 @@ async function playEpisode(episode, seriesName) {
 function visibleItems() {
   const query = (searchEl.value || "").trim().toLowerCase();
   let rows = state.items;
-  if (query) {
+  if (query && state.tab !== "search") {
+    const tokens = query.split(/\s+/).filter(Boolean);
     rows = rows.filter((item) => {
-      const hay = `${item.name || ""} ${item.now_title || ""} ${item.next_title || ""}`.toLowerCase();
-      return hay.includes(query);
+      const hay = `${item.name || ""} ${item.now_title || ""} ${item.next_title || ""} ${item.plot || ""} ${item.genre || ""}`.toLowerCase();
+      const compact = hay.replace(/[^a-z0-9]+/g, "");
+      const joined = query.replace(/\s+/g, "");
+      if (joined.length >= 2 && compact.includes(joined)) {
+        return true;
+      }
+      return tokens.every((token) => hay.includes(token));
     });
   }
   return rows.slice(0, 800);
@@ -958,7 +968,149 @@ function renderSeries(detail, seriesName) {
     .join("");
 }
 
+function searchCounts() {
+  return {
+    live: state.searchHits.live.length,
+    movies: state.searchHits.movies.length,
+    series: state.searchHits.series.length,
+  };
+}
+
+function renderSearchNav() {
+  const counts = searchCounts();
+  const total = counts.live + counts.movies + counts.series;
+  const rows = [
+    ["all", "All", total],
+    ["live", "TV", counts.live],
+    ["movies", "Movies", counts.movies],
+    ["series", "Shows", counts.series],
+  ];
+  categoryList.innerHTML = rows
+    .map(([id, label, count]) => {
+      const here = state.searchKind === id ? " is-here" : "";
+      const extra = state.searchHits.live.length || state.searchHits.movies.length || state.searchHits.series.length
+        ? ` (${esc(count)})`
+        : "";
+      return `<button type="button" class="watch-cat${here}" data-search-kind="${id}"><span class="watch-cat-mark">${esc(label.slice(0, 2))}</span><span>${esc(label)}${extra}</span></button>`;
+    })
+    .join("");
+}
+
+function searchRowLive(item, index) {
+  const icon = item.stream_icon
+    ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+    : `<span></span>`;
+  const now = item.now_title || "";
+  const epg = now
+    ? `<small class="watch-item-epg">${esc(now)}</small>`
+    : `<small class="watch-item-epg">${esc(item.category_name || item.match || "Live")}</small>`;
+  const here = String(item.stream_id) === String(state.playingLiveId) ? " is-here" : "";
+  const num = item.num || index + 1;
+  return `<button type="button" class="watch-item${here}" data-live="${esc(item.stream_id)}"><span class="watch-num">${esc(num)}</span>${icon}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span>${epg}</span></button>`;
+}
+
+function searchRowMovie(item) {
+  const poster = item.stream_icon
+    ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+    : "";
+  const meta = item.match || item.category_name || item.genre || "Movie";
+  return `<button type="button" class="watch-item poster" data-vod="${esc(item.stream_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span><small class="watch-item-epg">${esc(meta)}</small></span></button>`;
+}
+
+function searchRowSeries(item) {
+  const poster = item.cover
+    ? `<img src="${esc(item.cover)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+    : "";
+  const meta = item.match || item.category_name || item.genre || "Show";
+  return `<button type="button" class="watch-item poster" data-series="${esc(item.series_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span><small class="watch-item-epg">${esc(meta)}</small></span></button>`;
+}
+
+function renderSearchResults() {
+  const q = (searchEl.value || "").trim();
+  if (q.length < 2) {
+    itemList.innerHTML = `<div class="empty-events">Type at least two letters. Matches live channels, movies, and shows — names, what’s on now, plot, and genre.</div>`;
+    renderSearchNav();
+    return;
+  }
+  const kind = state.searchKind;
+  const live = kind === "all" || kind === "live" ? state.searchHits.live : [];
+  const movies = kind === "all" || kind === "movies" ? state.searchHits.movies : [];
+  const series = kind === "all" || kind === "series" ? state.searchHits.series : [];
+  if (!live.length && !movies.length && !series.length) {
+    itemList.innerHTML = `<div class="empty-events">No matches for “${esc(q)}”.</div>`;
+    renderSearchNav();
+    return;
+  }
+  const parts = [];
+  if (live.length) {
+    parts.push(`<div class="watch-search-group"><strong>TV</strong><span>${esc(live.length)}</span></div>`);
+    parts.push(live.map((item, index) => searchRowLive(item, index)).join(""));
+  }
+  if (movies.length) {
+    parts.push(`<div class="watch-search-group"><strong>Movies</strong><span>${esc(movies.length)}</span></div>`);
+    parts.push(movies.map((item) => searchRowMovie(item)).join(""));
+  }
+  if (series.length) {
+    parts.push(`<div class="watch-search-group"><strong>Shows</strong><span>${esc(series.length)}</span></div>`);
+    parts.push(series.map((item) => searchRowSeries(item)).join(""));
+  }
+  itemList.innerHTML = parts.join("");
+  renderSearchNav();
+}
+
+async function runSearch() {
+  if (state.tab !== "search") {
+    return;
+  }
+  const q = (searchEl.value || "").trim();
+  const gen = ++searchGen;
+  seriesPanel.hidden = true;
+  if (q.length < 2) {
+    state.searchHits = { live: [], movies: [], series: [] };
+    renderSearchResults();
+    return;
+  }
+  itemList.innerHTML = `<div class="empty-events">Searching…</div>`;
+  try {
+    const data = await api(`/api/player/search?q=${encodeURIComponent(q)}`);
+    if (gen !== searchGen || state.tab !== "search") {
+      return;
+    }
+    state.searchHits = {
+      live: data.live || [],
+      movies: data.movies || [],
+      series: data.series || [],
+    };
+    renderSearchResults();
+  } catch (error) {
+    if (gen !== searchGen) {
+      return;
+    }
+    itemList.innerHTML = `<div class="empty-events">${esc(error.message)}</div>`;
+  }
+}
+
+function queueSearch() {
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+  }
+  searchTimer = setTimeout(() => {
+    runSearch().catch(() => {});
+  }, 220);
+}
+
+function findSearchItem(kind, id) {
+  if (kind === "live") {
+    return state.searchHits.live.find((row) => String(row.stream_id) === String(id));
+  }
+  if (kind === "movie") {
+    return state.searchHits.movies.find((row) => String(row.stream_id) === String(id));
+  }
+  return state.searchHits.series.find((row) => String(row.series_id) === String(id));
+}
+
 async function loadCategories() {
+  searchEl.placeholder = "Filter this group…";
   const kind = state.tab === "movies" ? "vod" : state.tab === "series" ? "series" : "live";
   const path =
     kind === "live"
@@ -1112,6 +1264,17 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
     });
     state.tab = button.getAttribute("data-tab") || "live";
     showBanner("");
+    seriesPanel.hidden = true;
+    if (state.tab === "search") {
+      searchEl.placeholder = "Search live, movies and shows…";
+      renderSearchNav();
+      renderSearchResults();
+      searchEl.focus();
+      if ((searchEl.value || "").trim().length >= 2) {
+        await runSearch();
+      }
+      return;
+    }
     try {
       await loadCategories();
     } catch (error) {
@@ -1121,6 +1284,12 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 });
 
 categoryList.addEventListener("click", async (event) => {
+  const kindBtn = event.target.closest("[data-search-kind]");
+  if (kindBtn) {
+    state.searchKind = kindBtn.getAttribute("data-search-kind") || "all";
+    renderSearchResults();
+    return;
+  }
   const button = event.target.closest("[data-cat]");
   if (!button) {
     return;
@@ -1138,7 +1307,7 @@ itemList.addEventListener("click", async (event) => {
   const live = event.target.closest("[data-live]");
   if (live) {
     const id = live.getAttribute("data-live");
-    const item = state.items.find((row) => String(row.stream_id) === String(id));
+    const item = state.items.find((row) => String(row.stream_id) === String(id)) || findSearchItem("live", id);
     if (item) {
       localStorage.setItem("watch_last_live", String(id));
       state.playingLiveId = String(id);
@@ -1152,7 +1321,7 @@ itemList.addEventListener("click", async (event) => {
   const vod = event.target.closest("[data-vod]");
   if (vod) {
     const id = vod.getAttribute("data-vod");
-    const item = state.items.find((row) => String(row.stream_id) === String(id));
+    const item = state.items.find((row) => String(row.stream_id) === String(id)) || findSearchItem("movie", id);
     if (item) {
       await playVod(item);
     }
@@ -1161,7 +1330,7 @@ itemList.addEventListener("click", async (event) => {
   const series = event.target.closest("[data-series]");
   if (series) {
     const id = series.getAttribute("data-series");
-    const item = state.items.find((row) => String(row.series_id) === String(id));
+    const item = state.items.find((row) => String(row.series_id) === String(id)) || findSearchItem("series", id);
     try {
       const detail = await api(`/api/player/series/info?series_id=${encodeURIComponent(id)}`);
       renderSeries(detail, item?.name || "");
@@ -1187,14 +1356,23 @@ seriesPanel.addEventListener("click", async (event) => {
   );
 });
 
-searchEl.addEventListener("input", renderItems);
+searchEl.addEventListener("input", () => {
+  if (state.tab === "search") {
+    queueSearch();
+    return;
+  }
+  renderItems();
+});
 
-if (searchBtn) {
-  searchBtn.addEventListener("click", () => {
-    searchEl.focus();
-    searchEl.select();
-  });
-}
+searchEl.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && state.tab === "search") {
+    event.preventDefault();
+    if (searchTimer) {
+      clearTimeout(searchTimer);
+    }
+    runSearch().catch(() => {});
+  }
+});
 
 if (bufferRow) {
   bufferRow.addEventListener("click", (event) => {

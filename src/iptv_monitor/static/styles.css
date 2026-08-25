@@ -1096,6 +1096,23 @@ tr.row-down td {
   gap: 1px;
 }
 
+.watch-search-group {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 10px 6px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.watch-search-group strong {
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+
 .watch-item {
   display: grid;
   grid-template-columns: 32px 40px minmax(0, 1fr);

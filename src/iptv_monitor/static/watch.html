@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=34" />
+  <link rel="stylesheet" href="/static/styles.css?v=35" />
 </head>
 <body class="watch-body">
   <div class="grid-bg" aria-hidden="true"></div>
@@ -50,7 +50,7 @@
         <button type="button" class="watch-rail-btn is-here" data-tab="live">TV</button>
         <button type="button" class="watch-rail-btn" data-tab="movies">Movies</button>
         <button type="button" class="watch-rail-btn" data-tab="series">Shows</button>
-        <button type="button" class="watch-rail-btn" id="search-btn">Search</button>
+        <button type="button" class="watch-rail-btn" id="search-btn" data-tab="search">Search</button>
         <div class="watch-rail-foot">
           <div class="watch-rail-meta">
             <span>Slots <strong id="slot-stat">—</strong></span>
@@ -64,7 +64,7 @@
       <section class="watch-stage">
         <div class="watch-channel-col">
           <div class="watch-browse-tools">
-            <input id="watch-search" type="search" placeholder="Search channels…" autocomplete="off" />
+            <input id="watch-search" type="search" placeholder="Filter this group…" autocomplete="off" spellcheck="false" />
           </div>
           <div id="item-list" class="watch-items"></div>
           <div id="series-panel" class="watch-series" hidden></div>
@@ -97,6 +97,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=34"></script>
+  <script src="/static/watch.js?v=35"></script>
 </body>
 </html>

@@ -167,6 +167,15 @@ def register_watch(app: FastAPI, static_dir) -> None:
             raise _panel_error(exc) from exc
         return {"categories": rows}
 
+    @app.get("/api/player/search")
+    async def player_search(request: Request, q: str = Query(default="", max_length=80)) -> dict[str, Any]:
+        """Search live TV, movies, and shows in the on-disk guide."""
+        require_username(request, _root(request))
+        cfg = _svc(request).config()
+        if not cfg.configured:
+            raise HTTPException(status_code=503, detail="Watch player is not configured.")
+        return _svc(request).guide.search(q)
+
     @app.get("/api/player/live/streams")
     async def live_streams(request: Request, category_id: str = "") -> dict[str, Any]:
         require_username(request, _root(request))
