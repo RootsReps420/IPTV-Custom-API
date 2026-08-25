@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=28" />
+  <link rel="stylesheet" href="/static/styles.css?v=29" />
 </head>
 <body class="watch-body">
   <div class="grid-bg" aria-hidden="true"></div>
@@ -35,60 +35,50 @@
   </section>
 
   <div id="app-panel" class="watch-app" hidden>
-    <header class="watch-header">
-      <div>
-        <p class="eyebrow">IPTV · Watch</p>
-        <div class="title-row">
-          <h1>Watch</h1>
-          <nav class="watch-tabs" aria-label="Library">
-            <button type="button" class="sort-btn is-here" data-tab="live">Live</button>
-            <button type="button" class="sort-btn" data-tab="movies">Movies</button>
-            <button type="button" class="sort-btn" data-tab="series">Series</button>
-          </nav>
-        </div>
-      </div>
-      <div class="meta watch-meta">
-        <div class="stat">
-          <span class="label">Slots</span>
-          <span id="slot-stat">—</span>
-        </div>
-        <div class="stat">
-          <span class="label">Guide</span>
-          <span id="guide-stat">—</span>
-        </div>
-        <div class="stat">
-          <span class="label">Signed in</span>
-          <span id="user-stat">—</span>
-        </div>
-        <button type="button" class="key-btn" id="logout-btn">Log out</button>
-      </div>
-    </header>
-
     <p id="watch-banner" class="watch-banner" hidden></p>
-
-    <div class="watch-layout">
-      <section class="watch-player-col">
-        <video id="player" controls playsinline autoplay></video>
-        <div class="watch-now">
-          <div id="now-title" class="hist-host">Select a channel</div>
-          <div id="now-epg" class="hist-url"></div>
+    <div class="watch-shell">
+      <nav class="watch-rail" aria-label="Library">
+        <p class="watch-brand">Watch</p>
+        <button type="button" class="watch-rail-btn is-here" data-tab="live">TV</button>
+        <button type="button" class="watch-rail-btn" data-tab="movies">Movies</button>
+        <button type="button" class="watch-rail-btn" data-tab="series">Shows</button>
+        <button type="button" class="watch-rail-btn" id="search-btn">Search</button>
+        <div class="watch-rail-foot">
+          <div class="watch-rail-meta">
+            <span>Slots <strong id="slot-stat">—</strong></span>
+            <span>Guide <strong id="guide-stat">—</strong></span>
+            <span id="user-stat">—</span>
+          </div>
+          <button type="button" class="watch-rail-btn" id="logout-btn">Log out</button>
         </div>
-      </section>
-      <section class="watch-browse">
-        <div class="watch-browse-tools">
-          <input id="watch-search" type="search" placeholder="Search…" autocomplete="off" />
-        </div>
-        <div class="watch-browse-split">
-          <div id="category-list" class="watch-cats"></div>
+      </nav>
+      <aside id="category-list" class="watch-cats" aria-label="Groups"></aside>
+      <section class="watch-stage">
+        <div class="watch-channel-col">
+          <div class="watch-browse-tools">
+            <input id="watch-search" type="search" placeholder="Search channels…" autocomplete="off" />
+          </div>
           <div id="item-list" class="watch-items"></div>
+          <div id="series-panel" class="watch-series" hidden></div>
         </div>
-        <div id="series-panel" class="watch-series" hidden></div>
+        <div class="watch-preview-card">
+          <video id="player" controls playsinline autoplay></video>
+          <div class="watch-now">
+            <div id="now-clock" class="watch-clock"></div>
+            <div id="now-title" class="hist-host">Select a channel</div>
+            <div id="now-epg" class="hist-url"></div>
+            <div id="now-next" class="watch-next"></div>
+            <div id="now-progress-wrap" class="watch-progress" hidden>
+              <span id="now-progress"></span>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=28"></script>
+  <script src="/static/watch.js?v=29"></script>
 </body>
 </html>

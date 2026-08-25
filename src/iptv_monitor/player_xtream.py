@@ -316,7 +316,10 @@ class XtreamCatalogue:
             if self.guide.running:
                 return []
         extra = {"category_id": category_id} if category_id else {}
-        return [_pick(item, _LIVE_KEYS) for item in _as_list(await self._api(cfg, "get_live_streams", extra))]
+        rows = [_pick(item, _LIVE_KEYS) for item in _as_list(await self._api(cfg, "get_live_streams", extra))]
+        if self.guide is not None:
+            return [self.guide.decorate(row) for row in rows]
+        return rows
 
     async def vod_streams(self, cfg: PlayerConfig, category_id: str) -> list[dict[str, Any]]:
         if self.guide is not None:

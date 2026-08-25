@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 
 from iptv_monitor.config import load_settings, resolve_paths
-from iptv_monitor.player_guide import WatchGuide, decode_xtream_text
+from iptv_monitor.player_guide import WatchGuide, decode_xtream_text, epg_alias_keys
 from iptv_monitor.player_xtream import (
     _CATEGORY_KEYS,
     _LIVE_KEYS,
@@ -82,13 +82,29 @@ def parse_xmltv_time(value: str) -> int | None:
     return int(dt.timestamp())
 
 
-def parse_xmltv_file(path: Path, now: int) -> dict[str, list[dict[str, Any]]]:
+def parse_xmltv_file(path: Path, now: int) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
     """Keep programmes in a sliding window. elem.clear() so a 100MB XML does not stay in RAM."""
     floor = now - EPG_FLOOR
     horizon = now + EPG_HORIZON
     channels: dict[str, list[dict[str, Any]]] = {}
+    aliases: dict[str, str] = {}
+
+    def add_alias(raw: str, canon: str) -> None:
+        for key in epg_alias_keys(raw):
+            aliases.setdefault(key, canon)
+
     for _event, elem in ET.iterparse(path, events=("end",)):
-        if _local_name(elem.tag) != "programme":
+        tag = _local_name(elem.tag)
+        if tag == "channel":
+            cid = str(elem.attrib.get("id") or "").strip()
+            if cid:
+                add_alias(cid, cid)
+                for child in list(elem):
+                    if _local_name(child.tag) == "display-name":
+                        add_alias("".join(child.itertext()), cid)
+            elem.clear()
+            continue
+        if tag != "programme":
             continue
         channel = str(elem.attrib.get("channel") or "").strip()
         start = parse_xmltv_time(elem.attrib.get("start") or "")
@@ -96,6 +112,7 @@ def parse_xmltv_file(path: Path, now: int) -> dict[str, list[dict[str, Any]]]:
         if not channel or start is None or stop is None or stop <= floor or start >= horizon:
             elem.clear()
             continue
+        add_alias(channel, channel)
         title = ""
         desc = ""
         for child in list(elem):
@@ -110,7 +127,7 @@ def parse_xmltv_file(path: Path, now: int) -> dict[str, list[dict[str, Any]]]:
         elem.clear()
     for rows in channels.values():
         rows.sort(key=lambda row: int(row["start"]))
-    return channels
+    return channels, aliases
 
 
 class WatchSyncer:
@@ -171,8 +188,8 @@ class WatchSyncer:
                 self.guide.write_meta()
                 epg_started = time.monotonic()
                 try:
-                    channels = await asyncio.to_thread(self._download_epg, cfg)
-                    self.guide.replace_epg(channels)
+                    channels, aliases = await asyncio.to_thread(self._download_epg, cfg)
+                    self.guide.replace_epg(channels, aliases)
                     logger.info(
                         "Watch guide EPG: %s channels in %.1fs",
                         len(channels),
@@ -201,6 +218,7 @@ class WatchSyncer:
                     logger.warning("Watch guide series failed: %s", exc)
                     self.guide.last_error = (self.guide.last_error or "") + f" series: {exc}"[:80]
                 self.guide.progress = ""
+                logger.info("Watch guide sync finished in %.1fs", time.monotonic() - started)
             except Exception as exc:
                 self.guide.last_error = str(exc)[:180]
                 raise
@@ -208,7 +226,6 @@ class WatchSyncer:
                 self.guide.running = False
                 self.guide.progress = ""
                 self.guide.write_meta()
-                logger.info("Watch guide sync finished in %.1fs", time.monotonic() - started)
 
     def _client(self, timeout: httpx.Timeout) -> httpx.Client:
         return httpx.Client(
@@ -269,6 +286,7 @@ class WatchSyncer:
         categories = [_pick(item, _CATEGORY_KEYS) for item in _as_list(cats_resp.json())]
         keep = [row for row in categories if not is_catch_all_category(str(row.get("category_name") or ""))]
         skipped = len(categories) - len(keep)
+        total = len(keep)
         if skipped:
             logger.info("Watch guide %s: skipped %s catch-all groups", progress, skipped)
         self.guide.progress = f"{progress} 0/{total} groups" + (
@@ -276,7 +294,6 @@ class WatchSyncer:
         )
         self.guide.write_meta()
         by_id: dict[str, dict[str, Any]] = {}
-        total = len(keep)
         done = 0
 
         def fetch_group(cat: dict[str, Any]) -> list[dict[str, Any]]:
@@ -319,7 +336,7 @@ class WatchSyncer:
             raise RuntimeError(f"Panel returned no {progress.lower()} items")
         return keep, items
 
-    def _download_epg(self, cfg) -> dict[str, list[dict[str, Any]]]:
+    def _download_epg(self, cfg) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
         creds = {"username": cfg.username.strip(), "password": cfg.password.strip()}
         folder = resolve_paths(self.root).root / "state"
         folder.mkdir(parents=True, exist_ok=True)

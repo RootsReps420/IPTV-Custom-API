@@ -16,10 +16,15 @@ const banner = document.getElementById("watch-banner");
 const video = document.getElementById("player");
 const nowTitle = document.getElementById("now-title");
 const nowEpg = document.getElementById("now-epg");
+const nowNext = document.getElementById("now-next");
+const nowClock = document.getElementById("now-clock");
+const nowProgressWrap = document.getElementById("now-progress-wrap");
+const nowProgress = document.getElementById("now-progress");
 const categoryList = document.getElementById("category-list");
 const itemList = document.getElementById("item-list");
 const seriesPanel = document.getElementById("series-panel");
 const searchEl = document.getElementById("watch-search");
+const searchBtn = document.getElementById("search-btn");
 
 function playId() {
   // One UUID per tab so two tabs from the same friend consume two panel slots.
@@ -81,6 +86,67 @@ let beatTimer = null;
 let playing = false;
 let playGen = 0;
 
+function formatClock() {
+  return new Date().toLocaleString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatTime(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) {
+    return "";
+  }
+  return new Date(n * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function progressPct(start, stop) {
+  const a = Number(start);
+  const b = Number(stop);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, ((Date.now() / 1000 - a) / (b - a)) * 100));
+}
+
+function setProgress(start, stop) {
+  const pct = progressPct(start, stop);
+  if (!nowProgressWrap || !nowProgress) {
+    return;
+  }
+  if (pct <= 0) {
+    nowProgressWrap.hidden = true;
+    return;
+  }
+  nowProgressWrap.hidden = false;
+  nowProgress.style.width = `${pct}%`;
+}
+
+function tickClock() {
+  if (nowClock) {
+    nowClock.textContent = formatClock();
+  }
+}
+
+tickClock();
+setInterval(tickClock, 15000);
+
+function setPreview(item, extra) {
+  const now = extra?.now || item?.now_title || "";
+  const next = extra?.next || item?.next_title || "";
+  const start = extra?.start || item?.now_start;
+  const stop = extra?.stop || item?.now_stop;
+  nowTitle.textContent = item?.name || extra?.title || "Select a channel";
+  const times = [formatTime(start), formatTime(stop)].filter(Boolean).join(" – ");
+  nowEpg.textContent = [now, times].filter(Boolean).join(" · ") || extra?.fallback || "";
+  nowNext.textContent = next ? `Next: ${next}` : "";
+  setProgress(start, stop);
+}
+
 function showBanner(text, kind) {
   if (!text) {
     banner.hidden = true;
@@ -110,19 +176,19 @@ function setGuide(sync) {
     return;
   }
   const age = Number(sync.age_seconds);
+  let extra;
   if (!Number.isFinite(age)) {
-    guideStat.textContent = `${sync.streams || 0} ch`;
-    return;
+    extra = `${sync.streams || 0} ch`;
+  } else if (age < 120) {
+    extra = "just now";
+  } else if (age < 3600) {
+    extra = `${Math.floor(age / 60)}m ago`;
+  } else {
+    extra = `${Math.floor(age / 3600)}h ago`;
   }
-  if (age < 120) {
-    guideStat.textContent = "just now";
-    return;
-  }
-  if (age < 3600) {
-    guideStat.textContent = `${Math.floor(age / 60)}m ago`;
-    return;
-  }
-  guideStat.textContent = `${Math.floor(age / 3600)}h ago`;
+  const epg = Number(sync.epg_channels);
+  const epgBit = Number.isFinite(epg) && epg > 0 ? ` · ${epg} EPG` : "";
+  guideStat.textContent = `${extra}${epgBit}`;
 }
 
 let guideTimer = null;
@@ -135,13 +201,14 @@ function startGuidePoll() {
     try {
       const me = await api("/api/watch/me");
       setGuide(me.sync);
-      if (me.sync && !me.sync.running) {
+      if (me.sync?.ready && !me.sync?.running) {
         clearInterval(guideTimer);
         guideTimer = null;
-        if (me.sync.ready && state.tab === "live") {
-          await loadCategories();
-          showBanner("");
+        await loadCategories();
+        if (state.categoryId) {
+          await loadItems();
         }
+        showBanner("");
       }
     } catch {
       /* ignore */
@@ -406,9 +473,7 @@ async function playSources(kind, streamId, extensions, gen) {
 function playLive(item) {
   const gen = ++playGen;
   state.playingLiveId = String(item.stream_id);
-  nowTitle.textContent = item.name || `Channel ${item.stream_id}`;
-  nowEpg.textContent =
-    [item.now_title, item.next_title].filter(Boolean).join(" → ") || "Starting…";
+  setPreview(item, { fallback: "Starting…" });
   showBanner("");
   try {
     playSources("live", String(item.stream_id), ["ts"], gen).catch((error) => {
@@ -416,14 +481,12 @@ function playLive(item) {
         return;
       }
       showBanner(error.message, "bad");
-      nowEpg.textContent = "";
     });
   } catch (error) {
     if (gen !== playGen) {
       return;
     }
     showBanner(error.message, "bad");
-    nowEpg.textContent = "";
     return;
   }
   api(`/api/player/live/epg?stream_id=${encodeURIComponent(item.stream_id)}`)
@@ -432,11 +495,15 @@ function playLive(item) {
         return;
       }
       const rows = data.epg || [];
-      nowEpg.textContent =
-        rows
-          .slice(0, 2)
-          .map((row) => row.title || "Programme")
-          .join(" → ") || nowEpg.textContent || "No EPG";
+      const current = rows[0] || {};
+      const upcoming = rows[1] || {};
+      setPreview(item, {
+        now: current.title || item.now_title || "",
+        next: upcoming.title || item.next_title || "",
+        start: current.start_timestamp || current.start || item.now_start,
+        stop: current.stop_timestamp || current.end || item.now_stop,
+        fallback: "No programme info",
+      });
     })
     .catch(() => {
       /* keep now/next from the channel list */
@@ -449,6 +516,10 @@ async function playVod(item) {
   const ext = String(item.container_extension || "mp4").replace(/^\./, "");
   nowTitle.textContent = item.name || `Title ${item.stream_id}`;
   nowEpg.textContent = item.plot || "";
+  if (nowNext) {
+    nowNext.textContent = "";
+  }
+  setProgress(0, 0);
   showBanner("");
   const order = [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
   try {
@@ -467,6 +538,10 @@ async function playEpisode(episode, seriesName) {
   const ext = String(episode.container_extension || "mp4").replace(/^\./, "");
   nowTitle.textContent = `${seriesName || "Series"} · ${episode.title || `Episode ${episode.episode_num}`}`;
   nowEpg.textContent = episode.plot || episode.info?.plot || "";
+  if (nowNext) {
+    nowNext.textContent = "";
+  }
+  setProgress(0, 0);
   showBanner("");
   const order = [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
   try {
@@ -491,16 +566,32 @@ function visibleItems() {
   return rows.slice(0, 800);
 }
 
+function catMark(name) {
+  const words = String(name || "")
+    .replace(/[^a-zA-Z0-9| ]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) {
+    return "·";
+  }
+  if (words.length === 1) {
+    return words[0].slice(0, 2);
+  }
+  return `${words[0][0] || ""}${words[1][0] || ""}`;
+}
+
 function renderCategories() {
   categoryList.innerHTML = state.categories
     .map((cat) => {
       const id = String(cat.category_id ?? "");
+      const name = cat.category_name || id;
       const here = id === String(state.categoryId) ? " is-here" : "";
       const count =
         cat.stream_count != null && cat.stream_count !== ""
           ? ` (${esc(cat.stream_count)})`
           : "";
-      return `<button type="button" class="watch-cat${here}" data-cat="${esc(id)}">${esc(cat.category_name || id)}${count}</button>`;
+      return `<button type="button" class="watch-cat${here}" data-cat="${esc(id)}"><span class="watch-cat-mark">${esc(catMark(name))}</span><span>${esc(name)}${count}</span></button>`;
     })
     .join("");
 }
@@ -508,22 +599,26 @@ function renderCategories() {
 function renderItems() {
   const rows = visibleItems();
   if (!rows.length) {
-    itemList.innerHTML = `<div class="empty-events">Nothing in this category.</div>`;
+    itemList.innerHTML = `<div class="empty-events">${
+      state.categoryId ? "Nothing in this group." : "Pick a group to see channels."
+    }</div>`;
     return;
   }
   if (state.tab === "live") {
     itemList.innerHTML = rows
-      .map((item) => {
+      .map((item, index) => {
         const icon = item.stream_icon
           ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
-          : "";
-        const epg = item.now_title
-          ? `<small>${esc(item.now_title)}</small>`
-          : item.title
-            ? `<small>${esc(item.title)}</small>`
-            : "";
+          : `<span></span>`;
+        const now = item.now_title || "";
+        const epg = now
+          ? `<small class="watch-item-epg">${esc(now)}</small>`
+          : `<small class="watch-item-epg is-empty">No programme info</small>`;
+        const pct = progressPct(item.now_start, item.now_stop);
+        const bar = pct > 0 ? `<span class="watch-item-bar"><i style="width:${pct}%"></i></span>` : "";
         const here = String(item.stream_id) === String(state.playingLiveId) ? " is-here" : "";
-        return `<button type="button" class="watch-item${here}" data-live="${esc(item.stream_id)}">${icon}<span>${esc(item.name)}${epg}</span></button>`;
+        const num = item.num || index + 1;
+        return `<button type="button" class="watch-item${here}" data-live="${esc(item.stream_id)}"><span class="watch-num">${esc(num)}</span>${icon}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span>${epg}${bar}</span></button>`;
       })
       .join("");
     return;
@@ -534,7 +629,7 @@ function renderItems() {
         const poster = item.stream_icon
           ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
           : "";
-        return `<button type="button" class="watch-item poster" data-vod="${esc(item.stream_id)}">${poster}<span>${esc(item.name)}</span></button>`;
+        return `<button type="button" class="watch-item poster" data-vod="${esc(item.stream_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span></span></button>`;
       })
       .join("");
     return;
@@ -544,7 +639,7 @@ function renderItems() {
       const poster = item.cover
         ? `<img src="${esc(item.cover)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
         : "";
-      return `<button type="button" class="watch-item poster" data-series="${esc(item.series_id)}">${poster}<span>${esc(item.name)}</span></button>`;
+      return `<button type="button" class="watch-item poster" data-series="${esc(item.series_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span></span></button>`;
     })
     .join("");
 }
@@ -594,7 +689,7 @@ async function loadCategories() {
     }
     return;
   }
-  itemList.innerHTML = `<div class="empty-events">Pick a category. Channels and what's on now load from the local guide.</div>`;
+  itemList.innerHTML = `<div class="empty-events">Pick a group. Channels and what's on now show in the list; click one for a live preview.</div>`;
 }
 
 async function loadItems() {
@@ -639,10 +734,11 @@ async function boot() {
       );
       return;
     }
-    if (me.sync?.running && !me.sync?.ready) {
+    if (!me.sync?.ready) {
       showBanner(
-        me.sync.progress ||
-          "Downloading the full channel list and EPG. This can take a few minutes; after that, groups are instant for everyone.",
+        me.sync?.progress ||
+          me.sync?.last_error ||
+          "Downloading the channel list and EPG. Groups stay usable; programme titles appear when the guide finishes.",
         "warn"
       );
       startGuidePoll();
@@ -774,6 +870,13 @@ seriesPanel.addEventListener("click", async (event) => {
 });
 
 searchEl.addEventListener("input", renderItems);
+
+if (searchBtn) {
+  searchBtn.addEventListener("click", () => {
+    searchEl.focus();
+    searchEl.select();
+  });
+}
 
 window.addEventListener("pagehide", () => {
   if (playing) {

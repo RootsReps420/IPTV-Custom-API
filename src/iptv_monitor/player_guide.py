@@ -27,6 +27,23 @@ SERIES_NAME = "watch_series.json"
 EPG_NAME = "watch_epg.json"
 META_NAME = "watch_sync.json"
 _B64 = re.compile(r"^[A-Za-z0-9+/]{8,}={0,2}$")
+_NOT_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def norm_epg_key(value: str) -> str:
+    """Collapse XMLTV ids, display-names, and stream names for matching."""
+    return _NOT_ALNUM.sub("", (value or "").lower())
+
+
+def epg_alias_keys(raw: str) -> list[str]:
+    """Variants: full id, id without a trailing .uk/.com-style suffix."""
+    text = (raw or "").strip()
+    if not text:
+        return []
+    keys = [norm_epg_key(text)]
+    if "." in text:
+        keys.append(norm_epg_key(text.rsplit(".", 1)[0]))
+    return [key for key in keys if key]
 
 
 def decode_xtream_text(value: str | None) -> str:
@@ -89,6 +106,7 @@ class GuideData:
     by_cat: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     epg: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    aliases: dict[str, str] = field(default_factory=dict)
     updated_at: float = 0.0
     epg_updated_at: float = 0.0
 
@@ -178,6 +196,7 @@ class WatchGuide:
             streams = [row for row in (live.get("streams") or []) if isinstance(row, dict)]
             updated = float(live.get("updated_at") or 0)
         epg: dict[str, list[dict[str, Any]]] = {}
+        aliases: dict[str, str] = {}
         epg_updated = 0.0
         if isinstance(epg_raw, dict):
             epg_updated = float(epg_raw.get("updated_at") or 0)
@@ -189,6 +208,13 @@ class WatchGuide:
                     cleaned = [row for row in rows if isinstance(row, dict) and "start" in row]
                     if cleaned:
                         epg[str(key)] = cleaned
+            raw_alias = epg_raw.get("aliases") or {}
+            if isinstance(raw_alias, dict):
+                aliases = {
+                    str(key): str(val)
+                    for key, val in raw_alias.items()
+                    if str(key).strip() and str(val).strip()
+                }
         by_cat, by_id = index_streams(streams)
         self.data = GuideData(
             categories=with_counts(categories, by_cat),
@@ -196,9 +222,11 @@ class WatchGuide:
             by_cat=by_cat,
             by_id=by_id,
             epg=epg,
+            aliases=aliases,
             updated_at=updated,
             epg_updated_at=epg_updated,
         )
+        self.link_stream_aliases(persist=False)
         self.vod = self._load_library(vod_path, "stream_id")
         self.series = self._load_library(series_path, "series_id")
         logger.info(
@@ -218,9 +246,11 @@ class WatchGuide:
             by_cat=by_cat,
             by_id=by_id,
             epg=self.data.epg,
+            aliases=self.data.aliases,
             updated_at=now,
             epg_updated_at=self.data.epg_updated_at,
         )
+        self.link_stream_aliases(persist=True)
         live_path, _vod, _series, _epg, _meta = self.paths()
         atomic_write_json(
             live_path,
@@ -253,12 +283,59 @@ class WatchGuide:
         _live, _vod, series_path, _epg, _meta = self.paths()
         self.series = self._replace_library(self.series, series_path, categories, items, "series_id")
 
-    def replace_epg(self, channels: dict[str, list[dict[str, Any]]]) -> None:
+    def replace_epg(
+        self,
+        channels: dict[str, list[dict[str, Any]]],
+        aliases: dict[str, str] | None = None,
+    ) -> None:
         now = time.time()
         self.data.epg = channels
+        if aliases is not None:
+            self.data.aliases = dict(aliases)
         self.data.epg_updated_at = now
+        self.link_stream_aliases(persist=True)
+
+    def _write_epg(self) -> None:
         _live, _vod, _series, epg_path, _meta = self.paths()
-        atomic_write_json(epg_path, {"updated_at": now, "channels": channels})
+        atomic_write_json(
+            epg_path,
+            {
+                "updated_at": self.data.epg_updated_at,
+                "channels": self.data.epg,
+                "aliases": self.data.aliases,
+            },
+        )
+
+    def link_stream_aliases(self, *, persist: bool) -> None:
+        """Map stream names / epg_channel_id / stream_id onto XMLTV channel ids."""
+        if not self.data.epg:
+            return
+        aliases = dict(self.data.aliases)
+        for stream in self.data.streams:
+            candidates = [
+                str(stream.get("epg_channel_id") or "").strip(),
+                str(stream.get("stream_id") or "").strip(),
+                str(stream.get("name") or "").strip(),
+            ]
+            canon = None
+            for cand in candidates:
+                if not cand:
+                    continue
+                if cand in self.data.epg or cand.lower() in self.data.epg:
+                    canon = cand if cand in self.data.epg else cand.lower()
+                    break
+                mapped = aliases.get(norm_epg_key(cand))
+                if mapped and (mapped in self.data.epg or mapped.lower() in self.data.epg):
+                    canon = mapped if mapped in self.data.epg else mapped.lower()
+                    break
+            if not canon:
+                continue
+            for cand in candidates:
+                for key in epg_alias_keys(cand):
+                    aliases.setdefault(key, canon)
+        self.data.aliases = aliases
+        if persist and self.data.epg_updated_at:
+            self._write_epg()
 
     def write_meta(self) -> None:
         *_rest, meta_path = self.paths()
@@ -333,19 +410,65 @@ class WatchGuide:
 
     def decorate(self, stream: dict[str, Any]) -> dict[str, Any]:
         out = dict(stream)
-        current, nxt = self.now_next(str(out.get("epg_channel_id") or "").strip())
-        out["now_title"] = (current or {}).get("title") or ""
+        current, nxt = self.now_next_for_stream(out)
+        title = (current or {}).get("title") or ""
+        if not title:
+            extra = decode_xtream_text(str(out.get("title") or ""))
+            name = str(out.get("name") or "").strip()
+            if extra and extra.lower() != name.lower():
+                title = extra
+        out["now_title"] = title
         out["next_title"] = (nxt or {}).get("title") or ""
-        if current and current.get("stop"):
-            out["now_stop"] = current["stop"]
+        if current:
+            if current.get("start"):
+                out["now_start"] = current["start"]
+            if current.get("stop"):
+                out["now_stop"] = current["stop"]
+            if current.get("desc"):
+                out["now_desc"] = current["desc"]
         return out
 
-    def now_next(self, epg_id: str, now: int | None = None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        if not epg_id:
-            return None, None
-        rows = self.data.epg.get(epg_id) or self.data.epg.get(epg_id.lower())
+    def now_next_for_stream(
+        self, stream: dict[str, Any], now: int | None = None
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        rows = self._epg_rows_for_stream(stream)
         if not rows:
             return None, None
+        return self._now_next_from_rows(rows, now)
+
+    def now_next(self, epg_id: str, now: int | None = None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        rows = self._epg_rows(epg_id)
+        if not rows:
+            return None, None
+        return self._now_next_from_rows(rows, now)
+
+    def _epg_rows_for_stream(self, stream: dict[str, Any]) -> list[dict[str, Any]] | None:
+        return self._epg_rows(
+            str(stream.get("epg_channel_id") or ""),
+            str(stream.get("stream_id") or ""),
+            str(stream.get("name") or ""),
+        )
+
+    def _epg_rows(self, *keys: str) -> list[dict[str, Any]] | None:
+        for raw in keys:
+            key = str(raw or "").strip()
+            if not key:
+                continue
+            rows = self.data.epg.get(key) or self.data.epg.get(key.lower())
+            if rows:
+                return rows
+            mapped = self.data.aliases.get(norm_epg_key(key))
+            if not mapped and "." in key:
+                mapped = self.data.aliases.get(norm_epg_key(key.rsplit(".", 1)[0]))
+            if mapped:
+                rows = self.data.epg.get(mapped) or self.data.epg.get(mapped.lower())
+                if rows:
+                    return rows
+        return None
+
+    def _now_next_from_rows(
+        self, rows: list[dict[str, Any]], now: int | None = None
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         stamp = int(now or time.time())
         current = None
         nxt = None
@@ -367,11 +490,10 @@ class WatchGuide:
             return None
         stream = self.data.by_id.get(str(stream_id).strip())
         if not stream:
-            return []
-        epg_id = str(stream.get("epg_channel_id") or "").strip()
-        rows = self.data.epg.get(epg_id) if epg_id else None
+            return None
+        rows = self._epg_rows_for_stream(stream)
         if not rows:
-            return []
+            return None
         stamp = int(time.time()) - 60
         out: list[dict[str, Any]] = []
         for row in rows:
