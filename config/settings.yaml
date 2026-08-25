@@ -1,5 +1,7 @@
 # How often to probe every live and available URL.
+# Overview: runtime knobs for the monitor loop and dashboard bind.
 # YAML reloads each cycle. Python code changes still need a process restart.
+# VPS production must keep dashboard_host: 127.0.0.1 (Caddy proxies). Local may use 0.0.0.0.
 check_interval_seconds: 10
 
 # Live URL must fail this many cycles in a row before EPGenius is called.

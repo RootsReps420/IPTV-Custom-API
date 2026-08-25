@@ -1,4 +1,8 @@
 # VPS operations
+#
+# Overview: how to run, update, and debug the live copy at /home/ubuntu/iptv-monitor.
+# Git push does not update the VPS. Copy files then `sudo systemctl restart iptv-monitor`.
+# Never overwrite /etc/caddy/Caddyfile with deploy/Caddyfile without keeping the live hash.
 
 The live monitor runs on the Ubuntu VPS, not the Windows PC.
 
@@ -80,11 +84,22 @@ Caddy terminates HTTPS and proxies to `127.0.0.1:8787`. Port 8787 stays closed.
 | `/api/public` | none | JSON used by the public page (no live DNS, no playlist rows). |
 | `/api/status` | `dan` | Full JSON including live DNS and playlists. |
 | `/api/switch` | `dan` | POST `{ "playlist_id": "..." }` — best healthy standby. Optional `target_url` picks a specific healthy pool URL. |
-| `/api/switch-back` | `dan` | POST `{ "playlist_id": "..." }` — health-check the pre-manual URL, then EPGenius back to it. |
+| `https://vps-4f889186.vps.ovh.net/watch` | site login (`config/watch_users.yaml`) | Web IPTV player (live / movies / series). Uses `config/player.yaml`, not failover playlists. |
+| `/api/watch/*` `/api/player/*` | same cookie | Player login, catalogue, and media proxy. |
 
 The **Playlists** button on the public page is `/owner`. The browser’s HTTP basic-auth prompt is the same login you already use. Standby hostnames in the available pool stay visible; currently-live DNS and playlist identity are hidden.
 
-Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Auth is only on `/owner`, `/api/status`, `/api/switch`, and `/api/switch-back`. When you edit the Caddyfile, keep the `@owner` matcher — do not wrap the whole site in `basicauth` again.
+Friends should open **`/watch`**, not `/`. `/watch` uses `config/player.yaml` (dedicated Xtream account, max 5 streams) and `config/watch_users.yaml` (site logins). Never copy DanMain / failover playlists into `player.yaml` on the VPS.
+
+```bash
+cd /home/ubuntu/iptv-monitor
+.venv/bin/python -m iptv_monitor.hash_password
+# paste the hash into config/watch_users.yaml
+# put the 5-connection Xtream dns/username/password in config/player.yaml
+sudo systemctl restart iptv-monitor
+```
+
+Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Auth is only on `/owner`, `/api/status`, `/api/switch`, and `/api/switch-back`. `/watch` is app-level login. When you edit the Caddyfile, keep the `@owner` matcher — do not wrap the whole site in `basicauth` again. `encode gzip` must not apply to `/api/player/*` or live MPEG-TS will buffer.
 
 To change the owner password, in PuTTY. Ubuntu’s Caddy 2.6.2 expects a **base64** hash, not a raw `$2a$...` line and not backslash-escaped dollars.
 

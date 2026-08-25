@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<!--
+  Friend IPTV player. Login is a site account (watch_users.yaml), not Xtream.
+  hls.js then mpegts.js play same-origin /api/player media. Chrome/Edge first.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Watch · Portal Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css?v=23" />
+</head>
+<body class="watch-body">
+  <div class="grid-bg" aria-hidden="true"></div>
+
+  <section id="login-panel" class="watch-login">
+    <p class="eyebrow">IPTV · Watch</p>
+    <h1>Sign in</h1>
+    <p class="history-note">Friend logins only. This is not the Playlists / Switch page.</p>
+    <form id="login-form" class="watch-login-form">
+      <label>
+        Username
+        <input id="login-user" name="username" autocomplete="username" required />
+      </label>
+      <label>
+        Password
+        <input id="login-pass" name="password" type="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit" class="switch-btn">Sign in</button>
+      <p id="login-error" class="watch-error" hidden></p>
+    </form>
+  </section>
+
+  <div id="app-panel" class="watch-app" hidden>
+    <header class="watch-header">
+      <div>
+        <p class="eyebrow">IPTV · Watch</p>
+        <div class="title-row">
+          <h1>Watch</h1>
+          <nav class="watch-tabs" aria-label="Library">
+            <button type="button" class="sort-btn is-here" data-tab="live">Live</button>
+            <button type="button" class="sort-btn" data-tab="movies">Movies</button>
+            <button type="button" class="sort-btn" data-tab="series">Series</button>
+          </nav>
+        </div>
+      </div>
+      <div class="meta watch-meta">
+        <div class="stat">
+          <span class="label">Slots</span>
+          <span id="slot-stat">—</span>
+        </div>
+        <div class="stat">
+          <span class="label">Signed in</span>
+          <span id="user-stat">—</span>
+        </div>
+        <button type="button" class="key-btn" id="logout-btn">Log out</button>
+      </div>
+    </header>
+
+    <p id="watch-banner" class="watch-banner" hidden></p>
+
+    <div class="watch-layout">
+      <section class="watch-player-col">
+        <video id="player" controls playsinline></video>
+        <div class="watch-now">
+          <div id="now-title" class="hist-host">Select a channel</div>
+          <div id="now-epg" class="hist-url"></div>
+        </div>
+      </section>
+      <section class="watch-browse">
+        <div class="watch-browse-tools">
+          <input id="watch-search" type="search" placeholder="Search…" autocomplete="off" />
+        </div>
+        <div class="watch-browse-split">
+          <div id="category-list" class="watch-cats"></div>
+          <div id="item-list" class="watch-items"></div>
+        </div>
+        <div id="series-panel" class="watch-series" hidden></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
+  <script src="/static/watch.js?v=23"></script>
+</body>
+</html>

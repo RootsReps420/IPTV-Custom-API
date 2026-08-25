@@ -1,4 +1,8 @@
-"""Run the monitor from the repo root without installing the package first."""
+"""Repo-root entrypoint for systemd and local runs.
+
+Puts ./src on sys.path so `python main.py` works without `pip install -e .`.
+systemd ExecStart points here: /home/ubuntu/iptv-monitor/main.py
+"""
 
 from pathlib import Path
 import sys

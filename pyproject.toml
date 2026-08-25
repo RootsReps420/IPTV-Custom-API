@@ -1,3 +1,7 @@
+# IPTV-Custom-API — Python package metadata.
+# Overview: install deps into .venv; console script `iptv-monitor` runs __main__.main.
+# static/* is shipped inside the package so Watch/History HTML is included.
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -16,6 +20,7 @@ dependencies = [
     "ruamel.yaml>=0.18",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "itsdangerous>=2.2",
 ]
 
 [project.scripts]

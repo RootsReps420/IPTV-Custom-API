@@ -1,3 +1,8 @@
+# systemd unit for the IPTV monitor + dashboard + /watch player.
+# WorkingDirectory must be the app root so config/ and .env resolve.
+# Restart=always: process crash or VPS reboot brings it back.
+# Do not also run the Windows IPTVPortalMonitor task.
+
 [Unit]
 Description=IPTV portal monitor
 After=network-online.target

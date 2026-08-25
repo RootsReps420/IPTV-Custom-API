@@ -64,6 +64,7 @@ _NS_CACHE_EMPTY_TTL = 30.0
 
 
 def ip_is_cloudflare(ip: str) -> bool:
+    """True if this A/AAAA is in Cloudflare's published proxy ranges (orange-cloud)."""
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:

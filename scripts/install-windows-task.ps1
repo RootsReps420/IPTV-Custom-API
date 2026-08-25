@@ -1,4 +1,6 @@
 # Register a logon Task Scheduler job that keeps the IPTV monitor running.
+# Overview: Windows-only. Do NOT enable this while the OVH VPS systemd unit is live —
+# two monitors will fight over EPGenius swaps.
 # Run from the repo:
 #   powershell -ExecutionPolicy Bypass -File scripts\install-windows-task.ps1
 

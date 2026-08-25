@@ -1,4 +1,7 @@
-/* Dashboard: poll /api/status every 4s and render playlists, URL cards, events. */
+/* Dashboard: poll /api/status (owner) or /api/public every 4s.
+ * Renders URL cards, events, and (owner only) playlists + Switch / Choose URL.
+ * Same script on `/` and `/owner` — isOwnerView() picks the API.
+ */
 
 const liveList = document.getElementById("live-list");
 const availList = document.getElementById("avail-list");
@@ -20,8 +23,10 @@ const liveSection = document.getElementById("live-section");
 const liveStatWrap = document.getElementById("stat-live-wrap");
 const ownerLink = document.getElementById("owner-link");
 const publicLink = document.getElementById("public-link");
+const watchLink = document.getElementById("watch-link");
 
 function isOwnerView() {
+  // Caddy only protects /owner; this path check is what shows playlists in JS.
   return location.pathname === "/owner" || location.pathname.startsWith("/owner/");
 }
 
@@ -155,6 +160,7 @@ function renderGrouped(el, countEl, items, emptyText, grid) {
 }
 
 const switching = new Set();
+// Keep Choose URL open across 4s re-renders.
 let pickOpen = null;
 let pickValue = "";
 
@@ -233,6 +239,7 @@ function pickerMarkup(item, id, dryRun, busy) {
 }
 
 function renderPlaylists(items) {
+  // Re-render replaces innerHTML; restore Choose URL dropdown focus if it was open.
   const keepPickerFocus = Boolean(
     document.activeElement && document.activeElement.matches("[data-pick-url]")
   );
@@ -465,6 +472,7 @@ function tickCountdown() {
 }
 
 async function refresh() {
+  // Owner path talks to /api/status (Caddy auth). Public path uses /api/public.
   try {
     const owner = isOwnerView();
     const response = await fetch(owner ? "/api/status" : "/api/public");
@@ -492,6 +500,9 @@ async function refresh() {
     }
     if (publicLink) {
       publicLink.hidden = !signedIn;
+    }
+    if (watchLink) {
+      watchLink.hidden = !signedIn;
     }
     if (playlistSection) {
       playlistSection.hidden = !signedIn;

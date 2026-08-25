@@ -1,4 +1,12 @@
-"""Main loop: probe URLs, count failures, swap via EPGenius, feed the dashboard."""
+"""Main loop: probe URLs, count failures, swap via EPGenius, feed the dashboard.
+
+Each cycle reloads YAML, health-checks every live + standby host, records
+healthy→down edges (24h frequent-failure file AND 90-day History store), then
+auto-fails live playlists after 3 consecutive downs. Manual Switch / Choose URL /
+Switch back share `_swap_lock` with auto failover so they cannot race.
+
+This module never talks to the /watch Xtream account — that is player_*.py.
+"""
 
 from __future__ import annotations
 
@@ -61,6 +69,7 @@ class FailoverPlan:
 
 @dataclass
 class SharedState:
+    """In-memory dashboard snapshot. Public vs owner is a filter, not a second store."""
     """Snapshot the dashboard polls. Keep passwords off this object."""
 
     last_cycle_at: datetime | None = None
@@ -74,6 +83,7 @@ class SharedState:
     dry_run: bool = False
 
     def add_event(self, kind: str, message: str) -> None:
+        """Prepend a dashboard event. Keep 40 so the public page stays small."""
         self.events.insert(
             0,
             {
@@ -85,6 +95,7 @@ class SharedState:
         self.events = self.events[:40]
 
     def snapshot(self) -> dict[str, Any]:
+        """Full owner payload including live DNS and playlists."""
         live_up = sum(1 for row in self.live if row.get("healthy"))
         avail_up = sum(1 for row in self.available if row.get("healthy"))
         return {
@@ -304,6 +315,7 @@ class Monitor:
             await asyncio.sleep(interval)
 
     async def run_cycle(self, *, swap: bool, notify: bool) -> None:
+        """One probe of every live + standby URL, then optional failover + Discord."""
         cfg = load_config(self.root)
         settings = cfg.settings
         self.shared.check_interval_seconds = settings.check_interval_seconds
@@ -673,6 +685,7 @@ class Monitor:
             }
 
     def _resolve_chosen_url(self, cfg: AppConfig, current_url: str, raw: str) -> str:
+        """Validate a user-picked pool URL is in urls.yaml and was healthy last cycle."""
         try:
             candidate = normalize_url(raw)
         except ValueError as exc:
@@ -823,6 +836,7 @@ class Monitor:
         live_set: set[str],
         available_set: set[str],
     ) -> None:
+        """Refresh SharedState rows the dashboard polls."""
         names_by_url: dict[str, list[str]] = {}
         for playlist in cfg.playlists:
             key = normalize_url(playlist.current_dns)

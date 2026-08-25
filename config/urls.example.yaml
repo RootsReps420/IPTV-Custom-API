@@ -1,5 +1,6 @@
-# Copy to urls.yaml (gitignored). Shared standby pool.
-# Each URL is probed every cycle. Swap picks a healthy host: no Cloudflare first, then CF NS, then CF proxy.
+# Copy to urls.yaml (gitignored). Shared standby pool for failover AND History.
+# Each URL is probed every cycle. Swap picks a healthy host: origin, then CF NS, then CF proxy.
+# Do not put currently-live Current DNS here if you want it hidden from the public History tab.
 
 available:
   - "http://your-standby-1.example"

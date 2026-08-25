@@ -14,6 +14,7 @@ from iptv_monitor.notify import notify_no_standby, notify_swap, notify_url_down,
 
 
 async def run_url_check(monitor: Monitor) -> int:
+    """One cycle, print the table. No EPGenius, no Discord."""
     monitor.shared.dry_run = True
     await monitor.run_cycle(swap=False, notify=False)
     print(monitor.format_table())
@@ -24,6 +25,7 @@ async def run_url_check(monitor: Monitor) -> int:
 
 
 async def run_failover_preview(monitor: Monitor) -> int:
+    """Show what would swap if the 3-failure threshold were already met."""
     monitor.shared.dry_run = True
     await monitor.run_cycle(swap=False, notify=False)
     print(monitor.format_table())
@@ -35,6 +37,7 @@ async def run_failover_preview(monitor: Monitor) -> int:
 
 
 async def run_discord_test(root: Path | None) -> int:
+    """Send [TEST] webhook payloads. Never calls EPGenius."""
     cfg = load_config(root)
     if not cfg.playlists:
         raise RuntimeError("config/playlists.yaml has no playlists")
@@ -167,6 +170,7 @@ async def run_dashboard_test(
     host: str,
     port: int,
 ) -> int:
+    """Serve the UI with dry_run on so Switch / EPGenius cannot fire."""
     monitor.shared.dry_run = True
 
     async def loop() -> None:

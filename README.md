@@ -1,4 +1,9 @@
 # IPTV portal monitor
+#
+# Overview: long-running service that health-checks IPTV portals, fails playlists
+# over via EPGenius, serves a public status site + owner Switch UI + History, and
+# (separately) a login-gated /watch Chromium player. Run one copy only — usually
+# systemd on the OVH VPS. See deploy/README.md for production.
 
 A long-running Python service that watches IPTV portal URLs, fails a playlist over to a healthy standby via EPGenius when the live URL dies, posts Discord alerts, and serves a local dashboard.
 

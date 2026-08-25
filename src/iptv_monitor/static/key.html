@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- Info key: what UP / DOWN / Cloudflare / Frequent failure / History / Watch mean. Static page, no API. -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -7,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=22" />
+  <link rel="stylesheet" href="/static/styles.css?v=23" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -152,6 +153,19 @@
         at the last 24 hours so failover does not blacklist almost every host. History is for
         comparing URLs over a longer window. Counts start from when this store was created;
         older days fill in as time passes.
+      </p>
+    </article>
+
+    <article class="key-card">
+      <div class="key-card-top">
+        <span class="pill up">watch</span>
+        <h2>Watch</h2>
+      </div>
+      <p>
+        <code>/watch</code> is a Chromium web player for friends. It uses a dedicated
+        Xtream account (up to 5 streams at once), not the failover playlists on this
+        page. Sign-in is a site login you hand out — the panel username and password
+        never appear in the browser. Chrome or Edge recommended.
       </p>
     </article>
   </section>

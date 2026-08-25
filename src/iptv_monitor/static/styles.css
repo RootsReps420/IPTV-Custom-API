@@ -1,4 +1,7 @@
-/* Local portal monitor UI — dark grid, IBM Plex Mono + Syne. */
+/* Shared styles for monitor, History, Info, and Watch.
+ * Dark grid, IBM Plex Mono + Syne. Watch layout is full-width under .watch-*.
+ * Bump ?v= on HTML links after changing this file.
+ */
 
 :root {
   --bg: #07090d;
@@ -662,6 +665,220 @@ tr.row-down td {
   background: var(--down);
 }
 
+.watch-body {
+  min-height: 100vh;
+}
+
+.watch-login {
+  position: relative;
+  width: min(420px, calc(100% - 40px));
+  margin: 80px auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 28px 24px;
+}
+
+.watch-login h1 {
+  margin-bottom: 8px;
+}
+
+.watch-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.watch-login-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.watch-login-form input {
+  appearance: none;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.watch-error {
+  color: var(--down);
+  margin: 0;
+  font-size: 13px;
+}
+
+.watch-app {
+  position: relative;
+}
+
+.watch-header {
+  width: min(1400px, calc(100% - 32px));
+}
+
+.watch-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.watch-meta {
+  align-items: end;
+}
+
+.watch-banner {
+  width: min(1400px, calc(100% - 32px));
+  margin: 12px auto 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.watch-banner.bad {
+  color: var(--down);
+  border-color: var(--down);
+}
+
+.watch-banner.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.watch-layout {
+  width: min(1400px, calc(100% - 32px));
+  margin: 16px auto 40px;
+  display: grid;
+  grid-template-columns: minmax(280px, 1.1fr) minmax(320px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.watch-player-col video {
+  width: 100%;
+  background: #000;
+  border: 1px solid var(--line);
+  aspect-ratio: 16 / 9;
+}
+
+.watch-now {
+  margin-top: 10px;
+}
+
+.watch-browse {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 12px;
+  min-height: 240px;
+}
+
+.watch-browse-tools {
+  margin-bottom: 10px;
+}
+
+.watch-browse-tools input {
+  appearance: none;
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.watch-browse-split {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) 1fr;
+  gap: 10px;
+  min-height: 360px;
+}
+
+.watch-cats {
+  overflow: auto;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-right: 1px solid var(--line);
+  padding-right: 8px;
+}
+
+.watch-cat,
+.watch-item {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.watch-cat.is-here,
+.watch-item:hover,
+.watch-cat:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.watch-items {
+  overflow: auto;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.watch-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.watch-item img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--panel-2);
+}
+
+.watch-item.poster img {
+  width: 42px;
+  height: 60px;
+}
+
+.watch-series {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.watch-season h3 {
+  font-family: Syne, sans-serif;
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.watch-season-eps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
 @media (max-width: 860px) {
   header {
     display: block;
@@ -676,5 +893,18 @@ tr.row-down td {
   .cards-grid,
   .event-list li {
     grid-template-columns: 1fr;
+  }
+
+  .watch-layout,
+  .watch-browse-split {
+    grid-template-columns: 1fr;
+  }
+
+  .watch-cats {
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: none;
+    border-right: 0;
+    padding-right: 0;
   }
 }

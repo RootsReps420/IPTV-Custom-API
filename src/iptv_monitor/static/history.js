@@ -1,4 +1,6 @@
-/* History tab: poll /api/history and rank URLs by separate outages. */
+/* History tab: poll /api/history every 15s and rank URLs by separate outages.
+ * Sparkline is one bar per day (90 days). Counts are up→down edges, not downtime.
+ */
 
 const bodyEl = document.getElementById("history-body");
 const filterEl = document.getElementById("history-filter");
@@ -51,6 +53,7 @@ function fmtWhen(iso) {
 }
 
 function spark(byDay) {
+  // 90 CSS bars. Height is relative to the busiest day in this row.
   const values = Array.isArray(byDay) ? byDay : [];
   const max = Math.max(0, ...values);
   const bars = values

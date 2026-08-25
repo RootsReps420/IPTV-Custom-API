@@ -1,4 +1,9 @@
-"""CLI entry: live monitor, one-shot check, or a dry-run of one piece."""
+"""CLI entry: live monitor, one-shot check, dry-run, or watch-password hash.
+
+Default (no subcommand): run the check loop forever and serve the dashboard.
+`check` / `--once` probe once with no swaps. `test` exercises one piece.
+`apply` pushes DNS to EPGenius. `watch-hash` prints a pbkdf2 hash for /watch logins.
+"""
 
 from __future__ import annotations
 
@@ -73,10 +78,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Old URL shown on Discord. Defaults to current_dns before the apply.",
     )
+    hash_cmd = sub.add_parser(
+        "watch-hash",
+        help="Print a pbkdf2 hash for config/watch_users.yaml",
+    )
+    hash_cmd.add_argument("password", nargs="?", help="Password (prompted if omitted)")
     return parser
 
 
 def _dashboard_bind(root: Path | None) -> tuple[str, int]:
+    """Read dashboard_host/port from settings.yaml; fall back if YAML is missing."""
     try:
         cfg = load_config(root)
         return cfg.settings.dashboard_host, cfg.settings.dashboard_port
@@ -124,6 +135,7 @@ async def _run(args: argparse.Namespace) -> int:
         await monitor.run_forever()
         return 0
 
+    # Default: checker + dashboard together. Do not also run the Windows task.
     host, port = _dashboard_bind(root)
     await asyncio.gather(
         monitor.run_forever(),
@@ -133,6 +145,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def configure_logging(root: Path | None) -> None:
+    """File + stderr logs. Rotates logs/monitor.log. Idempotent if handlers exist."""
     base = Path(root) if root else Path.cwd()
     log_dir = base / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -157,6 +170,12 @@ def configure_logging(root: Path | None) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # Hash-only: no logging, no Monitor, no .env required.
+    if args.command == "watch-hash":
+        from iptv_monitor.hash_password import main as hash_main
+
+        extra = [args.password] if args.password else []
+        return hash_main(extra)
     configure_logging(args.root)
     try:
         return asyncio.run(_run(args))

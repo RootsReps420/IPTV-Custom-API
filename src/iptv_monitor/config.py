@@ -1,7 +1,11 @@
-"""Load settings, playlists, standby URLs, and secrets.
+"""Load settings, playlists, standby URLs, Watch configs, and .env secrets.
 
-YAML is re-read every monitor cycle, so edits to playlists / urls / settings
-apply without a restart. Python code changes still need the process restarted.
+YAML under config/ is re-read every monitor cycle (and Watch re-reads player.yaml
+per request), so playlist / URL / settings edits apply without a restart.
+Python code changes still need `systemctl restart iptv-monitor`.
+
+Gitignored live files: playlists.yaml, urls.yaml, player.yaml, watch_users.yaml, .env
+Examples in this folder are safe to commit.
 """
 
 from __future__ import annotations
@@ -69,6 +73,8 @@ class Paths(BaseModel):
     settings: Path
     playlists: Path
     urls: Path
+    player: Path
+    watch_users: Path
     env: Path
 
 
@@ -89,10 +95,12 @@ def _yaml() -> YAML:
 
 
 def _safe_yaml() -> YAML:
+    """Load-only YAML (no round-trip). Used for settings / playlists / urls reads."""
     return YAML(typ="safe")
 
 
 def resolve_paths(root: Path | None = None) -> Paths:
+    """Canonical paths under the project root (cwd if root is None)."""
     base = Path(root) if root else Path.cwd()
     config_dir = base / "config"
     return Paths(
@@ -101,6 +109,8 @@ def resolve_paths(root: Path | None = None) -> Paths:
         settings=config_dir / "settings.yaml",
         playlists=config_dir / "playlists.yaml",
         urls=config_dir / "urls.yaml",
+        player=config_dir / "player.yaml",
+        watch_users=config_dir / "watch_users.yaml",
         env=base / ".env",
     )
 
@@ -110,6 +120,8 @@ def ensure_runtime_configs(paths: Paths) -> None:
     pairs = (
         (paths.playlists, paths.config_dir / "playlists.example.yaml"),
         (paths.urls, paths.config_dir / "urls.example.yaml"),
+        (paths.player, paths.config_dir / "player.example.yaml"),
+        (paths.watch_users, paths.config_dir / "watch_users.example.yaml"),
     )
     for dest, example in pairs:
         if not dest.exists() and example.exists():
@@ -143,6 +155,7 @@ def load_available_urls(path: Path) -> list[str]:
 
 
 def load_secrets(env_path: Path) -> Secrets:
+    """Read .env. EPGenius + Discord webhooks are required; status webhook is optional."""
     load_dotenv(env_path, override=False)
     missing = [
         name
@@ -169,6 +182,7 @@ def load_secrets(env_path: Path) -> Secrets:
 
 
 def load_config(root: Path | None = None) -> AppConfig:
+    """Full runtime config. Copies example YAML into gitignored files on first run."""
     paths = resolve_paths(root)
     if not paths.settings.exists():
         raise FileNotFoundError(f"Missing settings file: {paths.settings}")
