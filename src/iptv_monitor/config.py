@@ -39,6 +39,7 @@ class Settings(BaseModel):
     # Dashboard "Frequent failure" on standbys: this many separate down events in the window.
     frequent_failure_down_events: int = 3
     frequent_failure_window_hours: int = 24
+    history_retention_days: int = 90
 
 
 class Playlist(BaseModel):

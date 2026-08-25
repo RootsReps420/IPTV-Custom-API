@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20" />
+  <link rel="stylesheet" href="/static/styles.css?v=22" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -16,7 +16,9 @@
       <p class="eyebrow">IPTV · EPGenius failover</p>
       <div class="title-row">
         <h1>Info</h1>
-        <a class="key-btn" href="/">Back</a>
+        <a class="key-btn" href="/">Monitor</a>
+        <a class="key-btn" href="/history">History</a>
+        <a class="key-btn is-here" href="/key" aria-current="page">Info</a>
       </div>
     </div>
   </header>
@@ -117,6 +119,39 @@
       <p>
         <strong>Treat it as unreliable</strong> even if the latest card says UP — it has been
         flapping. Counts reset as those downs age out of the 24-hour window.
+      </p>
+    </article>
+
+    <article class="key-card">
+      <div class="key-card-top">
+        <span class="pill up">switch</span>
+        <h2>Switch / Choose URL</h2>
+      </div>
+      <p>
+        On the Playlists page, <strong>Switch</strong> immediately moves that playlist to the
+        best healthy standby (same preference as auto failover: origin, then Cloudflare NS,
+        then Cloudflare proxy). <strong>Choose URL</strong> opens a dropdown of the available
+        pool so you can pick a specific host instead. Down URLs are listed but cannot be
+        selected. After either action, <strong>Switch back</strong> can return to the original
+        DNS if that host is still healthy.
+      </p>
+    </article>
+
+    <article class="key-card">
+      <div class="key-card-top">
+        <span class="pill ns">90 days</span>
+        <h2>History</h2>
+      </div>
+      <p>
+        The History tab keeps each URL’s separate outages for 90 days — every time it went from
+        up to down, with the fail reason. Use 90-day / 7-day / 24-hour counts to judge which
+        hosts are historically stronger, not just which ones are up this cycle.
+      </p>
+      <p>
+        This is not the same as <strong>Frequent failure</strong>. That badge still only looks
+        at the last 24 hours so failover does not blacklist almost every host. History is for
+        comparing URLs over a longer window. Counts start from when this store was created;
+        older days fill in as time passes.
       </p>
     </article>
   </section>

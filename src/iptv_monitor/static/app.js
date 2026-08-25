@@ -155,6 +155,8 @@ function renderGrouped(el, countEl, items, emptyText, grid) {
 }
 
 const switching = new Set();
+let pickOpen = null;
+let pickValue = "";
 
 function hostOf(url) {
   try {
@@ -177,7 +179,63 @@ function apiError(data, fallback) {
   return fallback;
 }
 
+function poolChoices(currentDns) {
+  const current = String(currentDns || "");
+  return (latest?.available || [])
+    .filter((item) => item.url && item.url !== current)
+    .slice()
+    .sort((a, b) => {
+      if (Boolean(a.healthy) !== Boolean(b.healthy)) {
+        return a.healthy ? -1 : 1;
+      }
+      return hostOf(a.url).localeCompare(hostOf(b.url));
+    });
+}
+
+function pickerMarkup(item, id, dryRun, busy) {
+  if (pickOpen !== id) {
+    return "";
+  }
+  const choices = poolChoices(item.current_dns);
+  if (!choices.length) {
+    return `<div class="switch-picker"><span class="muted">No other URLs in the pool.</span></div>`;
+  }
+  const options = choices
+    .map((row) => {
+      const selected = pickValue === row.url ? " selected" : "";
+      const disabled = row.healthy ? "" : " disabled";
+      const kind = row.cloudflare_proxied
+        ? "CF proxy"
+        : row.cloudflare
+          ? "CF NS"
+          : "origin";
+      const state = row.healthy ? "up" : "down";
+      const frequent = row.frequent_failure ? " · frequent" : "";
+      return `<option value="${esc(row.url)}"${selected}${disabled}>${esc(hostOf(row.url))} · ${state} · ${kind}${frequent}</option>`;
+    })
+    .join("");
+  const selectedHealthy = choices.some((row) => row.url === pickValue && row.healthy);
+  const canGo = selectedHealthy && !dryRun && !busy;
+  return `
+    <div class="switch-picker">
+      <select data-pick-url="${esc(id)}" ${busy ? "disabled" : ""}>
+        <option value="">Select a URL…</option>
+        ${options}
+      </select>
+      <button
+        type="button"
+        class="switch-btn${busy ? " busy" : ""}"
+        data-pick-go="${esc(id)}"
+        ${canGo ? "" : "disabled"}
+      >${busy ? "Switching…" : "Switch to this"}</button>
+    </div>
+  `;
+}
+
 function renderPlaylists(items) {
+  const keepPickerFocus = Boolean(
+    document.activeElement && document.activeElement.matches("[data-pick-url]")
+  );
   const playlistCount = document.getElementById("playlist-count");
   if (playlistCount) {
     playlistCount.textContent = items.length ? `${items.length} loaded` : "none";
@@ -207,6 +265,8 @@ function renderPlaylists(items) {
         ? `Switch back to ${hostOf(revertTo)} (health-checked first)`
         : "";
       const revertLabel = busy ? "Checking…" : "Switch back";
+      const chooseOpen = pickOpen === id;
+      const chooseLabel = chooseOpen ? "Close" : "Choose URL";
       return `
         <tr>
           <td>${esc(item.name)}</td>
@@ -224,6 +284,13 @@ function renderPlaylists(items) {
                 title="${esc(title)}"
                 ${canSwitch && !busy ? "" : "disabled"}
               >${btnLabel}</button>
+              <button
+                type="button"
+                class="switch-btn choose${chooseOpen ? " is-here" : ""}"
+                data-choose="${esc(id)}"
+                title="Pick a specific URL from the available pool"
+                ${dryRun || busy ? "disabled" : ""}
+              >${chooseLabel}</button>
               ${
                 revertTo
                   ? `<button
@@ -236,14 +303,21 @@ function renderPlaylists(items) {
                   : ""
               }
             </div>
+            ${pickerMarkup(item, id, dryRun, busy)}
           </td>
         </tr>
       `;
     })
     .join("");
+  if (keepPickerFocus) {
+    const next = playlistBody.querySelector("[data-pick-url]");
+    if (next) {
+      next.focus();
+    }
+  }
 }
 
-async function postSwitch(path, playlistId, failPrefix) {
+async function postSwitch(path, playlistId, failPrefix, extra = {}) {
   if (!playlistId || switching.has(playlistId)) {
     return;
   }
@@ -256,12 +330,14 @@ async function postSwitch(path, playlistId, failPrefix) {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ playlist_id: playlistId }),
+      body: JSON.stringify({ playlist_id: playlistId, ...extra }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(apiError(data, `HTTP ${response.status}`));
     }
+    pickOpen = null;
+    pickValue = "";
     await refresh();
   } catch (error) {
     renderAlerts([`${failPrefix}: ${error.message}`]);
@@ -273,8 +349,9 @@ async function postSwitch(path, playlistId, failPrefix) {
   }
 }
 
-function switchPlaylist(playlistId) {
-  return postSwitch("/api/switch", playlistId, "Switch failed");
+function switchPlaylist(playlistId, targetUrl) {
+  const extra = targetUrl ? { target_url: targetUrl } : {};
+  return postSwitch("/api/switch", playlistId, "Switch failed", extra);
 }
 
 function switchBackPlaylist(playlistId) {
@@ -288,11 +365,48 @@ if (playlistBody) {
       switchBackPlaylist(revert.getAttribute("data-revert"));
       return;
     }
+    const choose = event.target.closest("[data-choose]");
+    if (choose && !choose.disabled) {
+      const id = choose.getAttribute("data-choose");
+      pickOpen = pickOpen === id ? null : id;
+      pickValue = "";
+      if (latest) {
+        renderPlaylists(latest.playlists || []);
+      }
+      return;
+    }
+    const go = event.target.closest("[data-pick-go]");
+    if (go && !go.disabled) {
+      const id = go.getAttribute("data-pick-go");
+      if (!pickValue) {
+        return;
+      }
+      switchPlaylist(id, pickValue);
+      return;
+    }
     const button = event.target.closest("[data-switch]");
     if (!button || button.disabled) {
       return;
     }
     switchPlaylist(button.getAttribute("data-switch"));
+  });
+  playlistBody.addEventListener("change", (event) => {
+    const select = event.target.closest("[data-pick-url]");
+    if (!select) {
+      return;
+    }
+    pickOpen = select.getAttribute("data-pick-url");
+    pickValue = select.value;
+    if (latest) {
+      const keepFocus = true;
+      renderPlaylists(latest.playlists || []);
+      if (keepFocus) {
+        const next = playlistBody.querySelector("[data-pick-url]");
+        if (next) {
+          next.focus();
+        }
+      }
+    }
   });
 }
 

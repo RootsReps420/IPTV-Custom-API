@@ -18,6 +18,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 class SwitchBody(BaseModel):
     playlist_id: str = Field(min_length=1)
+    target_url: str | None = None
 
 
 def create_app(monitor: Monitor) -> FastAPI:
@@ -32,10 +33,14 @@ def create_app(monitor: Monitor) -> FastAPI:
     async def public_status() -> dict:
         return monitor.shared.public_snapshot()
 
+    @app.get("/api/history")
+    async def history() -> dict:
+        return monitor.history_snapshot(owner=False)
+
     @app.post("/api/switch")
     async def switch_playlist(body: SwitchBody) -> dict:
         try:
-            return await monitor.manual_switch(body.playlist_id)
+            return await monitor.manual_switch(body.playlist_id, target_url=body.target_url)
         except SwitchError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -57,6 +62,10 @@ def create_app(monitor: Monitor) -> FastAPI:
     @app.get("/key")
     async def key() -> FileResponse:
         return FileResponse(STATIC_DIR / "key.html")
+
+    @app.get("/history")
+    async def history_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "history.html")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

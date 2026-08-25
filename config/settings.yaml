@@ -36,3 +36,6 @@ discord_status_min_interval_seconds: 60
 # Standby cards show "Frequent failure" after this many separate downs in the window.
 frequent_failure_down_events: 3
 frequent_failure_window_hours: 24
+
+# History tab: how long to keep per-URL down events.
+history_retention_days: 90

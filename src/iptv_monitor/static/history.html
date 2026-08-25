@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>History · Portal Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css?v=21" />
+</head>
+<body>
+  <div class="grid-bg" aria-hidden="true"></div>
+  <header>
+    <div>
+      <p class="eyebrow">IPTV · EPGenius failover</p>
+      <div class="title-row">
+        <h1>History</h1>
+        <a class="key-btn is-here" href="/history" aria-current="page">History</a>
+        <a class="key-btn" href="/">Monitor</a>
+        <a class="key-btn" href="/key">Info</a>
+      </div>
+    </div>
+    <div class="meta">
+      <div class="stat">
+        <span class="label">Window</span>
+        <span id="stat-window">90d</span>
+      </div>
+      <div class="stat">
+        <span class="label">URLs</span>
+        <span id="stat-urls">—</span>
+      </div>
+      <div class="stat">
+        <span class="label">Downs (90d)</span>
+        <span id="stat-downs">—</span>
+      </div>
+      <div class="stat">
+        <span class="label">Updated</span>
+        <span id="stat-updated">waiting…</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="history">
+    <div class="section-head">
+      <h2>Outages by URL</h2>
+      <span id="history-count" class="count"></span>
+    </div>
+    <p class="history-note">
+      Each count is a separate outage (healthy → down), not how long it stayed down.
+      Sorted worst-first so the flakiest hosts sit at the top. Sparkline bars are one day each.
+      History starts from when this store was created; older days fill in over time.
+    </p>
+    <div class="history-tools">
+      <input id="history-filter" type="search" placeholder="Filter by host…" autocomplete="off" />
+      <div class="history-sort" role="group" aria-label="Sort by">
+        <button type="button" class="sort-btn is-here" data-sort="downs_90d">90d</button>
+        <button type="button" class="sort-btn" data-sort="downs_7d">7d</button>
+        <button type="button" class="sort-btn" data-sort="downs_24h">24h</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>URL</th>
+            <th>Type</th>
+            <th>Now</th>
+            <th>24h</th>
+            <th>7d</th>
+            <th>90d</th>
+            <th>Last down</th>
+            <th>90-day trend</th>
+          </tr>
+        </thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <script src="/static/history.js?v=21"></script>
+</body>
+</html>

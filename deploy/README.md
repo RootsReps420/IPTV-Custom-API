@@ -75,10 +75,11 @@ Caddy terminates HTTPS and proxies to `127.0.0.1:8787`. Port 8787 stays closed.
 | URL | Login | What it shows |
 |-----|--------|----------------|
 | `https://vps-4f889186.vps.ovh.net` | none | Standby URL pool health. Safe to share. |
-| `https://vps-4f889186.vps.ovh.net/owner` | username `dan` | Same page plus Current DNS, the playlists table, and manual Switch. |
+| `https://vps-4f889186.vps.ovh.net/history` | none | 90-day outage counts per standby URL (no currently-live DNS). |
+| `/api/history` | none | JSON for the History tab. |
 | `/api/public` | none | JSON used by the public page (no live DNS, no playlist rows). |
 | `/api/status` | `dan` | Full JSON including live DNS and playlists. |
-| `/api/switch` | `dan` | POST `{ "playlist_id": "..." }` — immediate EPGenius swap to the best healthy standby. |
+| `/api/switch` | `dan` | POST `{ "playlist_id": "..." }` — best healthy standby. Optional `target_url` picks a specific healthy pool URL. |
 | `/api/switch-back` | `dan` | POST `{ "playlist_id": "..." }` — health-check the pre-manual URL, then EPGenius back to it. |
 
 The **Playlists** button on the public page is `/owner`. The browser’s HTTP basic-auth prompt is the same login you already use. Standby hostnames in the available pool stay visible; currently-live DNS and playlist identity are hidden.

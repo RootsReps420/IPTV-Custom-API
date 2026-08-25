@@ -13,6 +13,7 @@ from typing import Any
 from iptv_monitor.config import AppConfig, Playlist, load_config, load_settings, resolve_paths, update_playlist_dns
 from iptv_monitor.epgenius import EpgeniusError, update_creds
 from iptv_monitor.health import HealthResult, check_url, check_urls, normalize_url
+from iptv_monitor.history import UrlHistoryStore
 from iptv_monitor.notify import (
     DiscordStatusBoard,
     notify_epgenius_error,
@@ -207,11 +208,23 @@ class Monitor:
         self.status_board = DiscordStatusBoard()
         self._swap_lock = asyncio.Lock()
         self._load_failure_history()
+        days = 90
+        try:
+            days = load_settings(resolve_paths(self.root).settings).history_retention_days
+        except Exception:  # noqa: BLE001
+            pass
+        self.url_history = UrlHistoryStore(self._url_history_path(), days=days)
+        self.url_history.seed_from_stamps(
+            {url: list(stats.down_at) for url, stats in self.stats.items()}
+        )
 
     def _stat(self, url: str) -> UrlStats:
         if url not in self.stats:
             self.stats[url] = UrlStats()
         return self.stats[url]
+
+    def _url_history_path(self) -> Path:
+        return resolve_paths(self.root).root / "state" / "url_history.json"
 
     def _failure_history_path(self) -> Path:
         return resolve_paths(self.root).root / "state" / "failure_history.json"
@@ -262,17 +275,19 @@ class Monitor:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
-    def _record_down_event(self, stats: UrlStats, result: HealthResult, window: timedelta) -> None:
+    def _record_down_event(self, stats: UrlStats, result: HealthResult, window: timedelta) -> bool:
         """Count a separate outage when a URL goes from up (or unknown) to down."""
         self._prune_down_events(stats, window)
         if result.healthy:
-            return
+            return False
         previous = stats.last_healthy
         if previous is True:
             stats.down_at.append(datetime.now(timezone.utc))
-            return
+            return True
         if previous is None and not stats.down_at:
             stats.down_at.append(datetime.now(timezone.utc))
+            return True
+        return False
 
     async def run_forever(self) -> None:
         while True:
@@ -302,10 +317,12 @@ class Monitor:
         available_set = set(available_keys)
 
         window = self._failure_window(settings)
+        self.url_history.days = max(7, int(settings.history_retention_days))
         for url, result in results.items():
             stats = self._stat(url)
             stats.last_result = result
-            self._record_down_event(stats, result, window)
+            if self._record_down_event(stats, result, window):
+                self.url_history.record(url, result.fail_reason)
             if result.healthy:
                 stats.consecutive_failures = 0
                 stats.consecutive_successes += 1
@@ -335,6 +352,7 @@ class Monitor:
         current = live_set | available_set
         self.stats = {url: stats for url, stats in self.stats.items() if url in current}
         self._save_failure_history(window)
+        self.url_history.save()
         self._publish_snapshot(cfg, results, live_set, available_set)
         if notify:
             await self.status_board.sync(cfg, self.shared.snapshot())
@@ -621,8 +639,12 @@ class Monitor:
             set(normalize_url(url) for url in cfg.available_urls),
         )
 
-    async def manual_switch(self, playlist_id: str) -> dict[str, Any]:
-        """Swap one playlist now, using the last health snapshot. No extra URL probe."""
+    async def manual_switch(
+        self,
+        playlist_id: str,
+        target_url: str | None = None,
+    ) -> dict[str, Any]:
+        """Swap one playlist now. Optional target_url must be a healthy pool URL."""
         if self.shared.dry_run:
             raise SwitchError("Dry run — manual switches are disabled.", 409)
         if not self._last_results:
@@ -632,7 +654,10 @@ class Monitor:
             cfg = load_config(self.root)
             playlist = self._find_playlist(cfg, playlist_id)
             old_url = normalize_url(playlist.current_dns)
-            candidate = self._candidate_for(cfg, old_url, log=True)
+            if target_url:
+                candidate = self._resolve_chosen_url(cfg, old_url, target_url)
+            else:
+                candidate = self._candidate_for(cfg, old_url, log=True)
             if not candidate:
                 raise SwitchError("No healthy standby to switch to.", 409)
             await self._swap_playlist(
@@ -646,6 +671,28 @@ class Monitor:
                 "from": old_url,
                 "to": candidate,
             }
+
+    def _resolve_chosen_url(self, cfg: AppConfig, current_url: str, raw: str) -> str:
+        try:
+            candidate = normalize_url(raw)
+        except ValueError as exc:
+            raise SwitchError("Invalid target URL.", 400) from exc
+        pool = {normalize_url(url) for url in cfg.available_urls}
+        if candidate not in pool:
+            raise SwitchError("That URL is not in the available pool.", 400)
+        if candidate == current_url:
+            raise SwitchError("Playlist is already on that URL.", 409)
+        result = self._last_results.get(candidate)
+        if result is None:
+            raise SwitchError("No health snapshot for that URL yet — wait for a check cycle.", 503)
+        if not result.healthy:
+            reason = result.fail_reason or "down"
+            raise SwitchError(
+                f"That URL is down ({reason}). Choose a healthy one from the pool.",
+                409,
+            )
+        logger.info("Standby candidate %s (user-selected)", candidate)
+        return candidate
 
     async def manual_revert(self, playlist_id: str) -> dict[str, Any]:
         """Health-check the pre-manual URL, then EPGenius back to it if it is up."""
@@ -839,6 +886,25 @@ class Monitor:
                 }
             )
         self._refresh_alerts()
+
+    def history_snapshot(self, *, owner: bool = False) -> dict[str, Any]:
+        """90-day down counts per URL. Public omits currently-live hosts not in the pool."""
+        views: dict[str, dict[str, Any]] = {}
+        for row in list(self.shared.available) + list(self.shared.live):
+            url = row.get("url")
+            if url:
+                views[str(url)] = row
+        available = set(self._last_available_keys)
+        live = set(self._last_live_keys)
+        if not available and not live:
+            available = {str(row.get("url")) for row in self.shared.available if row.get("url")}
+            live = {str(row.get("url")) for row in self.shared.live if row.get("url")}
+        return self.url_history.snapshot(
+            available=available,
+            live=live,
+            views=views,
+            owner=owner,
+        )
 
     def _refresh_alerts(self) -> None:
         alerts: list[str] = []
