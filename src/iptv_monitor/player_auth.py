@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import HTTPException, Request, Response
@@ -102,8 +105,34 @@ def cookie_secure(request: Request) -> bool:
     return proto == "https"
 
 
-def set_session(response: Response, request: Request, root: Path, username: str) -> None:
-    token = _serializer(root).dumps({"u": username})
+@dataclass
+class WatchSession:
+    username: str
+    session_id: str = ""
+    issued_at: int = 0
+
+
+def client_ip(request: Request) -> str:
+    """Client IP. Trust X-Forwarded-For because the app only listens on loopback."""
+    forwarded = (request.headers.get("x-forwarded-for") or "").strip()
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:64]
+    host = request.client.host if request.client else ""
+    return (host or "")[:64]
+
+
+def set_session(
+    response: Response,
+    request: Request,
+    root: Path,
+    username: str,
+    *,
+    session_id: str | None = None,
+    issued_at: int | None = None,
+) -> str:
+    sid = (session_id or "").strip() or uuid.uuid4().hex
+    issued = int(issued_at or time.time())
+    token = _serializer(root).dumps({"u": username, "sid": sid, "t": issued})
     response.set_cookie(
         COOKIE,
         token,
@@ -113,13 +142,14 @@ def set_session(response: Response, request: Request, root: Path, username: str)
         samesite="lax",
         path="/",
     )
+    return sid
 
 
 def clear_session(response: Response) -> None:
     response.delete_cookie(COOKIE, path="/")
 
 
-def current_username(request: Request, root: Path) -> str | None:
+def read_session(request: Request, root: Path) -> WatchSession | None:
     token = request.cookies.get(COOKIE)
     if not token:
         return None
@@ -130,7 +160,22 @@ def current_username(request: Request, root: Path) -> str | None:
     if not isinstance(payload, dict):
         return None
     name = str(payload.get("u") or "").strip()
-    return name or None
+    if not name:
+        return None
+    try:
+        issued = int(payload.get("t") or 0)
+    except (TypeError, ValueError):
+        issued = 0
+    return WatchSession(
+        username=name,
+        session_id=str(payload.get("sid") or "").strip(),
+        issued_at=issued,
+    )
+
+
+def current_username(request: Request, root: Path) -> str | None:
+    session = read_session(request, root)
+    return session.username if session else None
 
 
 def require_username(request: Request, root: Path) -> str:

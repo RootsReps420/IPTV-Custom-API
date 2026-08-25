@@ -21,6 +21,10 @@ const playlistSection = document.getElementById("playlists-section");
 const playlistStatWrap = document.getElementById("stat-playlists-wrap");
 const liveSection = document.getElementById("live-section");
 const liveStatWrap = document.getElementById("stat-live-wrap");
+const watchersSection = document.getElementById("watchers-section");
+const watchersBody = document.getElementById("watchers-body");
+const watchStatWrap = document.getElementById("stat-watch-wrap");
+const statWatch = document.getElementById("stat-watch");
 const ownerLink = document.getElementById("owner-link");
 const publicLink = document.getElementById("public-link");
 const watchLink = document.getElementById("watch-link");
@@ -43,6 +47,34 @@ function fmtTime(iso) {
     return "waiting…";
   }
   return new Date(iso).toLocaleTimeString();
+}
+
+function fmtAge(seconds) {
+  const n = Math.max(0, Number(seconds) || 0);
+  if (n < 60) {
+    return `${n}s`;
+  }
+  if (n < 3600) {
+    const m = Math.floor(n / 60);
+    const s = n % 60;
+    return s ? `${m}m ${s}s` : `${m}m`;
+  }
+  const h = Math.floor(n / 3600);
+  const m = Math.floor((n % 3600) / 60);
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function watchKindLabel(kind) {
+  if (kind === "live") {
+    return "Live";
+  }
+  if (kind === "movie") {
+    return "Movie";
+  }
+  if (kind === "series") {
+    return "Series";
+  }
+  return "";
 }
 
 function secondsUntilNext(iso, interval) {
@@ -364,6 +396,52 @@ function renderPlaylists(items) {
   }
 }
 
+function renderWatchers(watch) {
+  if (!watchersSection || !watchersBody) {
+    return;
+  }
+  const sessions = watch?.sessions || [];
+  const slots = watch?.slots || {};
+  const countEl = document.getElementById("watchers-count");
+  const playing = watch?.playing || 0;
+  const online = watch?.online || sessions.length;
+  const slotBit =
+    slots.max != null ? ` · slots ${slots.used ?? 0}/${slots.max}` : "";
+  if (countEl) {
+    countEl.textContent = sessions.length
+      ? `${online} online · ${playing} playing${slotBit}`
+      : "none";
+  }
+  if (!sessions.length) {
+    watchersBody.innerHTML = `<tr><td colspan="6">Nobody is signed in to /watch right now.</td></tr>`;
+    return;
+  }
+  watchersBody.innerHTML = sessions
+    .map((row) => {
+      const playingNow = Boolean(row.playing);
+      const kind = watchKindLabel(row.kind);
+      const title = row.title || "";
+      const detail = row.detail || "";
+      const watching = playingNow
+        ? `${kind ? `${kind} · ` : ""}${title || "Playing…"}`
+        : "Browsing";
+      const extra = playingNow && detail && detail !== title
+        ? `<span class="muted">${esc(detail)}</span>`
+        : "";
+      return `
+        <tr>
+          <td>${esc(row.username)}</td>
+          <td>${esc(fmtAge(row.logged_in_seconds))}</td>
+          <td>${esc(row.idle_seconds === 0 ? "now" : `${fmtAge(row.idle_seconds)} ago`)}</td>
+          <td>${esc(row.ip || "—")}</td>
+          <td class="${playingNow ? "status-play" : ""}">${playingNow ? "playing" : "idle"}</td>
+          <td class="watching-cell">${esc(watching)}${extra}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
 async function postSwitch(path, playlistId, failPrefix, extra = {}) {
   if (!playlistId || switching.has(playlistId)) {
     return;
@@ -543,9 +621,17 @@ async function refresh() {
     if (liveStatWrap) {
       liveStatWrap.hidden = !signedIn;
     }
+    if (watchStatWrap) {
+      watchStatWrap.hidden = !signedIn;
+    }
     if (signedIn) {
       statLive.textContent = `${counts.live_up ?? "—"}/${counts.live_total ?? "—"} up`;
       statPlaylists.textContent = String(counts.playlists ?? (data.playlists || []).length);
+      if (statWatch) {
+        const online = counts.watch_online ?? (data.watch?.online ?? 0);
+        const playing = counts.watch_playing ?? (data.watch?.playing ?? 0);
+        statWatch.textContent = `${playing} playing · ${online} online`;
+      }
     }
     if (ownerLink) {
       ownerLink.hidden = signedIn;
@@ -562,6 +648,9 @@ async function refresh() {
     if (liveSection) {
       liveSection.hidden = !signedIn;
     }
+    if (watchersSection) {
+      watchersSection.hidden = !signedIn;
+    }
     modePill.hidden = !data.dry_run;
     tickCountdown();
     renderAlerts(data.alerts, data.error);
@@ -569,6 +658,7 @@ async function refresh() {
     if (signedIn) {
       renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false);
       renderPlaylists(data.playlists || []);
+      renderWatchers(data.watch);
     }
     renderEvents(data.events || []);
   } catch (error) {

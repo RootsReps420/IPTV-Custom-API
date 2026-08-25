@@ -23,13 +23,15 @@ from iptv_monitor.player_auth import (
     LoginBody,
     authenticate,
     clear_session,
-    current_username,
+    client_ip,
     fetch_serializer,
+    read_session,
     require_username,
     set_session,
 )
 from iptv_monitor.player_proxy import load_signed_url, panel_media_url, proxy_url
 from iptv_monitor.player_guide import WatchGuide
+from iptv_monitor.player_presence import PresenceTracker
 from iptv_monitor.player_slots import SlotTracker
 from iptv_monitor.player_sync import queue_watch_force
 from iptv_monitor.player_xtream import XtreamCatalogue, load_player_config
@@ -41,6 +43,10 @@ KINDS = {"live", "movie", "series"}
 
 class SlotBody(BaseModel):
     play_id: str = Field(default="", max_length=80)
+    kind: str = Field(default="", max_length=16)
+    stream_id: str = Field(default="", max_length=80)
+    title: str = Field(default="", max_length=200)
+    detail: str = Field(default="", max_length=200)
 
 
 class SyncBody(BaseModel):
@@ -52,6 +58,7 @@ class WatchService:
     def __init__(self, root) -> None:
         self.root = root
         self.slots = SlotTracker()
+        self.presence = PresenceTracker()
         self.guide = WatchGuide(root)
         self.catalogue = XtreamCatalogue(root, guide=self.guide)
         self._cfg = None
@@ -74,6 +81,12 @@ class WatchService:
     def sync_slot_limit(self) -> None:
         self.config()
 
+    async def owner_watch(self) -> dict[str, Any]:
+        """Owner-only /watch presence + slot counts. Not included in public JSON."""
+        presence = await self.presence.snapshot()
+        slots = await self.slots.snapshot()
+        return {**presence, "slots": slots}
+
 
 def _root(request: Request):
     """Project root. systemd does not pass --root, so WatchService.root can be None."""
@@ -82,6 +95,51 @@ def _root(request: Request):
 
 def _svc(request: Request) -> WatchService:
     return request.app.state.watch
+
+
+async def _touch_presence(
+    request: Request,
+    response: JSONResponse | None = None,
+    *,
+    play_id: str = "",
+    playing: bool | None = None,
+    kind: str = "",
+    stream_id: str = "",
+    title: str = "",
+    detail: str = "",
+) -> None:
+    """Record presence from requests /watch already makes. Optional cookie sid mint."""
+    root = _root(request)
+    session = read_session(request, root)
+    if not session:
+        return
+    sid = session.session_id
+    if response is not None and not sid:
+        sid = set_session(
+            response,
+            request,
+            root,
+            session.username,
+            issued_at=session.issued_at or None,
+        )
+    looked_title = title
+    looked_detail = detail
+    if playing and stream_id:
+        guide_title, guide_detail = _svc(request).guide.describe_media(kind, stream_id)
+        looked_title = title or guide_title
+        looked_detail = detail or guide_detail
+    await _svc(request).presence.touch(
+        username=session.username,
+        session_id=sid or session.username,
+        ip=client_ip(request),
+        issued_at=float(session.issued_at or 0),
+        play_id=play_id,
+        playing=playing,
+        kind=kind,
+        stream_id=stream_id,
+        title=looked_title,
+        detail=looked_detail,
+    )
 
 
 async def _require_slot(svc: WatchService, username: str, play_id: str) -> None:
@@ -110,31 +168,47 @@ def register_watch(app: FastAPI, static_dir) -> None:
         if not name:
             raise HTTPException(status_code=401, detail="Unknown user or password.")
         response = JSONResponse({"ok": True, "username": name})
-        set_session(response, request, _root(request), name)
+        sid = set_session(response, request, _root(request), name)
+        await _svc(request).presence.touch(
+            username=name,
+            session_id=sid,
+            ip=client_ip(request),
+            issued_at=time.time(),
+        )
         return response
 
     @app.post("/api/watch/logout")
     async def watch_logout(request: Request, body: SlotBody | None = None) -> JSONResponse:
-        if body and body.play_id:
-            await _svc(request).slots.release(body.play_id)
-        payload = {"ok": True}
-        response = JSONResponse(payload)
+        session = read_session(request, _root(request))
+        play_id = (body.play_id if body else "") or ""
+        if play_id:
+            await _svc(request).slots.release(play_id)
+        await _svc(request).presence.drop(
+            session_id=session.session_id if session else "",
+            play_id=play_id,
+        )
+        response = JSONResponse({"ok": True})
         clear_session(response)
         return response
 
     @app.get("/api/watch/me")
-    async def watch_me(request: Request) -> dict[str, Any]:
+    async def watch_me(request: Request, play_id: str = Query(default="", max_length=80)) -> JSONResponse:
         svc = _svc(request)
         cfg = svc.config()
-        user = current_username(request, _root(request))
+        session = read_session(request, _root(request))
         snap = await svc.slots.snapshot()
-        return {
-            "username": user,
-            "configured": cfg.configured,
-            "max_concurrent": cfg.max_concurrent,
-            "slots": snap,
-            "sync": svc.guide.status(),
-        }
+        response = JSONResponse(
+            {
+                "username": session.username if session else None,
+                "configured": cfg.configured,
+                "max_concurrent": cfg.max_concurrent,
+                "slots": snap,
+                "sync": svc.guide.status(),
+            }
+        )
+        if session:
+            await _touch_presence(request, response, play_id=play_id)
+        return response
 
     @app.post("/api/player/sync")
     async def player_sync(request: Request, body: SyncBody) -> dict[str, Any]:
@@ -161,6 +235,16 @@ def register_watch(app: FastAPI, static_dir) -> None:
         if not cfg.configured:
             raise HTTPException(status_code=503, detail="Watch player is not configured.")
         await _require_slot(_svc(request), user, body.play_id)
+        kind = (body.kind or "").strip().lower()
+        await _touch_presence(
+            request,
+            play_id=body.play_id,
+            playing=True,
+            kind=kind if kind in KINDS else "",
+            stream_id=body.stream_id,
+            title=body.title,
+            detail=body.detail,
+        )
         snap = await _svc(request).slots.snapshot()
         return {"ok": True, "slots": snap}
 
@@ -168,6 +252,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
     async def slot_release(request: Request, body: SlotBody) -> dict[str, Any]:
         require_username(request, _root(request))
         snap = await _svc(request).slots.release(body.play_id)
+        await _touch_presence(request, play_id=body.play_id, playing=False)
         return {"ok": True, "slots": snap}
 
     @app.get("/api/player/live/categories")
@@ -293,6 +378,13 @@ def register_watch(app: FastAPI, static_dir) -> None:
         if not sid or len(sid) < 8:
             raise HTTPException(status_code=400, detail="Missing sid.")
         await _require_slot(svc, user, sid)
+        await _touch_presence(
+            request,
+            play_id=sid,
+            playing=True,
+            kind=kind,
+            stream_id=stream_id,
+        )
         url = panel_media_url(cfg, kind, stream_id, ext)
         live_ts = kind == "live" and ext.lstrip(".").lower() == "ts"
         vod = kind in {"movie", "series"} and ext.lstrip(".").lower() not in {"m3u8", "mpd"}

@@ -3,6 +3,7 @@
 Public (no login): `/`, `/history`, `/api/public`, `/api/history`, `/static`, `/key`
 Owner (Caddy basicauth): `/owner`, `/api/status`, `/api/switch`, `/api/switch-back`
 Watch (app cookie): `/watch`, `/api/watch/*`, `/api/player/*` — registered in watch.py
+`/api/status` includes in-memory /watch sessions (not the public snapshot).
 
 The app binds 127.0.0.1:8787 in production; Caddy terminates HTTPS.
 """
@@ -12,7 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -37,9 +38,16 @@ def create_app(monitor: Monitor) -> FastAPI:
     register_watch(app, STATIC_DIR)
 
     @app.get("/api/status")
-    async def status() -> dict:
-        """Owner JSON: playlists, Current DNS, full events. Behind Caddy basicauth."""
-        return monitor.shared.snapshot()
+    async def status(request: Request) -> dict:
+        """Owner JSON: playlists, Current DNS, full events, /watch sessions. Behind Caddy basicauth."""
+        data = monitor.shared.snapshot()
+        watch = getattr(request.app.state, "watch", None)
+        if watch is not None:
+            data["watch"] = await watch.owner_watch()
+            counts = data.setdefault("counts", {})
+            counts["watch_online"] = data["watch"].get("online", 0)
+            counts["watch_playing"] = data["watch"].get("playing", 0)
+        return data
 
     @app.get("/api/public")
     async def public_status() -> dict:

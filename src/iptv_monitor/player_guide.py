@@ -852,6 +852,28 @@ class WatchGuide:
                 out["now_desc"] = current["desc"]
         return out
 
+    def describe_media(self, kind: str, stream_id: str) -> tuple[str, str]:
+        """Cheap in-memory title/detail for owner presence. Never hits the panel."""
+        sid = str(stream_id or "").strip()
+        if not sid:
+            return "", ""
+        try:
+            if kind == "live":
+                row = self.data.by_id.get(sid) or {}
+                name = str(row.get("name") or "").strip() or f"Live {sid}"
+                current, _nxt = self.now_next_for_stream(row) if row else (None, None)
+                detail = str((current or {}).get("title") or row.get("category_name") or "").strip()
+                return name, detail
+            if kind == "movie":
+                row = self.vod.by_id.get(sid) or {}
+                name = str(row.get("name") or "").strip() or f"Movie {sid}"
+                return name, str(row.get("category_name") or "").strip()
+            if kind == "series":
+                return f"Episode {sid}", "Series"
+        except Exception:  # noqa: BLE001
+            return sid, kind
+        return sid, kind
+
     def now_next_for_stream(
         self, stream: dict[str, Any], now: int | None = None
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:

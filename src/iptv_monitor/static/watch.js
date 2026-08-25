@@ -53,6 +53,29 @@ function playId() {
   return id;
 }
 
+function meUrl() {
+  return `/api/watch/me?play_id=${encodeURIComponent(playId())}`;
+}
+
+function nowPlayingBody() {
+  const body = { play_id: playId() };
+  if (!playing) {
+    return body;
+  }
+  const item = state.playingItem || {};
+  body.kind = state.playingKind || "";
+  body.stream_id = String(item.stream_id || item.id || "").slice(0, 80);
+  const title = String(item.name || item.title || nowTitle?.textContent || "").trim();
+  if (title) {
+    body.title = title.slice(0, 200);
+  }
+  const detail = String(item.now_title || nowEpg?.textContent || "").trim();
+  if (detail) {
+    body.detail = detail.slice(0, 200);
+  }
+  return body;
+}
+
 function esc(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -96,6 +119,7 @@ const state = {
   seriesDetail: null,
   playingLiveId: "",
   playingItem: null,
+  playingKind: "",
   wasSyncing: false,
   epgTries: 0,
   searchKind: "all",
@@ -523,7 +547,7 @@ let guidePollMs = 0;
 
 async function tickGuide() {
   try {
-    const me = await api("/api/watch/me");
+    const me = await api(meUrl());
     setSlots(me.slots);
     const running = !!me.sync?.running;
     if (running) {
@@ -627,7 +651,7 @@ async function releaseSlot() {
 async function heartbeat() {
   const data = await api("/api/player/slot/heartbeat", {
     method: "POST",
-    body: JSON.stringify({ play_id: playId() }),
+    body: JSON.stringify(nowPlayingBody()),
   });
   setSlots(data.slots);
 }
@@ -761,9 +785,11 @@ async function playSources(kind, streamId, extensions, gen) {
   // Start the player in this turn (keep the click's autoplay gesture). Heartbeat is not on the critical path.
   const keepItem = state.playingItem;
   const keepLive = state.playingLiveId;
+  const keepKind = state.playingKind;
   stopPlayback();
   state.playingItem = keepItem;
   state.playingLiveId = keepLive;
+  state.playingKind = keepKind;
   if (gen != null && gen !== playGen) {
     return;
   }
@@ -845,6 +871,7 @@ function playLive(item) {
   const gen = ++playGen;
   clearVodRuntime();
   state.playingLiveId = String(item.stream_id);
+  state.playingKind = "live";
   state.playingItem = item;
   setPreview(item, { fallback: "Starting…" });
   showBanner("");
@@ -902,6 +929,8 @@ function playLive(item) {
 async function playVod(item) {
   const gen = ++playGen;
   state.playingLiveId = "";
+  state.playingKind = "movie";
+  state.playingItem = item;
   const ext = String(item.container_extension || "mp4").replace(/^\./, "");
   nowTitle.textContent = item.name || `Title ${item.stream_id}`;
   nowEpg.textContent = item.plot || "";
@@ -937,6 +966,12 @@ async function playVod(item) {
 async function playEpisode(episode, seriesName) {
   const gen = ++playGen;
   state.playingLiveId = "";
+  state.playingKind = "series";
+  state.playingItem = {
+    ...episode,
+    stream_id: episode.id,
+    name: `${seriesName || "Series"} · ${episode.title || `Episode ${episode.episode_num}`}`,
+  };
   const ext = String(episode.container_extension || "mp4").replace(/^\./, "");
   nowTitle.textContent = `${seriesName || "Series"} · ${episode.title || `Episode ${episode.episode_num}`}`;
   nowEpg.textContent = episode.plot || episode.info?.plot || "";
@@ -1234,7 +1269,7 @@ async function loadCategories() {
   state.categoryId = "";
   renderCategories();
   if (!state.categories.length) {
-    const me = await api("/api/watch/me").catch(() => ({}));
+    const me = await api(meUrl()).catch(() => ({}));
     setGuide(me.sync);
     if (me.sync?.running) {
       itemList.innerHTML = `<div class="empty-events">Downloading the full channel guide. This can take a few minutes, then every group is instant.</div>`;
@@ -1297,7 +1332,7 @@ async function loadItems(opts) {
 
 async function boot() {
   try {
-    const me = await api("/api/watch/me");
+    const me = await api(meUrl());
     setSlots(me.slots);
     if (!me.username) {
       showLogin();

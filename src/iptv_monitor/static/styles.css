@@ -43,6 +43,7 @@ body {
 header,
 .alerts,
 .playlists,
+.watchers,
 .current,
 .pool,
 .events,
@@ -218,6 +219,7 @@ h2 {
 }
 
 .playlists,
+.watchers,
 .current,
 .pool,
 .events {
@@ -483,6 +485,20 @@ tr:last-child td {
 
 .status-down {
   color: var(--down);
+}
+
+.status-play {
+  color: var(--up);
+}
+
+.watching-cell {
+  max-width: 360px;
+}
+
+.watching-cell .muted {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
 }
 
 .switch-btn {

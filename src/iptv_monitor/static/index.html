@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=40" />
+  <link rel="stylesheet" href="/static/styles.css?v=41" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -41,6 +41,10 @@
       <div class="stat" id="stat-playlists-wrap" hidden>
         <span class="label">Playlists</span>
         <span id="stat-playlists">—</span>
+      </div>
+      <div class="stat" id="stat-watch-wrap" hidden>
+        <span class="label">Watch</span>
+        <span id="stat-watch">—</span>
       </div>
       <div class="stat">
         <span class="label">Last check</span>
@@ -79,6 +83,29 @@
     </div>
   </section>
 
+  <section class="watchers" id="watchers-section" hidden>
+    <div class="section-head">
+      <h2>Watch sessions</h2>
+      <span id="watchers-count" class="count"></span>
+    </div>
+    <p class="history-note">Who is signed in on /watch right now: username, login time, IP, and what they are playing. Idle tabs stay listed while the page is open; they drop a few minutes after the tab closes. This is in-memory on the VPS and is not shown on the public page.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Logged in</th>
+            <th>Last seen</th>
+            <th>IP</th>
+            <th>Status</th>
+            <th>Watching</th>
+          </tr>
+        </thead>
+        <tbody id="watchers-body"></tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="current" id="live-section" hidden>
     <div class="section-head">
       <h2>Current DNS</h2>
@@ -102,6 +129,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=26"></script>
+  <script src="/static/app.js?v=27"></script>
 </body>
 </html>
