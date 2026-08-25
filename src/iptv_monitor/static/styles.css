@@ -319,6 +319,15 @@ h2 {
   color: var(--muted);
 }
 
+.pill.magnum {
+  color: #c4b5fd;
+  border-color: #7c3aed;
+}
+
+.pill.strong8k {
+  color: var(--muted);
+}
+
 .status-warn {
   color: var(--warn);
 }

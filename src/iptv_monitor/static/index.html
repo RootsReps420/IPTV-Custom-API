@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=39" />
+  <link rel="stylesheet" href="/static/styles.css?v=40" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -60,7 +60,7 @@
       <h2>Playlists</h2>
       <span id="playlist-count" class="count"></span>
     </div>
-    <p class="history-note">Loaded from <code>config/playlists.yaml</code>. Rows with failover off are monitor-only: up/down, no Switch.</p>
+    <p class="history-note">Strong 8K and Magnum use separate URL pools so credentials never cross. Magnum has no automatic failover — Switch / Choose URL only move it to another Magnum host.</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -102,6 +102,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=24"></script>
+  <script src="/static/app.js?v=25"></script>
 </body>
 </html>

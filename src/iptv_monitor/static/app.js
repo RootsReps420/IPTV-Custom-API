@@ -87,6 +87,12 @@ function nsBadge(item) {
   return `<span class="${cls}" title="${esc(title)}">${esc(label)}</span>`;
 }
 
+function poolBadge(item) {
+  const label = item.pool_label || (item.pool === "magnum" ? "Magnum" : "Strong 8K");
+  const cls = item.pool === "magnum" ? "pill magnum" : "pill strong8k";
+  return `<span class="${cls}">${esc(label)}</span>`;
+}
+
 function card(item) {
   const state = item.healthy ? "up" : "down";
   const reason = item.fail_reason ? `<span>reason ${esc(item.fail_reason)}</span>` : "";
@@ -104,6 +110,7 @@ function card(item) {
       <div class="card-top">
         <div class="url">${esc(item.url)}</div>
         <div class="pills">
+          ${poolBadge(item)}
           ${nsBadge(item)}
           ${frequent}
           <span class="pill ${state}">${state}</span>
@@ -135,13 +142,28 @@ function renderGrouped(el, countEl, items, emptyText, grid) {
     el.innerHTML = `<div class="empty">${emptyText}</div>`;
     return;
   }
+  const magnum = items.filter((item) => item.pool === "magnum");
+  const rest = items.filter((item) => item.pool !== "magnum");
   const buckets = {
-    proxy: items.filter((item) => item.cloudflare_proxied),
-    ns: items.filter((item) => item.cloudflare && !item.cloudflare_proxied),
-    other: items.filter((item) => !item.cloudflare),
+    proxy: rest.filter((item) => item.cloudflare_proxied),
+    ns: rest.filter((item) => item.cloudflare && !item.cloudflare_proxied),
+    other: rest.filter((item) => !item.cloudflare),
   };
   const listClass = grid ? "cards cards-grid" : "cards";
-  el.innerHTML = CF_GROUPS.map((group) => {
+  const magnumBlock = magnum.length
+    ? `
+      <div class="url-group">
+        <div class="url-group-head">
+          <h3>Magnum</h3>
+          <span class="count">${magnum.filter((item) => item.healthy).length}/${magnum.length} up</span>
+        </div>
+        <div class="${listClass}">${magnum.map(card).join("")}</div>
+      </div>
+    `
+    : "";
+  el.innerHTML =
+    magnumBlock +
+    CF_GROUPS.map((group) => {
     const rows = buckets[group.id];
     if (!rows.length) {
       return "";
@@ -185,10 +207,11 @@ function apiError(data, fallback) {
   return fallback;
 }
 
-function poolChoices(currentDns) {
-  const current = String(currentDns || "");
+function poolChoices(playlist) {
+  const current = String(playlist.current_dns || "");
+  const pool = playlist.pool || "strong8k";
   return (latest?.available || [])
-    .filter((item) => item.url && item.url !== current)
+    .filter((item) => item.url && item.url !== current && (item.pool || "strong8k") === pool)
     .slice()
     .sort((a, b) => {
       if (Boolean(a.healthy) !== Boolean(b.healthy)) {
@@ -202,7 +225,7 @@ function pickerMarkup(item, id, dryRun, busy) {
   if (pickOpen !== id) {
     return "";
   }
-  const choices = poolChoices(item.current_dns);
+  const choices = poolChoices(item);
   if (!choices.length) {
     return `<div class="switch-picker"><span class="muted">No other URLs in the pool.</span></div>`;
   }
@@ -260,9 +283,9 @@ function renderPlaylists(items) {
       const nsCls = item.cloudflare ? "status-warn" : "";
       const id = String(item.playlist_id ?? "");
       const busy = switching.has(id);
-      const monitorOnly = item.failover === false;
+      const autoOff = item.failover === false;
       const target = item.next_standby;
-      const canSwitch = Boolean(target) && !dryRun && !monitorOnly;
+      const canSwitch = Boolean(target) && !dryRun;
       const title = target
         ? `Switch to ${hostOf(target)}`
         : "No healthy standby right now";
@@ -277,17 +300,23 @@ function renderPlaylists(items) {
       const chooseLabel = chooseOpen ? "Close" : "Choose URL";
       return `
         <tr>
-          <td>${esc(item.name)}</td>
+          <td>${esc(item.name)}${
+            item.pool_label
+              ? ` <span class="pill ${item.pool === "magnum" ? "magnum" : "strong8k"}">${esc(item.pool_label)}</span>`
+              : ""
+          }</td>
           <td>${esc(item.playlist_id)}</td>
           <td>${esc(item.username)}</td>
           <td>${esc(item.current_dns)}</td>
           <td class="${nsCls}">${esc(ns)}</td>
           <td class="${cls}">${label}</td>
           <td>
-            ${
-              monitorOnly
-                ? `<span class="monitor-only" title="No EPGenius swap. Portal reachability only.">Monitor only</span>`
-                : `<div class="switch-actions">
+            <div class="switch-actions">
+              ${
+                autoOff
+                  ? `<span class="monitor-only" title="No automatic EPGenius swap. Switch stays inside the Magnum URL pool.">Manual only</span>`
+                  : ""
+              }
               <button
                 type="button"
                 class="switch-btn${busy ? " busy" : ""}"
@@ -299,7 +328,7 @@ function renderPlaylists(items) {
                 type="button"
                 class="switch-btn choose${chooseOpen ? " is-here" : ""}"
                 data-choose="${esc(id)}"
-                title="Pick a specific URL from the available pool"
+                title="Pick a specific URL from this playlist's pool"
                 ${dryRun || busy ? "disabled" : ""}
               >${chooseLabel}</button>
               ${
@@ -314,8 +343,7 @@ function renderPlaylists(items) {
                   : ""
               }
             </div>
-            ${pickerMarkup(item, id, dryRun, busy)}`
-            }
+            ${pickerMarkup(item, id, dryRun, busy)}
           </td>
         </tr>
       `;

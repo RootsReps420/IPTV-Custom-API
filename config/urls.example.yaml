@@ -1,7 +1,10 @@
-# Copy to urls.yaml (gitignored). Shared standby pool for failover AND History.
+# Copy to urls.yaml (gitignored). Standby pool for failover AND History.
 # Each URL is probed every cycle. Swap picks a healthy host: origin, then CF NS, then CF proxy.
+# Plain strings are Strong 8K. Magnum hosts must set pool: magnum so they never mix.
 # Do not put currently-live Current DNS here if you want it hidden from the public History tab.
 
 available:
   - "http://your-standby-1.example"
   - "http://your-standby-2.example"
+  # - url: "http://magnum-standby.example"
+  #   pool: magnum
