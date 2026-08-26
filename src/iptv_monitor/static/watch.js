@@ -32,10 +32,12 @@ const nowProgressWrap = document.getElementById("now-progress-wrap");
 const nowProgress = document.getElementById("now-progress");
 const categoryList = document.getElementById("category-list");
 const itemList = document.getElementById("item-list");
+const watchStage = document.getElementById("watch-stage");
 const seriesPanel = document.getElementById("series-panel");
 const searchEl = document.getElementById("watch-search");
 const searchBtn = document.getElementById("search-btn");
 const liveBadge = document.getElementById("live-badge");
+const streamStat = document.getElementById("stream-stat");
 const bufferRow = document.getElementById("buffer-row");
 const watchSpinner = document.getElementById("watch-spinner");
 const termsPanel = document.getElementById("terms-panel");
@@ -124,6 +126,9 @@ function meUrl() {
     if (q.height) {
       params.set("height", String(q.height));
     }
+    if (q.audio) {
+      params.set("audio", q.audio);
+    }
     stallReports = 0;
   }
   return `/api/watch/me?${params}`;
@@ -144,9 +149,226 @@ function playbackQuality() {
     stalls: stallReports,
     dropped,
     decoded,
-    width: video.videoWidth || 0,
-    height: video.videoHeight || 0,
+    width: streamInfo.width || video.videoWidth || 0,
+    height: streamInfo.height || video.videoHeight || 0,
+    audio: audioStatLabel(),
   };
+}
+
+function prettyCodec(raw) {
+  const text = String(raw || "").toLowerCase().trim();
+  if (!text) {
+    return "";
+  }
+  const named = {
+    aac: "AAC",
+    "he-aac": "HE-AAC",
+    "ac-3": "AC-3",
+    ac3: "AC-3",
+    "e-ac-3": "E-AC-3",
+    eac3: "E-AC-3",
+    mp2: "MP2",
+    mp3: "MP3",
+    dts: "DTS",
+    opus: "Opus",
+    flac: "FLAC",
+    pcm: "PCM",
+    "h.264": "H.264",
+    h264: "H.264",
+    hevc: "HEVC",
+    "h.265": "HEVC",
+    h265: "HEVC",
+    av1: "AV1",
+    vp9: "VP9",
+  };
+  if (named[text]) {
+    return named[text];
+  }
+  if (/ec-3|ec3|eac3|e-ac-3/.test(text)) {
+    return "E-AC-3";
+  }
+  if (/ac-3|ac3|a52/.test(text)) {
+    return "AC-3";
+  }
+  if (/dts/.test(text)) {
+    return "DTS";
+  }
+  if (/opus/.test(text)) {
+    return "Opus";
+  }
+  if (/flac/.test(text)) {
+    return "FLAC";
+  }
+  if (/vorbis/.test(text)) {
+    return "Vorbis";
+  }
+  if (/mp4a\.40\.(5|29)|he-aac/.test(text)) {
+    return "HE-AAC";
+  }
+  if (/mp4a|aac/.test(text)) {
+    return "AAC";
+  }
+  if (/mp2|mpga/.test(text)) {
+    return "MP2";
+  }
+  if (/mp3|mpeg/.test(text) && !/mpeg-4|mpeg4|mpegh/.test(text)) {
+    return "MP3";
+  }
+  if (/pcm|lpcm/.test(text)) {
+    return "PCM";
+  }
+  if (/hev1|hvc1|h265|hevc/.test(text)) {
+    return "HEVC";
+  }
+  if (/avc1|avc3|h264/.test(text)) {
+    return "H.264";
+  }
+  if (/av01|av1/.test(text)) {
+    return "AV1";
+  }
+  if (/vp9/.test(text)) {
+    return "VP9";
+  }
+  return "";
+}
+
+function audioLayout(channels) {
+  const n = Number(channels) || 0;
+  if (n >= 8) {
+    return "7.1";
+  }
+  if (n >= 6) {
+    return "5.1";
+  }
+  if (n === 2) {
+    return "stereo";
+  }
+  if (n === 1) {
+    return "mono";
+  }
+  return n ? `${n}ch` : "";
+}
+
+function resolutionTag(width, height) {
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  if (w >= 3800 || h >= 2100) {
+    return "4K";
+  }
+  if (w >= 2500 || h >= 1400) {
+    return "1440p";
+  }
+  if (w >= 1800 || h >= 800) {
+    return "1080p";
+  }
+  if (w >= 1200 || h >= 700) {
+    return "720p";
+  }
+  if (w >= 700 || h >= 480) {
+    return `${h || w}p`;
+  }
+  return "";
+}
+
+function audioStatLabel() {
+  const codec = streamInfo.audio || "";
+  const layout = audioLayout(streamInfo.channels);
+  return [codec, layout].filter(Boolean).join(" ").slice(0, 40);
+}
+
+function resetStreamInfo() {
+  streamInfo = { width: 0, height: 0, video: "", audio: "", rate: 0, channels: 0 };
+  paintStreamStat();
+}
+
+function mergeStreamInfo(partial) {
+  if (!partial) {
+    return;
+  }
+  if (partial.width) {
+    streamInfo.width = Number(partial.width) || streamInfo.width;
+  }
+  if (partial.height) {
+    streamInfo.height = Number(partial.height) || streamInfo.height;
+  }
+  if (partial.video) {
+    streamInfo.video = prettyCodec(partial.video) || streamInfo.video;
+  }
+  if (partial.audio) {
+    streamInfo.audio = prettyCodec(partial.audio) || streamInfo.audio;
+  }
+  if (partial.rate) {
+    streamInfo.rate = Number(partial.rate) || streamInfo.rate;
+  }
+  if (partial.channels) {
+    streamInfo.channels = Number(partial.channels) || streamInfo.channels;
+  }
+  paintStreamStat();
+}
+
+function captureStreamInfo() {
+  if (video.videoWidth && video.videoHeight) {
+    mergeStreamInfo({ width: video.videoWidth, height: video.videoHeight });
+  }
+  const info = tsPlayer && tsPlayer.mediaInfo;
+  if (info) {
+    mergeStreamInfo({
+      width: info.width,
+      height: info.height,
+      video: info.videoCodec,
+      audio: info.audioCodec,
+      rate: info.audioSampleRate,
+      channels: info.audioChannelCount,
+    });
+  }
+  if (hls) {
+    const level = hls.levels?.[hls.currentLevel] || hls.levels?.[0];
+    if (level) {
+      const codecs = String(level.codecs || "").split(",");
+      mergeStreamInfo({
+        width: level.width,
+        height: level.height,
+        video: level.videoCodec || codecs[0],
+        audio: level.audioCodec || codecs[1],
+      });
+    }
+    const track = hls.audioTracks?.[hls.audioTrack];
+    if (track?.codec) {
+      mergeStreamInfo({ audio: track.codec });
+    }
+  }
+}
+
+function paintStreamStat() {
+  if (!streamStat) {
+    return;
+  }
+  if (!playing) {
+    streamStat.hidden = true;
+    streamStat.textContent = "";
+    streamStat.classList.remove("is-uhd");
+    return;
+  }
+  const w = streamInfo.width || video.videoWidth || 0;
+  const h = streamInfo.height || video.videoHeight || 0;
+  const tag = resolutionTag(w, h);
+  const bits = [];
+  if (w && h) {
+    bits.push(`${w}×${h}${tag ? ` ${tag}` : ""}`);
+  }
+  if (streamInfo.video) {
+    bits.push(streamInfo.video);
+  }
+  const audio = audioStatLabel();
+  if (audio) {
+    bits.push(audio);
+  }
+  if (streamInfo.rate) {
+    bits.push(`${Math.round(streamInfo.rate / 1000)} kHz`);
+  }
+  streamStat.hidden = !bits.length;
+  streamStat.textContent = bits.join(" · ");
+  streamStat.classList.toggle("is-uhd", tag === "4K");
 }
 
 function nowPlayingBody() {
@@ -172,6 +394,9 @@ function nowPlayingBody() {
   body.decoded = q.decoded;
   body.width = q.width;
   body.height = q.height;
+  if (q.audio) {
+    body.audio = q.audio;
+  }
   stallReports = 0;
   return body;
 }
@@ -238,6 +463,7 @@ const state = {
 
 let hls = null;
 let tsPlayer = null;
+let streamInfo = { width: 0, height: 0, video: "", audio: "", rate: 0, channels: 0 };
 let beatTimer = null;
 let liveTimer = null;
 let playing = false;
@@ -397,6 +623,7 @@ function tickLiveFill() {
   if (!playing || !state.playingLiveId) {
     return;
   }
+  captureStreamInfo();
   paintLiveBadge();
   if (liveMpeg && liveHold && tsPlayer) {
     const ahead = bufferedAhead();
@@ -520,6 +747,112 @@ function formatTime(ts) {
   return new Date(n * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+const EPG_HOURS = 8;
+const EPG_PX_HOUR = 210;
+const EPG_CH_W = 196;
+const EPG_SNAP = 30 * 60;
+let epgWinStart = 0;
+
+function epgWindowStart(nowSec) {
+  return Math.floor(nowSec / EPG_SNAP) * EPG_SNAP;
+}
+
+function epgX(ts) {
+  return ((Number(ts) - epgWinStart) / 3600) * EPG_PX_HOUR;
+}
+
+function epgGridWidth() {
+  return EPG_HOURS * EPG_PX_HOUR;
+}
+
+function epgBlockStyle(start, stop) {
+  const width = epgGridWidth();
+  const left = Math.max(0, epgX(start));
+  const right = Math.min(width, epgX(stop));
+  const w = Math.max(36, right - left - 3);
+  return `left:${left + 1}px;width:${w}px`;
+}
+
+function tickEpgNow() {
+  const clock = itemList && itemList.querySelector(".watch-epg-clock");
+  if (clock) {
+    clock.textContent = formatClock();
+  }
+  if (!itemList || !epgWinStart) {
+    return;
+  }
+  const now = Date.now() / 1000;
+  const line = itemList.querySelector(".watch-epg-now");
+  const needle = itemList.querySelector(".watch-epg-needle");
+  const x = Math.max(0, Math.min(epgGridWidth(), epgX(now)));
+  if (line) {
+    line.style.left = `${EPG_CH_W + x}px`;
+    line.hidden = now < epgWinStart || now > epgWinStart + EPG_HOURS * 3600;
+  }
+  if (needle) {
+    needle.style.left = `${x}px`;
+    needle.hidden = now < epgWinStart || now > epgWinStart + EPG_HOURS * 3600;
+  }
+  itemList.querySelectorAll(".watch-epg-prog[data-start]").forEach((el) => {
+    const start = Number(el.getAttribute("data-start"));
+    const stop = Number(el.getAttribute("data-stop"));
+    const on = Number.isFinite(start) && Number.isFinite(stop) && start <= now && now < stop;
+    el.classList.toggle("is-now", on);
+  });
+}
+
+function clearEpgLayout() {
+  itemList.classList.remove("is-epg");
+  if (watchStage) {
+    watchStage.classList.remove("is-guide");
+  }
+  epgWinStart = 0;
+}
+
+function renderLiveEpg(rows) {
+  const now = Date.now() / 1000;
+  epgWinStart = epgWindowStart(now);
+  const gridW = epgGridWidth();
+  const ticks = [];
+  for (let t = epgWinStart; t < epgWinStart + EPG_HOURS * 3600; t += EPG_SNAP) {
+    ticks.push(
+      `<span class="watch-epg-tick" style="left:${epgX(t)}px">${esc(formatTime(t))}</span>`
+    );
+  }
+  const nowLeft = EPG_CH_W + epgX(now);
+  const needleLeft = epgX(now);
+  const body = rows
+    .map((item, index) => {
+      const here = String(item.stream_id) === String(state.playingLiveId) ? " is-here" : "";
+      const num = item.num || index + 1;
+      const icon = item.stream_icon
+        ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+        : `<span></span>`;
+      const listings = Array.isArray(item.guide) ? item.guide : [];
+      const slots = listings.length
+        ? listings
+            .map((row) => {
+              const start = Number(row.start || row.start_timestamp);
+              const stop = Number(row.stop || row.stop_timestamp || row.end);
+              if (!Number.isFinite(start) || !Number.isFinite(stop) || stop <= epgWinStart) {
+                return "";
+              }
+              if (start >= epgWinStart + EPG_HOURS * 3600) {
+                return "";
+              }
+              const title = row.title || "No title";
+              const on = start <= now && now < stop ? " is-now" : "";
+              const when = [formatTime(start), formatTime(stop)].filter(Boolean).join(" – ");
+              return `<button type="button" class="watch-epg-prog${on}" data-live="${esc(item.stream_id)}" data-start="${esc(start)}" data-stop="${esc(stop)}" title="${esc(when ? `${when} · ${title}` : title)}" style="${epgBlockStyle(start, stop)}">${esc(title)}</button>`;
+            })
+            .join("")
+        : `<span class="watch-epg-empty">No programme info</span>`;
+      return `<div class="watch-epg-row${here}" data-live="${esc(item.stream_id)}"><button type="button" class="watch-epg-ch${here}" data-live="${esc(item.stream_id)}"><span class="watch-num">${esc(num)}</span>${icon}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span></span></button><div class="watch-epg-slots">${slots}</div></div>`;
+    })
+    .join("");
+  itemList.innerHTML = `<div class="watch-epg-scroller" style="--epg-ch:${EPG_CH_W}px;--epg-grid:${gridW}px"><div class="watch-epg-inner" style="min-width:${EPG_CH_W + gridW}px"><div class="watch-epg-head"><div class="watch-epg-clock">${esc(formatClock())}</div><div class="watch-epg-times">${ticks.join("")}<span class="watch-epg-needle" style="left:${needleLeft}px"></span></div></div>${body}<div class="watch-epg-now" style="left:${nowLeft}px"></div></div></div>`;
+}
+
 function parseRuntime(value, { seconds } = {}) {
   if (value == null || value === "") {
     return null;
@@ -621,6 +954,7 @@ function tickClock() {
   if (nowClock) {
     nowClock.textContent = formatClock();
   }
+  tickEpgNow();
 }
 
 tickClock();
@@ -950,6 +1284,7 @@ function stopPlayback() {
     liveBadge.hidden = true;
   }
   destroyPlayers();
+  resetStreamInfo();
 }
 
 async function releaseSlot() {
@@ -1030,7 +1365,16 @@ function attachHls(url) {
       }
     };
     hls.on(window.Hls.Events.ERROR, onError);
-    hls.on(window.Hls.Events.MANIFEST_PARSED, () => done(true, "hls"));
+    hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+      captureStreamInfo();
+      done(true, "hls");
+    });
+    if (window.Hls.Events.LEVEL_SWITCHED) {
+      hls.on(window.Hls.Events.LEVEL_SWITCHED, () => captureStreamInfo());
+    }
+    if (window.Hls.Events.AUDIO_TRACK_SWITCHED) {
+      hls.on(window.Hls.Events.AUDIO_TRACK_SWITCHED, () => captureStreamInfo());
+    }
     hls.loadSource(url);
     hls.attachMedia(video);
   });
@@ -1122,6 +1466,21 @@ function attachMpegTs(url, gen, live) {
           return;
         }
         scheduleLiveReconnect(url, gen);
+      });
+    }
+    if (window.mpegts.Events.MEDIA_INFO) {
+      tsPlayer.on(window.mpegts.Events.MEDIA_INFO, (info) => {
+        if (gen !== playGen) {
+          return;
+        }
+        mergeStreamInfo({
+          width: info?.width,
+          height: info?.height,
+          video: info?.videoCodec,
+          audio: info?.audioCodec,
+          rate: info?.audioSampleRate,
+          channels: info?.audioChannelCount,
+        });
       });
     }
   }
@@ -1284,7 +1643,9 @@ function playLive(item) {
         if (stop) {
           row.now_stop = stop;
         }
-        renderItems();
+        if (state.tab !== "live" || !itemList.classList.contains("is-epg")) {
+          renderItems();
+        }
       }
     })
     .catch(() => {
@@ -1410,30 +1771,21 @@ function renderCategories() {
 }
 
 function renderItems() {
+  const liveGuide = state.tab === "live";
+  itemList.classList.toggle("is-epg", liveGuide);
+  if (watchStage) {
+    watchStage.classList.toggle("is-guide", liveGuide);
+  }
   const rows = visibleItems();
   if (!rows.length) {
+    itemList.classList.remove("is-epg");
     itemList.innerHTML = `<div class="empty-events">${
-      state.categoryId ? "Nothing in this group." : "Pick a group to see channels."
+      state.categoryId ? "Nothing in this group." : "Pick a group to see the TV guide."
     }</div>`;
     return;
   }
-  if (state.tab === "live") {
-    itemList.innerHTML = rows
-      .map((item, index) => {
-        const icon = item.stream_icon
-          ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
-          : `<span></span>`;
-        const now = item.now_title || "";
-        const epg = now
-          ? `<small class="watch-item-epg">${esc(now)}</small>`
-          : `<small class="watch-item-epg is-empty">No programme info</small>`;
-        const pct = progressPct(item.now_start, item.now_stop);
-        const bar = pct > 0 ? `<span class="watch-item-bar"><i style="width:${pct}%"></i></span>` : "";
-        const here = String(item.stream_id) === String(state.playingLiveId) ? " is-here" : "";
-        const num = item.num || index + 1;
-        return `<button type="button" class="watch-item${here}" data-live="${esc(item.stream_id)}"><span class="watch-num">${esc(num)}</span>${icon}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span>${epg}${bar}</span></button>`;
-      })
-      .join("");
+  if (liveGuide) {
+    renderLiveEpg(rows);
     return;
   }
   if (state.tab === "movies") {
@@ -1536,6 +1888,7 @@ function searchRowSeries(item) {
 }
 
 function renderSearchResults() {
+  clearEpgLayout();
   const q = (searchEl.value || "").trim();
   if (q.length < 2) {
     itemList.innerHTML = `<div class="empty-events">Type at least two letters. Matches live channels, movies, and shows — names, what’s on now, plot, and genre.</div>`;
@@ -1621,6 +1974,7 @@ function findSearchItem(kind, id) {
 
 async function loadCategories() {
   searchEl.placeholder = "Filter this group…";
+  clearEpgLayout();
   const kind = state.tab === "movies" ? "vod" : state.tab === "series" ? "series" : "live";
   const path =
     kind === "live"
@@ -1644,7 +1998,7 @@ async function loadCategories() {
     }
     return;
   }
-  itemList.innerHTML = `<div class="empty-events">Pick a group. Channels and what's on now show in the list; click one for a live preview.</div>`;
+    itemList.innerHTML = `<div class="empty-events">Pick a group. The TV guide shows what’s on now and what’s next; click a channel or a programme to play.</div>`;
 }
 
 async function loadItems(opts) {
@@ -1815,6 +2169,7 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
     seriesPanel.hidden = true;
     if (state.tab === "search") {
       searchEl.placeholder = "Search live, movies and shows…";
+      clearEpgLayout();
       renderSearchNav();
       renderSearchResults();
       searchEl.focus();
@@ -1859,7 +2214,7 @@ itemList.addEventListener("click", async (event) => {
     if (item) {
       localStorage.setItem("watch_last_live", String(id));
       state.playingLiveId = String(id);
-      itemList.querySelectorAll(".watch-item[data-live]").forEach((el) => {
+      itemList.querySelectorAll("[data-live]").forEach((el) => {
         el.classList.toggle("is-here", el.getAttribute("data-live") === String(id));
       });
       playLive(item);
@@ -1940,8 +2295,11 @@ if (bufferRow) {
 }
 
 video.addEventListener("timeupdate", paintVodRuntime);
+video.addEventListener("loadedmetadata", captureStreamInfo);
+video.addEventListener("resize", captureStreamInfo);
 video.addEventListener("playing", () => {
   clearLiveStallTimer();
+  captureStreamInfo();
   if (liveHold) {
     return;
   }

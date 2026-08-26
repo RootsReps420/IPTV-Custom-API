@@ -78,6 +78,7 @@ class Playlist(BaseModel):
     # False = no automatic EPGenius swap. Manual Switch is still allowed within this pool.
     failover: bool = True
     # strong8k and magnum never share standbys — different provider credentials.
+    # Magnum still calls EPGenius; Watch DNS in player.yaml follows Magnum swaps.
     pool: str = DEFAULT_POOL
 
 
@@ -282,7 +283,7 @@ def update_playlist_dns(
 
 
 def update_player_dns(player_path: Path, new_dns: str) -> None:
-    """Write Watch's portal DNS in player.yaml. Magnum switches do not call EPGenius."""
+    """Write Watch's portal DNS in player.yaml after a Magnum EPGenius swap."""
     yaml = _yaml()
     if not player_path.exists():
         raise FileNotFoundError(f"Missing player file: {player_path}")

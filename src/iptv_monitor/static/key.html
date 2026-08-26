@@ -131,10 +131,12 @@
       <p>
         On the Playlists page, <strong>Switch</strong> immediately moves that playlist to the
         best healthy standby (same preference as auto failover: origin, then Cloudflare NS,
-        then Cloudflare proxy). <strong>Choose URL</strong> opens a dropdown of the available
-        pool so you can pick a specific host instead. Down URLs are listed but cannot be
-        selected. After either action, <strong>Switch back</strong> can return to the original
-        DNS if that host is still healthy.
+        then Cloudflare proxy; frequent-failure standbys are skipped while anything else is up).
+        Magnum playlists only list Magnum-tagged URLs; Strong 8K only lists Strong 8K.
+        <strong>Choose URL</strong> opens a dropdown of that pool so you can pick a specific
+        host instead. Down URLs are listed but cannot be selected. After either action,
+        <strong>Switch back</strong> can return to the original DNS if that host is still healthy.
+        Magnum auto-failover uses the same EPGenius call as Strong 8K.
       </p>
     </article>
 
@@ -163,8 +165,9 @@
       </div>
       <p>
         <code>/watch</code> is a Chromium web player for friends. It uses a dedicated
-        Xtream account (up to 5 streams at once), not the failover playlists on this
-        page. Sign-in is a site login you hand out — the panel username and password
+        Xtream account (up to 5 streams at once). Magnum playlist failover updates
+        Watch’s portal DNS so live TV and Movies/Shows follow the new Magnum host.
+        Sign-in is a site login you hand out — the panel username and password
         never appear in the browser. Chrome or Edge recommended.
       </p>
     </article>

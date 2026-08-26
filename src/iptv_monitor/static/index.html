@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=47" />
+  <link rel="stylesheet" href="/static/styles.css?v=48" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -64,7 +64,7 @@
       <h2>Playlists</h2>
       <span id="playlist-count" class="count"></span>
     </div>
-    <p class="history-note">Strong 8K and Magnum use separate URL pools so credentials never cross. Magnum has no automatic failover. Switch / Choose URL write Watch DNS on the VPS (<code>player.yaml</code>) — EPGenius is not called — then /watch refreshes the list from the new host.</p>
+    <p class="history-note">Strong 8K and Magnum use separate URL pools so credentials never cross. Magnum playlists auto-failover via EPGenius like Strong 8K, but only onto Magnum-tagged URLs. Switch / Choose URL / Switch back still work. After a Magnum swap, Watch DNS on the VPS (<code>player.yaml</code>) follows the new host and /watch refreshes the live list.</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -130,6 +130,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=29"></script>
+  <script src="/static/app.js?v=31"></script>
 </body>
 </html>

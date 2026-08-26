@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from iptv_monitor.config import resolve_paths
 
@@ -920,6 +921,44 @@ class WatchGuide:
     def live_from_m3u(self) -> bool:
         return self.data.source == "m3u"
 
+    def rewrite_live_playback_host(self, old_dns: str, new_dns: str) -> int:
+        """Point cached M3U stream URLs at the new Magnum host until the playlist re-downloads."""
+        try:
+            old_host = urlparse(old_dns if "://" in old_dns else f"http://{old_dns}").netloc.lower()
+            new_parsed = urlparse(new_dns if "://" in new_dns else f"http://{new_dns}")
+        except ValueError:
+            return 0
+        new_host = new_parsed.netloc
+        new_scheme = new_parsed.scheme or "http"
+        if not old_host or not new_host or old_host == new_host.lower():
+            return 0
+        with self._lock:
+            count = 0
+            for row in self.data.streams:
+                url = str(row.get("playback_url") or "").strip()
+                if not url:
+                    continue
+                parsed = urlparse(url)
+                if parsed.netloc.lower() != old_host:
+                    continue
+                row["playback_url"] = urlunparse(
+                    parsed._replace(scheme=new_scheme or parsed.scheme, netloc=new_host)
+                )
+                count += 1
+            if not count:
+                return 0
+            live_path, _vod, _series, _epg, _meta = self.paths()
+            atomic_write_json(
+                live_path,
+                {
+                    "updated_at": self.data.updated_at,
+                    "source": self.data.source or "m3u",
+                    "categories": self.data.categories,
+                    "streams": self.data.streams,
+                },
+            )
+            return count
+
     def live_playback_url(self, stream_id: str) -> str:
         row = self.data.by_id.get(str(stream_id or "").strip()) or {}
         return str(row.get("playback_url") or "").strip()
@@ -999,7 +1038,7 @@ class WatchGuide:
     def series_list(self, category_id: str) -> list[dict[str, Any]] | None:
         return self._library_items(self.series, category_id)
 
-    def decorate(self, stream: dict[str, Any]) -> dict[str, Any]:
+    def decorate(self, stream: dict[str, Any], *, guide: bool = True) -> dict[str, Any]:
         out = dict(stream)
         out.pop("playback_url", None)
         out.pop("url", None)
@@ -1020,6 +1059,10 @@ class WatchGuide:
                 out["now_stop"] = current["stop"]
             if current.get("desc"):
                 out["now_desc"] = current["desc"]
+        if guide:
+            window = self.guide_window_for_stream(out)
+            if window:
+                out["guide"] = window
         return out
 
     def describe_media(self, kind: str, stream_id: str) -> tuple[str, str]:
@@ -1114,7 +1157,42 @@ class WatchGuide:
                 break
         return current, nxt
 
-    def listings_for_stream(self, stream_id: str, *, limit: int = 8) -> list[dict[str, Any]] | None:
+    def guide_window_for_stream(
+        self,
+        stream: dict[str, Any],
+        *,
+        ahead: int = 8 * 3600,
+        behind: int = 20 * 60,
+        limit: int = 18,
+    ) -> list[dict[str, Any]]:
+        """Compact on-now + upcoming blocks for the TV guide grid. No descriptions."""
+        rows = self._epg_rows_for_stream(stream)
+        if not rows:
+            return []
+        now = int(time.time())
+        lo = now - behind
+        hi = now + ahead
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                start = int(row["start"])
+                stop = int(row["stop"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if stop <= lo or start >= hi:
+                continue
+            out.append(
+                {
+                    "title": str(row.get("title") or "").strip(),
+                    "start": start,
+                    "stop": stop,
+                }
+            )
+            if len(out) >= limit:
+                break
+        return out
+
+    def listings_for_stream(self, stream_id: str, *, limit: int = 16) -> list[dict[str, Any]] | None:
         if not self.data.epg:
             return None
         stream = self.data.by_id.get(str(stream_id).strip())
@@ -1196,7 +1274,7 @@ class WatchGuide:
                     continue
             elif group and not is_wanted_live_group(group):
                 continue
-            decorated = self.decorate(stream)
+            decorated = self.decorate(stream, guide=False)
             score, why = score_search(
                 text,
                 str(decorated.get("name") or ""),

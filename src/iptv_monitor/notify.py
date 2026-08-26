@@ -179,12 +179,17 @@ async def notify_swap(
         {"name": "Old URL", "value": old_url, "inline": False},
         {"name": "New URL", "value": new_url, "inline": False},
     ]
+    magnum = normalize_pool(playlist.pool) == "magnum"
     if test:
         description = "Dry run. EPGenius was not called and playlist DNS was not changed."
-    elif normalize_pool(playlist.pool) == "magnum":
+    elif magnum and manual:
         description = (
-            "Watch DNS updated on the VPS (player.yaml). EPGenius was not called. "
-            "/watch applies this after a playlist refresh."
+            "Manual Magnum switch — EPGenius updated (Magnum pool only). "
+            "Watch DNS on the VPS follows this host."
+        )
+    elif magnum:
+        description = (
+            "Magnum pool. EPGenius updated. Watch DNS on the VPS follows this host."
         )
     elif manual:
         description = "Manual switch — EPGenius was updated without waiting for a down check."

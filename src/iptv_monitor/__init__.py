@@ -3,7 +3,8 @@
 This package is the whole service:
 - monitor.py probes live + standby URLs and swaps playlists when a live host dies
 - dashboard.py serves the public status site, owner Switch UI, History, and Watch
-- Watch uses a dedicated Xtream account (config/player.yaml), not failover playlists
+Watch uses a dedicated Xtream account (config/player.yaml). Magnum playlist
+failover updates that DNS so /watch follows the new Magnum host.
 """
 
 __version__ = "0.1.0"

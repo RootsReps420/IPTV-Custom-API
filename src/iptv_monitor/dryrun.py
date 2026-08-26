@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from iptv_monitor.config import load_config, update_playlist_dns
+from iptv_monitor.config import load_config, normalize_pool, update_player_dns, update_playlist_dns
 from iptv_monitor.dashboard import serve_dashboard
 from iptv_monitor.epgenius import update_creds
 from iptv_monitor.health import normalize_url
@@ -158,6 +158,11 @@ async def run_apply(
     print(f"  {old_url} -> {new_url}")
     await update_creds(cfg.secrets, playlist, new_url)
     update_playlist_dns(cfg.paths.playlists, playlist.playlist_id, new_url)
+    if normalize_pool(playlist.pool) == "magnum":
+        update_player_dns(cfg.paths.player, new_url)
+        from iptv_monitor.player_sync import queue_watch_force
+
+        queue_watch_force(root, "playlist")
     await notify_swap(cfg.secrets, playlist, old_url, new_url, manual=True)
     print("EPGenius accepted. Discord swap alert sent.")
     return 0

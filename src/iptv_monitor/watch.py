@@ -6,7 +6,8 @@ Media is same-origin /api/player/media/... which proxies the stream.
 Playback URLs never go to the browser.
 
 Slot heartbeats cap concurrent playback at player.yaml max_concurrent (default 5).
-Watch uses config/player.yaml only. Failover playlists.yaml is never a Watch source.
+Watch uses config/player.yaml. Magnum playlist failover writes that DNS and
+refreshes the live M3U; Strong 8K playlists.yaml is never a Watch source.
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ class SlotBody(BaseModel):
     decoded: int = Field(default=0, ge=0, le=10_000_000)
     width: int = Field(default=0, ge=0, le=7680)
     height: int = Field(default=0, ge=0, le=4320)
+    audio: str = Field(default="", max_length=40)
 
 
 class SyncBody(BaseModel):
@@ -142,6 +144,7 @@ async def _touch_presence(
     decoded: int = 0,
     width: int = 0,
     height: int = 0,
+    audio: str = "",
 ) -> None:
     """Record presence from requests /watch already makes. Optional cookie sid mint."""
     root = _root(request)
@@ -184,6 +187,7 @@ async def _touch_presence(
         decoded=decoded,
         width=width,
         height=height,
+        audio=audio,
     )
 
 
@@ -246,6 +250,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
         decoded: int = Query(default=0, ge=0, le=10_000_000),
         width: int = Query(default=0, ge=0, le=7680),
         height: int = Query(default=0, ge=0, le=4320),
+        audio: str = Query(default="", max_length=40),
     ) -> JSONResponse:
         svc = _svc(request)
         cfg = svc.config()
@@ -271,6 +276,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
                 decoded=decoded,
                 width=width,
                 height=height,
+                audio=audio,
             )
         return response
 
@@ -314,6 +320,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
             decoded=body.decoded,
             width=body.width,
             height=body.height,
+            audio=body.audio,
         )
         snap = await _svc(request).slots.snapshot()
         return {"ok": True, "slots": snap}

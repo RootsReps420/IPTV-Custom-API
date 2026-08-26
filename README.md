@@ -68,7 +68,8 @@ When a live URL is unhealthy:
 
 - **1st and 2nd** consecutive failures: wait (Discord “down” on the first transition).
 - **3rd** (~30s at a 10s check interval): pick a standby that is healthy **this cycle** and is not the failed URL, in this order: no Cloudflare → Cloudflare NS only → Cloudflare proxy. Prefer standbys with at least 2 consecutive successes within that group.
-- Call EPGenius `POST /api/public/update_creds` with the playlist id, new DNS, username, and password.
+- Call EPGenius `POST /api/public/update_creds` with the playlist id, new DNS, username, and password. Magnum playlists use the same call, but only onto URLs tagged `pool: magnum`.
+- After a Magnum swap, write Watch’s portal DNS into `player.yaml` and refresh `/watch` so the live M3U follows the new host.
 - On success, write the new URL into `playlists.yaml` `current_dns`, update the in-memory playlist, and refresh the dashboard (playlists table + Current DNS) on that same cycle.
 - If no eligible standby exists, Discord gets “No healthy standby” and EPGenius is not called.
 

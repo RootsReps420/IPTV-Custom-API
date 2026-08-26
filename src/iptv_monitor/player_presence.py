@@ -35,6 +35,7 @@ class Presence:
     buffer_s: float = 0.0
     width: int = 0
     height: int = 0
+    audio: str = ""
     dropped: int = 0
     decoded: int = 0
     stall_at: list[float] = field(default_factory=list)
@@ -166,6 +167,7 @@ class PresenceTracker:
         decoded: int = 0,
         width: int = 0,
         height: int = 0,
+        audio: str = "",
     ) -> None:
         name = (username or "").strip()
         sid = (session_id or "").strip()
@@ -232,6 +234,7 @@ class PresenceTracker:
                 row.buffer_s = 0.0
                 row.width = 0
                 row.height = 0
+                row.audio = ""
             if playing is not False:
                 if buffer_s:
                     row.buffer_s = _clamp(buffer_s, 0, 120)
@@ -247,6 +250,12 @@ class PresenceTracker:
                     row.width = int(width)
                 if height:
                     row.height = int(height)
+                if audio:
+                    cleaned = "".join(
+                        ch for ch in str(audio).strip()[:40] if ch.isalnum() or ch in " .+/-"
+                    )
+                    if cleaned:
+                        row.audio = cleaned
 
     async def drop(self, *, session_id: str = "", play_id: str = "") -> None:
         sid = (session_id or "").strip()
@@ -336,6 +345,7 @@ class PresenceTracker:
                     "buffer_s": round(row.buffer_s, 1) if row.playing else 0,
                     "width": row.width if row.playing else 0,
                     "height": row.height if row.playing else 0,
+                    "audio": row.audio if row.playing else "",
                     "stalls_60s": stalls if row.playing else 0,
                     "drop_pct": drop_pct if row.playing else 0,
                     "quality": self._quality(row, now_mono),

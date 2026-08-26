@@ -323,7 +323,7 @@ function renderPlaylists(items) {
       const magnum = item.pool === "magnum";
       const title = target
         ? magnum
-          ? `Update Watch DNS to ${hostOf(target)} (no EPGenius). /watch refreshes the list after this.`
+          ? `Switch to ${hostOf(target)} (Magnum pool only). Watch follows this DNS.`
           : `Switch to ${hostOf(target)}`
         : magnum
           ? "No healthy Magnum standby right now"
@@ -353,7 +353,7 @@ function renderPlaylists(items) {
             <div class="switch-actions">
               ${
                 autoOff
-                  ? `<span class="monitor-only" title="No automatic swap. Switch writes Watch DNS on the VPS (player.yaml), not EPGenius.">Manual only</span>`
+                  ? `<span class="monitor-only" title="No automatic swap. Switch still calls EPGenius within this playlist's pool.">Manual only</span>`
                   : ""
               }
               <button
@@ -394,6 +394,25 @@ function renderPlaylists(items) {
       next.focus();
     }
   }
+}
+
+function fmtRes(width, height) {
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  if (!w || !h) {
+    return "";
+  }
+  let tag = "";
+  if (w >= 3800 || h >= 2100) {
+    tag = "4K";
+  } else if (w >= 2500 || h >= 1400) {
+    tag = "1440p";
+  } else if (w >= 1800 || h >= 800) {
+    tag = "1080p";
+  } else if (w >= 1200 || h >= 700) {
+    tag = "720p";
+  }
+  return tag ? `${w}×${h} ${tag}` : `${w}×${h}`;
 }
 
 function fmtMbps(kbps) {
@@ -465,7 +484,10 @@ function renderWatchers(watch) {
         bits.push(rate);
       }
       if (row.width && row.height) {
-        bits.push(`${row.width}×${row.height}`);
+        bits.push(fmtRes(row.width, row.height));
+      }
+      if (row.audio) {
+        bits.push(row.audio);
       }
       const qualMain = bits.length ? bits.join(" · ") : playingNow ? "measuring…" : "—";
       const qualExtra = [];
@@ -522,8 +544,8 @@ async function postSwitch(path, playlistId, failPrefix, extra = {}) {
     }
     pickOpen = null;
     pickValue = "";
-    if (data.mode === "watch") {
-      switchNotice = `Watch DNS is now ${hostOf(data.to)}. /watch will refresh the list shortly (EPGenius was not called).`;
+    if (data.watch) {
+      switchNotice = `Swapped to ${hostOf(data.to)}. Watch will refresh the list shortly.`;
       switchNoticeUntil = Date.now() + 20000;
     }
     await refresh();

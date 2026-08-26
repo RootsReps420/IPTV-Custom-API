@@ -5,9 +5,11 @@ healthy→down edges (24h frequent-failure file AND 90-day History store), then
 auto-fails live playlists after 3 consecutive downs. Manual Switch / Choose URL /
 Switch back share `_swap_lock` with auto failover so they cannot race.
 
-This module never auto-swaps a playlist with failover: false (Magnum / Watch).
-Manual Switch is allowed only onto URLs in the same provider pool.
-Strong 8K and Magnum credentials are never mixed on health checks or failovers.
+This module never auto-swaps a playlist with failover: false.
+Manual Switch / Choose URL / Switch back still work, only onto URLs in the same
+provider pool. Strong 8K and Magnum credentials are never mixed on health checks
+or failovers. Magnum swaps call EPGenius like Strong 8K, then point /watch at the
+new DNS.
 """
 
 from __future__ import annotations
@@ -757,13 +759,15 @@ class Monitor:
                 cfg, playlist, old_url, candidate, manual=True
             )
             self._publish_after_manual(cfg)
+            magnum = normalize_pool(playlist.pool) == "magnum"
             return {
                 "ok": True,
                 "playlist_id": playlist.playlist_id,
                 "name": playlist.name,
                 "from": old_url,
                 "to": candidate,
-                "mode": "watch" if normalize_pool(playlist.pool) == "magnum" else "epgenius",
+                "mode": "epgenius",
+                "watch": magnum,
             }
 
     def _resolve_chosen_url(self, cfg: AppConfig, playlist: Playlist, raw: str) -> str:
@@ -848,13 +852,15 @@ class Monitor:
                 cfg, playlist, current, target, revert=True
             )
             self._publish_after_manual(cfg)
+            magnum = normalize_pool(playlist.pool) == "magnum"
             return {
                 "ok": True,
                 "playlist_id": playlist.playlist_id,
                 "name": playlist.name,
                 "from": current,
                 "to": target,
-                "mode": "watch" if normalize_pool(playlist.pool) == "magnum" else "epgenius",
+                "mode": "epgenius",
+                "watch": magnum,
             }
 
     def _kick_watch_refresh(self) -> None:
@@ -869,49 +875,29 @@ class Monitor:
         if syncer is not None and hasattr(syncer, "wake"):
             syncer.wake()
 
-    async def _swap_watch_dns(
-        self,
-        cfg: AppConfig,
-        playlist: Playlist,
-        old_url: str,
-        new_url: str,
-        *,
-        manual: bool = False,
-        revert: bool = False,
-    ) -> None:
-        """Point /watch at a Magnum DNS by writing player.yaml. No EPGenius call."""
+    def _apply_watch_dns(self, cfg: AppConfig, old_url: str, new_url: str) -> None:
+        """After a Magnum EPGenius swap, point /watch at the same host."""
         try:
             update_player_dns(cfg.paths.player, new_url)
-        except Exception as exc:
-            logger.exception("Could not update player.yaml for %s", playlist.name)
-            raise SwitchError(f"Could not update Watch DNS on the VPS: {exc}", 500) from exc
-
-        origin_kw: dict[str, Any] = {}
-        if revert:
-            playlist.manual_from_dns = None
-            origin_kw["manual_from_dns"] = None
-        elif manual and not playlist.manual_from_dns:
-            playlist.manual_from_dns = old_url
-            origin_kw["manual_from_dns"] = old_url
-
-        try:
-            update_playlist_dns(
-                cfg.paths.playlists, playlist.playlist_id, new_url, **origin_kw
-            )
         except Exception:
-            logger.exception("player.yaml updated but failed to persist current_dns for %s", playlist.name)
-        playlist.current_dns = new_url
+            logger.exception("EPGenius swapped Magnum DNS but could not update player.yaml")
+            self.shared.add_event(
+                "warn",
+                "Magnum EPGenius swapped; Watch player.yaml DNS was not updated",
+            )
+        watch = getattr(self, "watch_service", None)
+        guide = getattr(watch, "guide", None) if watch is not None else None
+        if guide is not None and hasattr(guide, "rewrite_live_playback_host"):
+            try:
+                rewritten = guide.rewrite_live_playback_host(old_url, new_url)
+                if rewritten:
+                    logger.info(
+                        "Rewrote %s Watch live playback URLs onto the new Magnum DNS",
+                        rewritten,
+                    )
+            except Exception:
+                logger.exception("Could not rewrite Watch live playback hosts")
         self._kick_watch_refresh()
-        logger.info("Watch DNS swapped %s from %s to %s", playlist.name, old_url, new_url)
-        prefix = "manual revert " if revert else ("manual " if manual else "")
-        self.shared.add_event(
-            "swap",
-            f"{prefix}{playlist.name}: {old_url} -> {new_url} (Watch DNS, no EPGenius)",
-        )
-        if manual or revert:
-            asyncio.create_task(self._after_manual_notify(cfg, playlist, old_url, new_url))
-            return
-        await notify_swap(cfg.secrets, playlist, old_url, new_url)
 
     async def _swap_playlist(
         self,
@@ -923,11 +909,6 @@ class Monitor:
         manual: bool = False,
         revert: bool = False,
     ) -> None:
-        if normalize_pool(playlist.pool) == "magnum":
-            await self._swap_watch_dns(
-                cfg, playlist, old_url, new_url, manual=manual, revert=revert
-            )
-            return
         timeout = 12 if (manual or revert) else 20
         try:
             await update_creds(cfg.secrets, playlist, new_url, timeout_seconds=timeout)
@@ -962,6 +943,8 @@ class Monitor:
         except Exception:
             logger.exception("API succeeded but failed to persist current_dns for %s", playlist.name)
         playlist.current_dns = new_url
+        if normalize_pool(playlist.pool) == "magnum":
+            self._apply_watch_dns(cfg, old_url, new_url)
         logger.info("Swapped %s from %s to %s", playlist.name, old_url, new_url)
         prefix = "manual revert " if revert else ("manual " if manual else "")
         self.shared.add_event("swap", f"{prefix}{playlist.name}: {old_url} -> {new_url}")
