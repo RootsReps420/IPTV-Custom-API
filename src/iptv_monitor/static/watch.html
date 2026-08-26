@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=50" />
+  <link rel="stylesheet" href="/static/styles.css?v=51" />
 </head>
 <body class="watch-body">
   <div class="grid-bg" aria-hidden="true"></div>
@@ -33,6 +33,38 @@
       <button type="submit" class="switch-btn">Sign in</button>
       <p id="login-error" class="watch-error" hidden></p>
     </form>
+  </section>
+
+  <section id="password-panel" class="watch-terms" hidden>
+    <div class="watch-terms-card">
+      <p class="eyebrow">RootsIPTV</p>
+      <h1>Set a new password</h1>
+      <p class="history-note">Everyone must choose their own password. It is stored as a hash — we never keep the password itself.</p>
+      <ul class="watch-pw-rules">
+        <li>At least 8 characters</li>
+        <li>Uppercase and lowercase letters</li>
+        <li>A number</li>
+        <li>A special character (for example ! @ # $ %)</li>
+        <li>Not the shared password you just used, and not your username</li>
+      </ul>
+      <form id="password-form" class="watch-login-form">
+        <label>
+          Current password
+          <input id="pw-current" name="current_password" type="password" autocomplete="current-password" required />
+        </label>
+        <label>
+          New password
+          <input id="pw-new" name="new_password" type="password" autocomplete="new-password" required minlength="8" maxlength="128" />
+        </label>
+        <label>
+          Confirm new password
+          <input id="pw-confirm" name="confirm_password" type="password" autocomplete="new-password" required minlength="8" maxlength="128" />
+        </label>
+        <button type="submit" class="switch-btn">Save password</button>
+        <button type="button" class="watch-refresh-btn" id="pw-logout-btn">Log out</button>
+        <p id="password-error" class="watch-error" hidden></p>
+      </form>
+    </div>
   </section>
 
   <section id="terms-panel" class="watch-terms" hidden>
@@ -126,6 +158,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=53"></script>
+  <script src="/static/watch.js?v=54"></script>
 </body>
 </html>

@@ -4,6 +4,7 @@ Stored form: pbkdf2_sha256$iterations$salt$hex
 CLI: python -m iptv_monitor.hash_password
      python main.py watch-hash
 Paste the printed line into config/watch_users.yaml as password_hash.
+Never store the password itself.
 """
 
 from __future__ import annotations
@@ -13,10 +14,17 @@ import getpass
 import hashlib
 import hmac
 import os
+import re
 import sys
 
 SCHEME = "pbkdf2_sha256"
 ITERATIONS = 120_000
+PASSWORD_MIN_LEN = 8
+PASSWORD_MAX_LEN = 128
+_HAS_LOWER = re.compile(r"[a-z]")
+_HAS_UPPER = re.compile(r"[A-Z]")
+_HAS_DIGIT = re.compile(r"[0-9]")
+_HAS_SPECIAL = re.compile(r"[^A-Za-z0-9\s]")
 
 
 def hash_password(password: str, *, iterations: int = ITERATIONS) -> str:
@@ -28,6 +36,28 @@ def hash_password(password: str, *, iterations: int = ITERATIONS) -> str:
         "sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations
     )
     return f"{SCHEME}${iterations}${salt}${digest.hex()}"
+
+
+def validate_watch_password(password: str, *, username: str = "") -> str | None:
+    """Return a user-facing error, or None if the password meets Watch rules."""
+    if not password:
+        return "Enter a new password."
+    if len(password) < PASSWORD_MIN_LEN:
+        return f"Password must be at least {PASSWORD_MIN_LEN} characters."
+    if len(password) > PASSWORD_MAX_LEN:
+        return f"Password must be at most {PASSWORD_MAX_LEN} characters."
+    if not _HAS_LOWER.search(password):
+        return "Password must include a lowercase letter."
+    if not _HAS_UPPER.search(password):
+        return "Password must include an uppercase letter."
+    if not _HAS_DIGIT.search(password):
+        return "Password must include a number."
+    if not _HAS_SPECIAL.search(password):
+        return "Password must include a special character."
+    name = (username or "").strip()
+    if name and password.casefold() == name.casefold():
+        return "Password cannot be the same as your username."
+    return None
 
 
 def verify_password(password: str, stored: str) -> bool:

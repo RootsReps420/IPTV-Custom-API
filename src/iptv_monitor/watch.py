@@ -23,12 +23,15 @@ from pydantic import BaseModel, Field
 from iptv_monitor.config import resolve_paths
 from iptv_monitor.player_auth import (
     LoginBody,
+    PasswordChangeBody,
     authenticate,
+    change_watch_password,
     clear_login_failures,
     clear_session,
     client_ip,
     kick_username,
     mint_media_token,
+    must_change_password,
     read_session,
     record_login_failure,
     refuse_locked_login,
@@ -223,7 +226,11 @@ def register_watch(app: FastAPI, static_dir) -> None:
             refuse_locked_login(ip=ip, username=body.username)
             raise HTTPException(status_code=401, detail="Unknown user or password.")
         clear_login_failures(ip=ip, username=name)
-        response = JSONResponse({"ok": True, "username": name})
+        users_path = resolve_paths(_root(request)).watch_users
+        needs_new = must_change_password(users_path, name)
+        response = JSONResponse(
+            {"ok": True, "username": name, "must_change_password": needs_new}
+        )
         sid = set_session(response, request, _root(request), name)
         await _svc(request).presence.touch(
             username=name,
@@ -247,6 +254,29 @@ def register_watch(app: FastAPI, static_dir) -> None:
         clear_session(response)
         return response
 
+    @app.post("/api/watch/password")
+    async def watch_password(request: Request, body: PasswordChangeBody) -> dict:
+        """Set a new hashed Watch password. Refuses until complexity checks pass."""
+        name = require_username(request, _root(request), allow_password_change=True)
+        ip = client_ip(request)
+        refuse_locked_login(ip=ip, username=name)
+        users_path = resolve_paths(_root(request)).watch_users
+        try:
+            change_watch_password(
+                users_path,
+                name,
+                current_password=body.current_password,
+                new_password=body.new_password,
+                confirm_password=body.confirm_password,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                record_login_failure(ip=ip, username=name)
+                refuse_locked_login(ip=ip, username=name)
+            raise
+        clear_login_failures(ip=ip, username=name)
+        return {"ok": True, "username": name, "must_change_password": False}
+
     @app.get("/api/watch/me")
     async def watch_me(
         request: Request,
@@ -264,14 +294,20 @@ def register_watch(app: FastAPI, static_dir) -> None:
             raise HTTPException(status_code=401, detail="Sign in to watch.")
         svc = _svc(request)
         cfg = svc.config()
+        needs_new = must_change_password(
+            resolve_paths(_root(request)).watch_users, session.username
+        )
         snap = await svc.slots.snapshot()
         payload = {
             "username": session.username,
-            "configured": cfg.configured,
+            "must_change_password": needs_new,
+            "configured": False if needs_new else cfg.configured,
             "max_concurrent": cfg.max_concurrent,
             "slots": snap,
-            "sync": svc.guide.status(),
-            "media_token": mint_media_token(_root(request), session.username),
+            "sync": None if needs_new else svc.guide.status(),
+            "media_token": None
+            if needs_new
+            else mint_media_token(_root(request), session.username),
         }
         response = JSONResponse(payload)
         await _touch_presence(

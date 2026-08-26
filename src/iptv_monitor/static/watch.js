@@ -12,6 +12,10 @@ const loginPanel = document.getElementById("login-panel");
 const appPanel = document.getElementById("app-panel");
 const loginForm = document.getElementById("login-form");
 const loginError = document.getElementById("login-error");
+const passwordPanel = document.getElementById("password-panel");
+const passwordForm = document.getElementById("password-form");
+const passwordError = document.getElementById("password-error");
+const pwLogoutBtn = document.getElementById("pw-logout-btn");
 const slotStat = document.getElementById("slot-stat");
 const userStat = document.getElementById("user-stat");
 const guideStat = document.getElementById("guide-stat");
@@ -436,6 +440,10 @@ async function api(path, options = {}) {
       stopPlayback();
       showLogin();
       showBanner("You were signed out.", "bad");
+    }
+    if (response.status === 403 && String(data.detail || "").includes("new password")) {
+      stopPlayback();
+      showPasswordChange();
     }
     throw error;
   }
@@ -1177,13 +1185,34 @@ function showLogin() {
   if (termsPanel) {
     termsPanel.hidden = true;
   }
+  if (passwordPanel) {
+    passwordPanel.hidden = true;
+  }
   loginPanel.hidden = false;
   appPanel.hidden = true;
+}
+
+function showPasswordChange() {
+  if (termsPanel) {
+    termsPanel.hidden = true;
+  }
+  loginPanel.hidden = true;
+  appPanel.hidden = true;
+  if (passwordPanel) {
+    passwordPanel.hidden = false;
+  }
+  if (passwordError) {
+    passwordError.hidden = true;
+    passwordError.textContent = "";
+  }
 }
 
 function showApp() {
   if (termsPanel) {
     termsPanel.hidden = true;
+  }
+  if (passwordPanel) {
+    passwordPanel.hidden = true;
   }
   loginPanel.hidden = true;
   appPanel.hidden = false;
@@ -1221,6 +1250,9 @@ function requireTerms() {
     }
     loginPanel.hidden = true;
     appPanel.hidden = true;
+    if (passwordPanel) {
+      passwordPanel.hidden = true;
+    }
     termsPanel.hidden = false;
     termsAgree.checked = false;
     termsOk.disabled = true;
@@ -2061,6 +2093,10 @@ async function boot() {
       showLogin();
       return;
     }
+    if (me.must_change_password) {
+      showPasswordChange();
+      return;
+    }
     await requireTerms();
     state.user = me.username;
     state.configured = me.configured;
@@ -2116,6 +2152,90 @@ loginForm.addEventListener("submit", async (event) => {
   }
 });
 
+function passwordRuleError(password, username) {
+  if (!password || password.length < 8) {
+    return "Password must be at least 8 characters.";
+  }
+  if (password.length > 128) {
+    return "Password must be at most 128 characters.";
+  }
+  if (!/[a-z]/.test(password)) {
+    return "Password must include a lowercase letter.";
+  }
+  if (!/[A-Z]/.test(password)) {
+    return "Password must include an uppercase letter.";
+  }
+  if (!/[0-9]/.test(password)) {
+    return "Password must include a number.";
+  }
+  if (!/[^A-Za-z0-9\s]/.test(password)) {
+    return "Password must include a special character.";
+  }
+  if (username && password.toLowerCase() === username.toLowerCase()) {
+    return "Password cannot be the same as your username.";
+  }
+  return "";
+}
+
+if (passwordForm) {
+  passwordForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (passwordError) {
+      passwordError.hidden = true;
+    }
+    const currentPassword = document.getElementById("pw-current").value;
+    const newPassword = document.getElementById("pw-new").value;
+    const confirmPassword = document.getElementById("pw-confirm").value;
+    const username = (document.getElementById("login-user") && document.getElementById("login-user").value) || state.user || "";
+    const localError =
+      newPassword !== confirmPassword
+        ? "New password and confirmation do not match."
+        : passwordRuleError(newPassword, username);
+    if (localError) {
+      passwordError.hidden = false;
+      passwordError.textContent = localError;
+      return;
+    }
+    try {
+      await api("/api/watch/password", {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+          confirm_password: confirmPassword,
+        }),
+      });
+      passwordForm.reset();
+      await boot();
+    } catch (error) {
+      passwordError.hidden = false;
+      passwordError.textContent = error.message;
+    }
+  });
+}
+
+async function logoutWatch() {
+  state.playingItem = null;
+  state.playingLiveId = "";
+  stopPlayback();
+  try {
+    await api("/api/watch/logout", {
+      method: "POST",
+      body: JSON.stringify({ play_id: playId() }),
+    });
+  } catch {
+    /* ignore */
+  }
+  setTermsAgreed(false);
+  showLogin();
+}
+
+if (pwLogoutBtn) {
+  pwLogoutBtn.addEventListener("click", () => {
+    logoutWatch().catch(() => {});
+  });
+}
+
 async function requestSync(kind) {
   if (state.syncBusy || !state.configured) {
     return;
@@ -2138,20 +2258,8 @@ async function requestSync(kind) {
   }
 }
 
-document.getElementById("logout-btn").addEventListener("click", async () => {
-  state.playingItem = null;
-  state.playingLiveId = "";
-  stopPlayback();
-  try {
-    await api("/api/watch/logout", {
-      method: "POST",
-      body: JSON.stringify({ play_id: playId() }),
-    });
-  } catch {
-    /* ignore */
-  }
-  setTermsAgreed(false);
-  showLogin();
+document.getElementById("logout-btn").addEventListener("click", () => {
+  logoutWatch().catch(() => {});
 });
 
 if (refreshPlaylistBtn) {

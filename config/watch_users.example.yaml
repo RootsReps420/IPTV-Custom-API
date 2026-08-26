@@ -1,9 +1,11 @@
 # Copy to watch_users.yaml (gitignored).
 # Overview: site logins for /watch (friends), not Xtream panel users.
-# Empty password_hash cannot log in. Generate:
+# Empty password_hash cannot log in. Generate a temporary hash:
 #   python -m iptv_monitor.hash_password
-# then paste password_hash below. Restart iptv-monitor after edits.
+# then paste password_hash below. Friends must set their own password on first
+# login (must_change_password defaults to true). The site only stores the hash.
 
 users:
   - name: friend
     password_hash: ""
+    must_change_password: true

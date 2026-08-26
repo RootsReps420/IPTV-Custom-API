@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -20,18 +21,25 @@ from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
 
 from iptv_monitor.config import resolve_paths
-from iptv_monitor.hash_password import verify_password
+from iptv_monitor.hash_password import (
+    PASSWORD_MAX_LEN,
+    hash_password,
+    validate_watch_password,
+    verify_password,
+)
 
 logger = logging.getLogger("iptv_monitor.player_auth")
 
 COOKIE = "watch_session"
 SESSION_MAX_AGE = 14 * 24 * 3600
 _secret_cache: str | None = None
+_watch_users_lock = threading.Lock()
 
 
 class WatchUser(BaseModel):
     name: str
     password_hash: str = ""
+    must_change_password: bool = True
 
 
 class WatchUsersFile(BaseModel):
@@ -43,8 +51,22 @@ class LoginBody(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+class PasswordChangeBody(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=1, max_length=PASSWORD_MAX_LEN)
+    confirm_password: str = Field(min_length=1, max_length=PASSWORD_MAX_LEN)
+
+
 def _yaml() -> YAML:
     return YAML(typ="safe")
+
+
+def _yaml_rt() -> YAML:
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.default_flow_style = False
+    yaml.width = 4096
+    return yaml
 
 
 def load_watch_users(path: Path) -> list[WatchUser]:
@@ -58,16 +80,87 @@ def load_watch_users(path: Path) -> list[WatchUser]:
         return []
 
 
-def authenticate(path: Path, username: str, password: str) -> str | None:
+def find_watch_user(path: Path, username: str) -> WatchUser | None:
     wanted = username.strip()
     for user in load_watch_users(path):
-        if user.name.strip() != wanted:
-            continue
-        if not user.password_hash.strip():
-            return None
-        if verify_password(password, user.password_hash.strip()):
-            return user.name.strip()
+        if user.name.strip() == wanted:
+            return user
     return None
+
+
+def must_change_password(path: Path, username: str) -> bool:
+    user = find_watch_user(path, username)
+    if user is None:
+        return True
+    return bool(user.must_change_password)
+
+
+def refuse_password_change_required(root: Path, username: str) -> None:
+    if must_change_password(resolve_paths(root).watch_users, username):
+        raise HTTPException(
+            status_code=403,
+            detail="Set a new password before watching.",
+        )
+
+
+def authenticate(path: Path, username: str, password: str) -> str | None:
+    wanted = username.strip()
+    user = find_watch_user(path, wanted)
+    if user is None or not user.password_hash.strip():
+        return None
+    if verify_password(password, user.password_hash.strip()):
+        return user.name.strip()
+    return None
+
+
+def change_watch_password(
+    path: Path,
+    username: str,
+    *,
+    current_password: str,
+    new_password: str,
+    confirm_password: str,
+) -> None:
+    """Replace the stored hash. The plaintext password is never written."""
+    name = username.strip()
+    user = find_watch_user(path, name)
+    if user is None or not user.password_hash.strip():
+        raise HTTPException(status_code=401, detail="Sign in to watch.")
+    if not verify_password(current_password, user.password_hash.strip()):
+        raise HTTPException(status_code=401, detail="Current password is wrong.")
+    if new_password != confirm_password:
+        raise HTTPException(status_code=400, detail="New password and confirmation do not match.")
+    problem = validate_watch_password(new_password, username=name)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    if verify_password(new_password, user.password_hash.strip()):
+        raise HTTPException(status_code=400, detail="Choose a different password from the one you just used.")
+    hashed = hash_password(new_password)
+    with _watch_users_lock:
+        if not path.exists():
+            raise HTTPException(status_code=500, detail="Could not update password.")
+        yaml = _yaml_rt()
+        raw = yaml.load(path.read_text(encoding="utf-8")) or {}
+        rows = raw.get("users")
+        if not isinstance(rows, list):
+            raise HTTPException(status_code=500, detail="Could not update password.")
+        found = False
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("name") or "").strip() != name:
+                continue
+            row["password_hash"] = hashed
+            row["must_change_password"] = False
+            found = True
+            break
+        if not found:
+            raise HTTPException(status_code=500, detail="Could not update password.")
+        tmp = path.with_name(path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+            yaml.dump(raw, handle)
+        tmp.replace(path)
+    logger.info("Watch user %s set a new password hash", name)
 
 
 def session_secret(root: Path | None) -> str:
@@ -301,20 +394,22 @@ def current_username(request: Request, root: Path) -> str | None:
     return session.username if session else None
 
 
-def require_username(request: Request, root: Path) -> str:
+def require_username(request: Request, root: Path, *, allow_password_change: bool = False) -> str:
     name = current_username(request, root)
     if not name:
         raise HTTPException(status_code=401, detail="Sign in to watch.")
+    if not allow_password_change:
+        refuse_password_change_required(root, name)
     return name
 
 
 def require_player_user(request: Request, root: Path) -> str:
     """Cookie first; media token `k` for iOS native HLS (AVPlayer skips cookies)."""
     name = current_username(request, root)
-    if name:
-        return name
-    token = (request.query_params.get("k") or "").strip()
-    name = username_from_media_token(root, token)
+    if not name:
+        token = (request.query_params.get("k") or "").strip()
+        name = username_from_media_token(root, token)
     if not name:
         raise HTTPException(status_code=401, detail="Sign in to watch.")
+    refuse_password_change_required(root, name)
     return name

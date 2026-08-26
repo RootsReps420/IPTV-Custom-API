@@ -815,6 +815,22 @@ tr.row-down td {
   font-size: 13px;
 }
 
+.watch-pw-rules {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.watch-pw-rules li {
+  margin: 0 0 4px;
+}
+
+#password-form .watch-refresh-btn {
+  align-self: flex-start;
+}
+
 .watch-app {
   position: relative;
   height: 100vh;
