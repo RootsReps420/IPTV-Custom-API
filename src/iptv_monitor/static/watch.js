@@ -2090,8 +2090,10 @@ async function boot() {
     }
   } catch (error) {
     showLogin();
-    loginError.hidden = false;
-    loginError.textContent = error.message;
+    if (error.status !== 401) {
+      loginError.hidden = false;
+      loginError.textContent = error.message;
+    }
   }
 }
 

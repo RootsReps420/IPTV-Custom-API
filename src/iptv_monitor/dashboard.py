@@ -1,8 +1,11 @@
 """HTTP surface for the whole product (status UI, owner APIs, History, Watch).
 
-Public (no login): `/`, `/history`, `/api/public`, `/api/history`, `/static`, `/key`
-Owner (Caddy basicauth): `/owner`, `/api/status`, `/api/switch`, `/api/switch-back`, `/api/kick-watch`
+Open without Caddy: `/watch`, `/api/watch/*`, `/api/player/*`, `/static`
+  (Watch still uses the app cookie / site login).
+Caddy `dan` basicauth: `/`, `/owner`, `/history`, `/key`, `/api/public`,
+  `/api/history`, `/api/status`, `/api/switch`, `/api/switch-back`, `/api/kick-watch`
 Watch (app cookie): `/watch`, `/api/watch/*`, `/api/player/*` — registered in watch.py
+`/api/watch/me` requires a session cookie (401 if signed out).
 iOS native HLS may omit cookies; media uses signed `k` query as well.
 `/api/status` includes in-memory /watch sessions (not the public snapshot).
 POST `/api/status` with `{kick: true, username}` also signs a Watch user out (same Caddy path).

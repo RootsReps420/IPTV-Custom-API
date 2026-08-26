@@ -1,8 +1,9 @@
 """Same-origin media proxy so the browser never sees Xtream user/pass.
 
 Live/movie/series URLs are built server-side. HLS playlists are rewritten so
-every URI goes through signed /api/player/fetch. MPEG-TS is streamed in chunks
-(never loaded fully into RAM). Gzip must stay off these paths in Caddy.
+every URI goes through /api/player/fetch with an opaque ticket. MPEG-TS is
+streamed in chunks (never loaded fully into RAM). Gzip must stay off these
+paths in Caddy.
 
 VOD is remuxed with ffmpeg to fragmented MP4 for Chrome/Android.
 H.264/HEVC video is copied; older codecs (MPEG-4 ASP / Xvid, MPEG-2, …) are
@@ -14,14 +15,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import secrets
 import shutil
+import threading
+import time
 from collections.abc import AsyncIterator, Callable
 from urllib.parse import quote, urljoin, urlparse
 
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from iptv_monitor.player_xtream import PlayerConfig
 from iptv_monitor.stream import TS_SYNC, _STREAM_UA, _is_blocked_stream_url
@@ -29,6 +32,7 @@ from iptv_monitor.stream import TS_SYNC, _STREAM_UA, _is_blocked_stream_url
 logger = logging.getLogger("iptv_monitor.player_proxy")
 
 FETCH_MAX_AGE = 8 * 3600
+_FETCH_MAX_TICKETS = 40_000
 _URI_ATTR = re.compile(r'URI="([^"]+)"')
 _HLS_HINTS = ("application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl")
 _HTTP: httpx.AsyncClient | None = None
@@ -74,21 +78,75 @@ def panel_media_url(cfg: PlayerConfig, kind: str, stream_id: str, ext: str) -> s
     raise HTTPException(status_code=400, detail="Invalid media kind.")
 
 
-def sign_url(serializer: URLSafeTimedSerializer, url: str) -> str:
-    return serializer.dumps(url)
-
-
-def load_signed_url(serializer: URLSafeTimedSerializer, token: str) -> str:
-    try:
-        url = serializer.loads(token, max_age=FETCH_MAX_AGE)
-    except (BadSignature, SignatureExpired, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Invalid media token.") from exc
-    if not isinstance(url, str):
-        raise HTTPException(status_code=400, detail="Invalid media token.")
+def _valid_fetch_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise HTTPException(status_code=400, detail="Invalid media URL.")
     return url
+
+
+class FetchTicketStore:
+    """Opaque HLS tickets. The Magnum/Xtream URL never leaves the process."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._tickets: dict[str, tuple[str, float]] = {}
+        self._ops = 0
+
+    def _prune_unlocked(self, now: float) -> None:
+        expired = [key for key, (_, expires) in self._tickets.items() if expires <= now]
+        for key in expired:
+            del self._tickets[key]
+        extra = len(self._tickets) - _FETCH_MAX_TICKETS
+        if extra <= 0:
+            return
+        oldest = sorted(self._tickets.items(), key=lambda item: item[1][1])[:extra]
+        for key, _ in oldest:
+            del self._tickets[key]
+
+    def mint(self, url: str) -> str:
+        target = _valid_fetch_url(url)
+        token = secrets.token_urlsafe(24)
+        expires = time.time() + FETCH_MAX_AGE
+        now = time.time()
+        with self._lock:
+            self._ops += 1
+            if self._ops >= 64 or len(self._tickets) >= _FETCH_MAX_TICKETS:
+                self._ops = 0
+                self._prune_unlocked(now)
+            self._tickets[token] = (target, expires)
+        return token
+
+    def load(self, token: str) -> str:
+        raw = (token or "").strip()
+        if len(raw) < 8:
+            raise HTTPException(status_code=400, detail="Invalid media token.")
+        now = time.time()
+        with self._lock:
+            self._ops += 1
+            if self._ops >= 64:
+                self._ops = 0
+                self._prune_unlocked(now)
+            row = self._tickets.get(raw)
+        if row is None:
+            raise HTTPException(status_code=400, detail="Invalid media token.")
+        url, expires = row
+        if expires <= now:
+            with self._lock:
+                self._tickets.pop(raw, None)
+            raise HTTPException(status_code=400, detail="Invalid media token.")
+        return url
+
+
+_FETCH_TICKETS = FetchTicketStore()
+
+
+def mint_fetch_ticket(url: str) -> str:
+    return _FETCH_TICKETS.mint(url)
+
+
+def load_fetch_url(token: str) -> str:
+    return _FETCH_TICKETS.load(token)
 
 
 def _local_fetch(token: str, sid: str, access: str = "") -> str:
@@ -100,12 +158,11 @@ def _local_fetch(token: str, sid: str, access: str = "") -> str:
 
 def rewrite_hls(
     text: str,
-    serializer: URLSafeTimedSerializer,
     playlist_url: str,
     sid: str,
     access: str = "",
 ) -> str:
-    """Point every playlist URI at signed /api/player/fetch so credentials stay server-side."""
+    """Point every playlist URI at /api/player/fetch so credentials stay server-side."""
     lines: list[str] = []
     for line in text.splitlines():
         stripped = line.strip()
@@ -116,12 +173,12 @@ def rewrite_hls(
 
             def _repl(match: re.Match[str]) -> str:
                 absolute = urljoin(playlist_url, match.group(1))
-                return f'URI="{_local_fetch(sign_url(serializer, absolute), sid, access)}"'
+                return f'URI="{_local_fetch(mint_fetch_ticket(absolute), sid, access)}"'
 
             lines.append(_URI_ATTR.sub(_repl, line))
             continue
         absolute = urljoin(playlist_url, stripped)
-        lines.append(_local_fetch(sign_url(serializer, absolute), sid, access))
+        lines.append(_local_fetch(mint_fetch_ticket(absolute), sid, access))
     return "\n".join(lines) + "\n"
 
 
@@ -344,7 +401,7 @@ async def remux_vod_to_browser_mp4(
 async def proxy_url(
     url: str,
     *,
-    serializer: URLSafeTimedSerializer | None = None,
+    rewrite_uris: bool = False,
     sid: str = "",
     range_header: str | None = None,
     assume_mpegts: bool = False,
@@ -410,7 +467,7 @@ async def proxy_url(
     except StopAsyncIteration:
         peek = b""
 
-    if serializer and sid and _is_hls(ctype, peek):
+    if rewrite_uris and sid and _is_hls(ctype, peek):
         chunks = [peek]
         total = len(peek)
         async for part in stream:
@@ -420,14 +477,14 @@ async def proxy_url(
                 break
         await response.aclose()
         text = b"".join(chunks).decode("utf-8", errors="replace")
-        body = rewrite_hls(text, serializer, str(response.url), sid, access_token)
+        body = rewrite_hls(text, str(response.url), sid, access_token)
         return Response(
             content=body,
             media_type="application/vnd.apple.mpegurl",
             headers={"Cache-Control": "no-store"},
         )
 
-    if serializer and sid and peek[:1] == bytes((TS_SYNC,)):
+    if rewrite_uris and sid and peek[:1] == bytes((TS_SYNC,)):
         logger.warning("HLS requested but upstream is MPEG-TS; iOS native player cannot use this")
 
     async def _iter() -> AsyncIterator[bytes]:

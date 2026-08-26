@@ -24,17 +24,19 @@ from iptv_monitor.config import resolve_paths
 from iptv_monitor.player_auth import (
     LoginBody,
     authenticate,
+    clear_login_failures,
     clear_session,
     client_ip,
-    fetch_serializer,
     kick_username,
     mint_media_token,
     read_session,
+    record_login_failure,
+    refuse_locked_login,
     require_player_user,
     require_username,
     set_session,
 )
-from iptv_monitor.player_proxy import load_signed_url, panel_media_url, proxy_url
+from iptv_monitor.player_proxy import load_fetch_url, panel_media_url, proxy_url
 from iptv_monitor.player_m3u import with_live_ext
 from iptv_monitor.player_guide import WatchGuide
 from iptv_monitor.player_presence import PresenceTracker
@@ -209,19 +211,24 @@ def register_watch(app: FastAPI, static_dir) -> None:
     """Attach /watch HTML plus login, catalogue, slot, and media-proxy routes."""
     @app.post("/api/watch/login")
     async def watch_login(request: Request, body: LoginBody) -> JSONResponse:
+        ip = client_ip(request)
+        refuse_locked_login(ip=ip, username=body.username)
         name = authenticate(
             resolve_paths(_root(request)).watch_users,
             body.username,
             body.password,
         )
         if not name:
+            record_login_failure(ip=ip, username=body.username)
+            refuse_locked_login(ip=ip, username=body.username)
             raise HTTPException(status_code=401, detail="Unknown user or password.")
+        clear_login_failures(ip=ip, username=name)
         response = JSONResponse({"ok": True, "username": name})
         sid = set_session(response, request, _root(request), name)
         await _svc(request).presence.touch(
             username=name,
             session_id=sid,
-            ip=client_ip(request),
+            ip=ip,
             issued_at=time.time(),
         )
         return response
@@ -252,32 +259,33 @@ def register_watch(app: FastAPI, static_dir) -> None:
         height: int = Query(default=0, ge=0, le=4320),
         audio: str = Query(default="", max_length=40),
     ) -> JSONResponse:
+        session = read_session(request, _root(request))
+        if not session:
+            raise HTTPException(status_code=401, detail="Sign in to watch.")
         svc = _svc(request)
         cfg = svc.config()
-        session = read_session(request, _root(request))
         snap = await svc.slots.snapshot()
         payload = {
-            "username": session.username if session else None,
+            "username": session.username,
             "configured": cfg.configured,
             "max_concurrent": cfg.max_concurrent,
             "slots": snap,
             "sync": svc.guide.status(),
-            "media_token": mint_media_token(_root(request), session.username) if session else None,
+            "media_token": mint_media_token(_root(request), session.username),
         }
         response = JSONResponse(payload)
-        if session:
-            await _touch_presence(
-                request,
-                response,
-                play_id=play_id,
-                buffer_s=buffer_s,
-                stalls=stalls,
-                dropped=dropped,
-                decoded=decoded,
-                width=width,
-                height=height,
-                audio=audio,
-            )
+        await _touch_presence(
+            request,
+            response,
+            play_id=play_id,
+            buffer_s=buffer_s,
+            stalls=stalls,
+            dropped=dropped,
+            decoded=decoded,
+            width=width,
+            height=height,
+            audio=audio,
+        )
         return response
 
     @app.post("/api/player/sync")
@@ -474,11 +482,10 @@ def register_watch(app: FastAPI, static_dir) -> None:
             url = panel_media_url(cfg, kind, stream_id, ext)
         live_ts = kind == "live" and ext.lstrip(".").lower() == "ts"
         vod = kind in {"movie", "series"} and ext.lstrip(".").lower() not in {"m3u8", "mpd"}
-        serializer = None if live_ts else fetch_serializer(_root(request))
         presence = svc.presence
         return await proxy_url(
             url,
-            serializer=serializer,
+            rewrite_uris=not live_ts,
             sid=sid,
             range_header=None if vod else request.headers.get("range"),
             assume_mpegts=live_ts,
@@ -493,15 +500,14 @@ def register_watch(app: FastAPI, static_dir) -> None:
         t: str = Query(min_length=8),
         sid: str = Query(min_length=8),
     ) -> Response:
-        """Follow a signed HLS segment URL minted while rewriting a playlist."""
+        """Follow an opaque HLS ticket minted while rewriting a playlist."""
         user = require_player_user(request, _root(request))
         await _require_slot(_svc(request), user, sid)
-        serializer = fetch_serializer(_root(request))
-        url = load_signed_url(serializer, t)
+        url = load_fetch_url(t)
         presence = _svc(request).presence
         return await proxy_url(
             url,
-            serializer=serializer,
+            rewrite_uris=True,
             sid=sid,
             range_header=request.headers.get("range"),
             access_token=mint_media_token(_root(request), user),

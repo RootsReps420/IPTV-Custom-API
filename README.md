@@ -75,9 +75,9 @@ When a live URL is unhealthy:
 
 ## Dashboard
 
-On the VPS, `https://vps-4f889186.vps.ovh.net` is public (standby pool health only). Playlists and Current DNS are on `/owner`, behind the same Caddy login (`dan`) you already use. Locally the app is `http://127.0.0.1:8787`.
+On the VPS, `https://vps-4f889186.vps.ovh.net` (monitor, History, Info, Playlists) is behind the same Caddy login (`dan`) you already use for `/owner`. Friends use **`/watch`**, which stays on the Watch site login only. Locally the app is `http://127.0.0.1:8787`.
 
-- Public: available pool cards (`dns` / `tcp` / `ts`, nameserver badge), plus standby down/up events
+- Public: available pool cards (`dns` / `tcp` / `ts`, nameserver badge), plus standby down/up events (Caddy `dan` login on the VPS)
 - Owner (`/owner`): the same, plus Current DNS, the playlists table (no passwords), a Switch button, and Switch back after a manual swap
 
 Do not port-forward 8787 to the public internet.

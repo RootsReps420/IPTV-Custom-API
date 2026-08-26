@@ -1,8 +1,9 @@
 # Reverse proxy for the Python app on 127.0.0.1:8787.
 #
-# Public: `/` `/history` `/watch` `/api/public` `/api/history` `/static`
+# Open (no Caddy login): `/watch` `/api/watch/*` `/api/player/*` `/static/*`
 # /watch login is IN THE APP (cookie), not Caddy.
-# Owner: `/owner` `/api/status` `/api/switch*` — basicauth user `dan`.
+# Everything else (including `/` `/history` `/key` `/owner` and those APIs)
+# uses basicauth user `dan`.
 #
 # Do not gzip `/api/player/*` (live MPEG-TS / HLS). Do not copy this file over
 # /etc/caddy/Caddyfile blindly: keep the live bcrypt hash.
@@ -13,10 +14,11 @@ vps-4f889186.vps.ovh.net {
 		not path /api/player /api/player/*
 	}
 	encode @notplayer gzip
-	@owner {
-		path /owner /owner/ /api/status /api/switch /api/switch-back /api/kick-watch
+	# Friends only need /watch. Static + player APIs stay open so that page can load.
+	@protected {
+		not path /watch /watch/* /api/watch /api/watch/* /api/player /api/player/* /static /static/*
 	}
-	basicauth @owner {
+	basicauth @protected {
 		dan REPLACE_WITH_BASE64_HASH
 	}
 	# flush_interval -1: stream MPEG-TS to the browser without waiting for full responses.

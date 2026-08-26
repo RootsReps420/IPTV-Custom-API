@@ -1,8 +1,8 @@
 """Friend logins for /watch. Xtream credentials never go in the cookie.
 
 Signed HttpOnly cookie `watch_session` proves the site user. Secret lives in
-WATCH_SESSION_SECRET or state/watch_secret.txt. A second serializer salt signs
-HLS segment tokens so /api/player/fetch is not an open proxy.
+WATCH_SESSION_SECRET or state/watch_secret.txt. Login attempts are rate-limited
+in memory. HLS fetch tickets live in player_proxy, not in this cookie.
 """
 
 from __future__ import annotations
@@ -39,8 +39,8 @@ class WatchUsersFile(BaseModel):
 
 
 class LoginBody(BaseModel):
-    username: str = Field(min_length=1)
-    password: str = Field(min_length=1)
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=200)
 
 
 def _yaml() -> YAML:
@@ -95,12 +95,69 @@ def _serializer(root: Path | None) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(session_secret(root), salt="iptv-watch-session")
 
 
-def fetch_serializer(root: Path | None) -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(session_secret(root), salt="iptv-watch-fetch")
-
-
 def media_serializer(root: Path | None) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(session_secret(root), salt="iptv-watch-media")
+
+
+LOGIN_WINDOW_S = 15 * 60
+LOGIN_MAX_FAILS_IP = 10
+LOGIN_MAX_FAILS_USER = 8
+_login_fails: dict[str, list[float]] = {}
+
+
+def _fail_key(kind: str, value: str) -> str:
+    return f"{kind}:{(value or '').strip()[:80] or 'unknown'}"
+
+
+def _prune_fail_times(times: list[float], now: float) -> list[float]:
+    cutoff = now - LOGIN_WINDOW_S
+    return [stamp for stamp in times if stamp > cutoff]
+
+
+def login_retry_after(*, ip: str, username: str = "") -> int:
+    """Seconds until another login attempt is allowed. 0 if the attempt may proceed."""
+    now = time.time()
+    waits: list[int] = []
+    checks = [(_fail_key("ip", ip), LOGIN_MAX_FAILS_IP)]
+    if (username or "").strip():
+        checks.append((_fail_key("user", username), LOGIN_MAX_FAILS_USER))
+    for key, limit in checks:
+        times = _prune_fail_times(_login_fails.get(key, []), now)
+        if times:
+            _login_fails[key] = times
+        else:
+            _login_fails.pop(key, None)
+        if len(times) < limit:
+            continue
+        waits.append(max(1, int(times[0] + LOGIN_WINDOW_S - now)))
+    return max(waits) if waits else 0
+
+
+def record_login_failure(*, ip: str, username: str = "") -> None:
+    now = time.time()
+    keys = [_fail_key("ip", ip)]
+    if (username or "").strip():
+        keys.append(_fail_key("user", username))
+    for key in keys:
+        times = _prune_fail_times(_login_fails.get(key, []), now)
+        times.append(now)
+        _login_fails[key] = times
+
+
+def clear_login_failures(*, ip: str, username: str = "") -> None:
+    _login_fails.pop(_fail_key("ip", ip), None)
+    _login_fails.pop(_fail_key("user", username), None)
+
+
+def refuse_locked_login(*, ip: str, username: str = "") -> None:
+    retry = login_retry_after(ip=ip, username=username)
+    if retry <= 0:
+        return
+    raise HTTPException(
+        status_code=429,
+        detail="Too many sign-in attempts. Try again in a few minutes.",
+        headers={"Retry-After": str(retry)},
+    )
 
 
 MEDIA_TOKEN_MAX_AGE = 8 * 3600
