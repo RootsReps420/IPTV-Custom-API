@@ -952,12 +952,15 @@ tr.row-down td {
 .watch-rail-nav .watch-rail-btn {
   flex: 1 1 0;
   min-height: 48px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .watch-rail-btn.is-here,
 .watch-rail-btn:hover {
-  color: var(--text);
-  background: var(--panel-2);
+  color: var(--up);
+  font-weight: 700;
+  background: rgba(125, 255, 195, 0.12);
   box-shadow: inset 3px 0 0 var(--up);
 }
 
@@ -1245,22 +1248,30 @@ tr.row-down td {
 }
 
 .watch-item.is-here {
-  color: var(--text);
+  color: var(--up);
   border-color: var(--up);
-  background: var(--panel-2);
+  background: rgba(125, 255, 195, 0.12);
   box-shadow: inset 3px 0 0 var(--up);
 }
 
 .watch-item:hover {
   color: var(--up);
   border-color: var(--up);
-  background: rgba(125, 255, 195, 0.1);
+  background: rgba(125, 255, 195, 0.12);
 }
 
+.watch-item.is-here .watch-item-name,
+.watch-item.is-here .watch-num,
+.watch-item.is-here .watch-item-epg,
 .watch-item:hover .watch-item-name,
 .watch-item:hover .watch-num,
 .watch-item:hover .watch-item-epg {
   color: var(--up);
+}
+
+.watch-item.is-here .watch-item-name,
+.watch-item:hover .watch-item-name {
+  font-weight: 700;
 }
 
 .watch-cat.is-here {
@@ -1317,6 +1328,7 @@ tr.row-down td {
 .watch-item-name {
   color: var(--text);
   font-size: 15px;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
