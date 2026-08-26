@@ -94,6 +94,49 @@ def is_wanted_live_group(name: str) -> bool:
     return bool(_VIP_LIVE.match(text) and not _VIP_LIVE_SKIP.match(text))
 
 
+_M3U_COUNTRY_PREFIX = re.compile(r"^(de|ch|ca)\s*\|", re.I)
+_M3U_247 = re.compile(r"24\s*/\s*7")
+_M3U_DROP_LEAF = frozenset(
+    {
+        "austria",
+        "new zealand",
+        "australia",
+        "telemundo",
+        "unimas",
+        "univision",
+        "deportes",
+        "golden relax",
+        "religious",
+        "music",
+        "flo sports",
+        "espn plus",
+        "espn+",
+        "espn",
+    }
+)
+
+
+def _norm_m3u_group(name: str) -> str:
+    text = (name or "").replace("\u00a0", " ")
+    text = re.sub(r"[^\w|+/]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def is_wanted_m3u_live_group(name: str) -> bool:
+    """Magnum M3U TV tab: hide DE/CH/AT/NZ/AU/CA packs, Spanish, relax, 24/7, FLO, ESPN+."""
+    norm = _norm_m3u_group(name)
+    if not norm:
+        return False
+    if _M3U_COUNTRY_PREFIX.match(norm):
+        return False
+    if _M3U_247.search(norm):
+        return False
+    leaf = norm.split("|")[-1].strip()
+    if leaf in _M3U_DROP_LEAF or norm in _M3U_DROP_LEAF:
+        return False
+    return True
+
+
 def is_wanted_library_group(name: str) -> bool:
     """Movies/Shows: English catalogues. Skip Arabic/Turkish/MENA and non-English language packs."""
     text = (name or "").strip()
@@ -811,7 +854,11 @@ class WatchGuide:
         if not self.has_live():
             return None
         if self.live_from_m3u():
-            return list(self.data.categories)
+            return [
+                row
+                for row in self.data.categories
+                if is_wanted_m3u_live_group(str(row.get("category_name") or ""))
+            ]
         return [
             row
             for row in self.data.categories
@@ -834,7 +881,11 @@ class WatchGuide:
         )
         if not cat:
             return []
-        if not self.live_from_m3u() and not is_wanted_live_group(str(cat.get("category_name") or "")):
+        group_name = str(cat.get("category_name") or "")
+        if self.live_from_m3u():
+            if not is_wanted_m3u_live_group(group_name):
+                return []
+        elif not is_wanted_live_group(group_name):
             return []
         rows = self.data.by_cat.get(cid, [])
         return [self.decorate(stream) for stream in rows]
@@ -1065,8 +1116,13 @@ class WatchGuide:
             return {"query": text, "live": [], "movies": [], "series": []}
 
         for stream in self.data.streams:
-            decorated = self.decorate(stream)
             group = self._group_label(stream, live_names)
+            if self.live_from_m3u():
+                if not is_wanted_m3u_live_group(group):
+                    continue
+            elif group and not is_wanted_live_group(group):
+                continue
+            decorated = self.decorate(stream)
             score, why = score_search(
                 text,
                 str(decorated.get("name") or ""),
