@@ -528,7 +528,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
             range_header=None if vod else request.headers.get("range"),
             assume_mpegts=live_ts,
             remux_aac=vod,
-            access_token=mint_media_token(_root(request), user, sid),
+            access_token="" if live_ts else mint_media_token(_root(request), user, sid),
             on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n),
         )
 

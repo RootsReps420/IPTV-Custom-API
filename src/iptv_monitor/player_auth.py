@@ -34,6 +34,8 @@ COOKIE = "watch_session"
 SESSION_MAX_AGE = 14 * 24 * 3600
 _secret_cache: str | None = None
 _watch_users_lock = threading.Lock()
+# (path, mtime, users) — avoid YAML disk reads on every live chunk / heartbeat.
+_users_cache: tuple[str, float, tuple[WatchUser, ...]] | None = None
 
 
 class WatchUser(BaseModel):
@@ -69,15 +71,31 @@ def _yaml_rt() -> YAML:
     return yaml
 
 
+def _invalidate_users_cache_unlocked() -> None:
+    global _users_cache
+    _users_cache = None
+
+
 def load_watch_users(path: Path) -> list[WatchUser]:
-    if not path.exists():
-        return []
+    """Parse watch_users.yaml. Cached by mtime so live TS is not stalled on disk I/O."""
+    global _users_cache
     try:
-        raw = _yaml().load(path.read_text(encoding="utf-8")) or {}
-        return WatchUsersFile.model_validate(raw).users
-    except Exception:
-        logger.warning("Could not read watch users from %s", path)
+        mtime = path.stat().st_mtime
+    except OSError:
         return []
+    key = str(path)
+    with _watch_users_lock:
+        cached = _users_cache
+        if cached is not None and cached[0] == key and cached[1] == mtime:
+            return list(cached[2])
+        try:
+            raw = _yaml().load(path.read_text(encoding="utf-8")) or {}
+            users = tuple(WatchUsersFile.model_validate(raw).users)
+        except Exception:
+            logger.warning("Could not read watch users from %s", path)
+            return []
+        _users_cache = (key, mtime, users)
+        return list(users)
 
 
 def find_watch_user(path: Path, username: str) -> WatchUser | None:
@@ -160,6 +178,7 @@ def change_watch_password(
         with tmp.open("w", encoding="utf-8", newline="\n") as handle:
             yaml.dump(raw, handle)
         tmp.replace(path)
+        _invalidate_users_cache_unlocked()
     logger.info("Watch user %s set a new password hash", name)
 
 

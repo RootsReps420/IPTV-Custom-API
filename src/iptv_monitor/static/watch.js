@@ -48,12 +48,12 @@ const termsPanel = document.getElementById("terms-panel");
 const termsAgree = document.getElementById("terms-agree");
 const termsOk = document.getElementById("terms-ok");
 
-/* mpegts.js default stash is 384KB. Multi-MB stash (old Medium/Large) waits
- * to fill before the first MSE append, so FHD live never shows a frame.
- * Small/Medium/Large only change how much cushion we try to keep after play. */
+/* Live stash is capped at 512KB so FHD still shows a frame quickly.
+ * Multi-MB stash used to wait to fill before the first MSE append.
+ * target = seconds of cushion after play (0.97× if it thins). */
 const BUFFER_PROFILES = {
   small: { target: 3, stash: 256 * 1024 },
-  medium: { target: 6, stash: 384 * 1024 },
+  medium: { target: 6, stash: 512 * 1024 },
   large: { target: 10, stash: 512 * 1024 },
 };
 
