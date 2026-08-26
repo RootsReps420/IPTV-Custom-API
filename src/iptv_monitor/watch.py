@@ -305,9 +305,11 @@ def register_watch(app: FastAPI, static_dir) -> None:
             "max_concurrent": cfg.max_concurrent,
             "slots": snap,
             "sync": None if needs_new else svc.guide.status(),
-            "media_token": None
-            if needs_new
-            else mint_media_token(_root(request), session.username),
+            "media_token": (
+                None
+                if needs_new or len((play_id or "").strip()) < 8
+                else mint_media_token(_root(request), session.username, play_id.strip())
+            ),
         }
         response = JSONResponse(payload)
         await _touch_presence(
@@ -526,7 +528,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
             range_header=None if vod else request.headers.get("range"),
             assume_mpegts=live_ts,
             remux_aac=vod,
-            access_token=mint_media_token(_root(request), user),
+            access_token=mint_media_token(_root(request), user, sid),
             on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n),
         )
 
@@ -546,7 +548,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
             rewrite_uris=True,
             sid=sid,
             range_header=request.headers.get("range"),
-            access_token=mint_media_token(_root(request), user),
+            access_token=mint_media_token(_root(request), user, sid),
             on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n),
         )
 

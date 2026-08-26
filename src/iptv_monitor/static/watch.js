@@ -1078,12 +1078,76 @@ function renderSyncPanel(sync) {
 }
 
 function setRefreshEnabled(enabled) {
-  const on = !!enabled;
-  if (refreshPlaylistBtn) {
-    refreshPlaylistBtn.disabled = !on;
+  paintRefreshButtons(!!enabled);
+}
+
+const SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+const SYNC_COOLDOWN_KEY = {
+  playlist: "watch_sync_cd_playlist",
+  epg: "watch_sync_cd_epg",
+};
+const SYNC_BTN_LABEL = {
+  playlist: "Refresh list",
+  epg: "Refresh EPG",
+};
+
+function syncCooldownLeft(kind) {
+  try {
+    const started = Number(localStorage.getItem(SYNC_COOLDOWN_KEY[kind]) || 0);
+    if (!started) {
+      return 0;
+    }
+    return Math.max(0, started + SYNC_COOLDOWN_MS - Date.now());
+  } catch {
+    return 0;
   }
-  if (refreshEpgBtn) {
-    refreshEpgBtn.disabled = !on;
+}
+
+function markSyncClicked(kind) {
+  try {
+    localStorage.setItem(SYNC_COOLDOWN_KEY[kind], String(Date.now()));
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatCooldown(ms) {
+  const total = Math.ceil(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m <= 0) {
+    return `Wait ${s}s`;
+  }
+  return `Wait ${m}:${String(s).padStart(2, "0")}`;
+}
+
+let refreshCooldownTimer = null;
+
+function paintRefreshButtons(canRefresh) {
+  const allowed = canRefresh !== false && state.configured && !state.syncBusy;
+  const rows = [
+    ["playlist", refreshPlaylistBtn],
+    ["epg", refreshEpgBtn],
+  ];
+  let ticking = false;
+  for (const [kind, btn] of rows) {
+    if (!btn) {
+      continue;
+    }
+    const left = syncCooldownLeft(kind);
+    if (left > 0) {
+      ticking = true;
+    }
+    const on = allowed && left <= 0;
+    btn.disabled = !on;
+    btn.textContent = left > 0 ? formatCooldown(left) : SYNC_BTN_LABEL[kind];
+  }
+  if (ticking && !refreshCooldownTimer) {
+    refreshCooldownTimer = window.setInterval(() => paintRefreshButtons(), 1000);
+  }
+  if (!ticking && refreshCooldownTimer) {
+    clearInterval(refreshCooldownTimer);
+    refreshCooldownTimer = null;
   }
 }
 
@@ -2263,10 +2327,26 @@ document.getElementById("logout-btn").addEventListener("click", () => {
 });
 
 if (refreshPlaylistBtn) {
-  refreshPlaylistBtn.addEventListener("click", () => requestSync("playlist"));
+  refreshPlaylistBtn.addEventListener("click", () => {
+    if (syncCooldownLeft("playlist") > 0) {
+      paintRefreshButtons();
+      return;
+    }
+    markSyncClicked("playlist");
+    paintRefreshButtons(false);
+    requestSync("playlist");
+  });
 }
 if (refreshEpgBtn) {
-  refreshEpgBtn.addEventListener("click", () => requestSync("epg"));
+  refreshEpgBtn.addEventListener("click", () => {
+    if (syncCooldownLeft("epg") > 0) {
+      paintRefreshButtons();
+      return;
+    }
+    markSyncClicked("epg");
+    paintRefreshButtons(false);
+    requestSync("epg");
+  });
 }
 
 document.querySelectorAll("[data-tab]").forEach((button) => {

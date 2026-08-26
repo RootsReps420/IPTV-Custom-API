@@ -256,14 +256,21 @@ def refuse_locked_login(*, ip: str, username: str = "") -> None:
 MEDIA_TOKEN_MAX_AGE = 8 * 3600
 
 
-def mint_media_token(root: Path, username: str) -> str:
-    """Short-lived token for <video> HLS on iOS, which often omits cookies."""
-    return media_serializer(root).dumps({"u": username})
+def mint_media_token(root: Path, username: str, sid: str) -> str:
+    """iOS native HLS often omits cookies. Token lasts 8h so a long film/live stay up.
+
+    Bound to this tab's play_id (`sid`). A copied `k` without that sid cannot play.
+    """
+    play = (sid or "").strip()
+    if len(play) < 8:
+        raise ValueError("sid")
+    return media_serializer(root).dumps({"u": username, "sid": play})
 
 
-def username_from_media_token(root: Path, token: str) -> str | None:
+def username_from_media_token(root: Path, token: str, sid: str) -> str | None:
     raw = (token or "").strip()
-    if not raw:
+    play = (sid or "").strip()
+    if not raw or len(play) < 8:
         return None
     try:
         loaded = media_serializer(root).loads(
@@ -279,7 +286,8 @@ def username_from_media_token(root: Path, token: str) -> str | None:
     if not isinstance(payload, dict):
         return None
     name = str(payload.get("u") or "").strip()
-    if not name or is_kicked(name, issued):
+    bound = str(payload.get("sid") or "").strip()
+    if not name or bound != play or is_kicked(name, issued):
         return None
     return name
 
@@ -404,11 +412,16 @@ def require_username(request: Request, root: Path, *, allow_password_change: boo
 
 
 def require_player_user(request: Request, root: Path) -> str:
-    """Cookie first; media token `k` for iOS native HLS (AVPlayer skips cookies)."""
+    """Cookie first; media token `k` for iOS native HLS (AVPlayer skips cookies).
+
+    `k` must match this request's `sid` (tab play_id). TTL is 8 hours so long
+    playback is not cut off; stealing `k` without that sid is not enough.
+    """
     name = current_username(request, root)
     if not name:
         token = (request.query_params.get("k") or "").strip()
-        name = username_from_media_token(root, token)
+        sid = (request.query_params.get("sid") or "").strip()
+        name = username_from_media_token(root, token, sid)
     if not name:
         raise HTTPException(status_code=401, detail="Sign in to watch.")
     refuse_password_change_required(root, name)
