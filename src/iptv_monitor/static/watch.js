@@ -770,19 +770,21 @@ function setGuide(sync) {
     return;
   }
   const age = Number(sync.age_seconds);
-  let extra;
-  if (!Number.isFinite(age)) {
-    extra = `${sync.streams || 0} ch`;
-  } else if (age < 120) {
-    extra = "just now";
-  } else if (age < 3600) {
-    extra = `${Math.floor(age / 60)}m ago`;
-  } else {
-    extra = `${Math.floor(age / 3600)}h ago`;
+  let ageBit = "";
+  if (Number.isFinite(age)) {
+    if (age < 120) {
+      ageBit = "just now";
+    } else if (age < 3600) {
+      ageBit = `${Math.floor(age / 60)}m ago`;
+    } else {
+      ageBit = `${Math.floor(age / 3600)}h ago`;
+    }
   }
+  const ch = Number(sync.streams);
+  const chBit = Number.isFinite(ch) ? `${ch} ch` : "";
   const epg = Number(sync.epg_channels);
-  const epgBit = Number.isFinite(epg) && epg > 0 ? ` · ${epg} EPG` : "";
-  guideStat.textContent = `${extra}${epgBit}`;
+  const epgBit = Number.isFinite(epg) && epg > 0 ? `${epg} EPG` : "";
+  guideStat.textContent = [chBit, epgBit, ageBit].filter(Boolean).join(" · ") || "—";
 }
 
 let guideTimer = null;

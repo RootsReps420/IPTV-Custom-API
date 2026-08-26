@@ -123,6 +123,8 @@ _M3U_DROP_LEAF = frozenset(
         "league two",
         "world cricket",
         "hulu",
+        "entertainment",
+        "news",
     }
 )
 # US / unprefixed packs only. UK | twins stay unless the leaf is in _M3U_DROP_LEAF.
@@ -857,11 +859,32 @@ class WatchGuide:
             return None
         return max(0.0, time.time() - lib.updated_at)
 
+    def visible_live_counts(self) -> tuple[int, int, int]:
+        """TV-tab groups, channels, and channels that have EPG — after the live group filter."""
+        groups = 0
+        streams = 0
+        with_epg = 0
+        for cat in self.data.categories:
+            name = str(cat.get("category_name") or "")
+            if self.live_from_m3u():
+                if not is_wanted_m3u_live_group(name):
+                    continue
+            elif not is_wanted_live_group(name):
+                continue
+            groups += 1
+            rows = self.data.by_cat.get(str(cat.get("category_id") or ""), [])
+            streams += len(rows)
+            for stream in rows:
+                if self._epg_rows_for_stream(stream):
+                    with_epg += 1
+        return groups, streams, with_epg
+
     def status(self) -> dict[str, Any]:
         age = self.age_seconds()
         last_ok = None
         if self.data.updated_at:
             last_ok = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.data.updated_at))
+        groups, streams, epg_channels = self.visible_live_counts()
         with self._lock:
             elapsed = None
             if self.running and self.sync_started_at:
@@ -883,11 +906,11 @@ class WatchGuide:
                 "epg_bytes": self.epg_bytes,
                 "last_ok": last_ok,
                 "age_seconds": None if age is None else int(age),
-                "categories": len(self.data.categories),
-                "streams": len(self.data.streams),
+                "categories": groups,
+                "streams": streams,
                 "movies": len(self.vod.items),
                 "series": len(self.series.items),
-                "epg_channels": len(self.data.epg),
+                "epg_channels": epg_channels,
                 "live_source": self.data.source or "xtream",
                 "interval_seconds": int(self.interval_seconds),
                 "library_interval_seconds": int(self.library_interval_seconds),
