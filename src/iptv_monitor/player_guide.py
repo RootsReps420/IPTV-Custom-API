@@ -96,11 +96,13 @@ def is_wanted_live_group(name: str) -> bool:
 
 _M3U_COUNTRY_PREFIX = re.compile(r"^(de|ch|ca)\s*\|", re.I)
 _M3U_247 = re.compile(r"24\s*/\s*7")
+_M3U_LOCALS = re.compile(r"\blocals?\b")
 _M3U_DROP_LEAF = frozenset(
     {
         "austria",
         "new zealand",
         "australia",
+        "ireland",
         "telemundo",
         "unimas",
         "univision",
@@ -112,6 +114,50 @@ _M3U_DROP_LEAF = frozenset(
         "espn plus",
         "espn+",
         "espn",
+        "kids",
+        "scottish football",
+        "viaplay",
+        "setanta",
+        "dirtvision",
+        "league one",
+        "league two",
+        "world cricket",
+        "hulu",
+    }
+)
+# US / unprefixed packs only. UK | twins stay unless the leaf is in _M3U_DROP_LEAF.
+_M3U_DROP_UNPREFIXED = frozenset(
+    {
+        "epgenius",
+        "tv guide",
+        "sports",
+        "big brother",
+        "lifestyle",
+        "documentary",
+        "kids",
+        "nfl",
+        "ncaa",
+        "nba",
+        "nba arena",
+        "wnba",
+        "mlb",
+        "milb",
+        "nhl",
+        "spectrum network",
+        "victory +",
+        "victory+",
+        "ahl",
+        "tennis",
+        "mls",
+        "liga portugal betclic pt",
+        "apple tv f1 ppv",
+        "b1g+",
+        "b1g",
+        "triller tv",
+        "thriller tv",
+        "hbo max ppv",
+        "peacock events",
+        "pluto tv",
     }
 )
 
@@ -123,7 +169,7 @@ def _norm_m3u_group(name: str) -> str:
 
 
 def is_wanted_m3u_live_group(name: str) -> bool:
-    """Magnum M3U TV tab: hide DE/CH/AT/NZ/AU/CA packs, Spanish, relax, 24/7, FLO, ESPN+."""
+    """Magnum M3U TV tab: country packs, US locals/sports apps, 24/7, and listed leftovers."""
     norm = _norm_m3u_group(name)
     if not norm:
         return False
@@ -131,8 +177,13 @@ def is_wanted_m3u_live_group(name: str) -> bool:
         return False
     if _M3U_247.search(norm):
         return False
+    if _M3U_LOCALS.search(norm):
+        return False
     leaf = norm.split("|")[-1].strip()
     if leaf in _M3U_DROP_LEAF or norm in _M3U_DROP_LEAF:
+        return False
+    uk = norm.startswith("uk |")
+    if not uk and (leaf in _M3U_DROP_UNPREFIXED or norm in _M3U_DROP_UNPREFIXED):
         return False
     return True
 
