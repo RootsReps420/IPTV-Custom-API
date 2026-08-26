@@ -310,6 +310,7 @@ class GuideData:
     aliases: dict[str, str] = field(default_factory=dict)
     updated_at: float = 0.0
     epg_updated_at: float = 0.0
+    source: str = "xtream"
 
 
 def index_items(
@@ -430,6 +431,9 @@ class WatchGuide:
                     if str(key).strip() and str(val).strip()
                 }
         by_cat, by_id = index_streams(streams)
+        source = str(live.get("source") or "").strip().lower() if isinstance(live, dict) else ""
+        if source not in {"m3u", "xtream"}:
+            source = "m3u" if any(bool(row.get("playback_url")) for row in streams[:8]) else "xtream"
         self.data = GuideData(
             categories=with_counts(categories, by_cat),
             streams=streams,
@@ -439,6 +443,7 @@ class WatchGuide:
             aliases=aliases,
             updated_at=updated,
             epg_updated_at=epg_updated,
+            source=source,
         )
         self.link_stream_aliases(persist=False)
         self.vod = self._load_library(vod_path, "stream_id")
@@ -451,24 +456,49 @@ class WatchGuide:
             len(self.data.epg),
         )
 
-    def replace_live(self, categories: list[dict[str, Any]], streams: list[dict[str, Any]]) -> None:
+    def replace_live(
+        self,
+        categories: list[dict[str, Any]],
+        streams: list[dict[str, Any]],
+        *,
+        source: str = "xtream",
+    ) -> None:
         by_cat, by_id = index_streams(streams)
         now = time.time()
+        origin = "m3u" if source == "m3u" else "xtream"
+        prev_source = self.data.source
+        epg = self.data.epg
+        aliases = self.data.aliases
+        epg_updated = self.data.epg_updated_at
+        switched = origin != prev_source
+        if switched:
+            epg = {}
+            aliases = {}
+            epg_updated = 0.0
         self.data = GuideData(
             categories=with_counts(categories, by_cat),
             streams=streams,
             by_cat=by_cat,
             by_id=by_id,
-            epg=self.data.epg,
-            aliases=self.data.aliases,
+            epg=epg,
+            aliases=aliases,
             updated_at=now,
-            epg_updated_at=self.data.epg_updated_at,
+            epg_updated_at=epg_updated,
+            source=origin,
         )
-        self.link_stream_aliases(persist=True)
+        if switched:
+            self._write_epg()
+        else:
+            self.link_stream_aliases(persist=True)
         live_path, _vod, _series, _epg, _meta = self.paths()
         atomic_write_json(
             live_path,
-            {"updated_at": now, "categories": self.data.categories, "streams": streams},
+            {
+                "updated_at": now,
+                "source": origin,
+                "categories": self.data.categories,
+                "streams": streams,
+            },
         )
 
     def _replace_library(
@@ -764,14 +794,24 @@ class WatchGuide:
                 "movies": len(self.vod.items),
                 "series": len(self.series.items),
                 "epg_channels": len(self.data.epg),
+                "live_source": self.data.source or "xtream",
                 "interval_seconds": int(self.interval_seconds),
                 "library_interval_seconds": int(self.library_interval_seconds),
                 "last_error": self.last_error or None,
             }
 
+    def live_from_m3u(self) -> bool:
+        return self.data.source == "m3u"
+
+    def live_playback_url(self, stream_id: str) -> str:
+        row = self.data.by_id.get(str(stream_id or "").strip()) or {}
+        return str(row.get("playback_url") or "").strip()
+
     def live_categories(self) -> list[dict[str, Any]] | None:
         if not self.has_live():
             return None
+        if self.live_from_m3u():
+            return list(self.data.categories)
         return [
             row
             for row in self.data.categories
@@ -792,7 +832,9 @@ class WatchGuide:
             ),
             None,
         )
-        if not cat or not is_wanted_live_group(str(cat.get("category_name") or "")):
+        if not cat:
+            return []
+        if not self.live_from_m3u() and not is_wanted_live_group(str(cat.get("category_name") or "")):
             return []
         rows = self.data.by_cat.get(cid, [])
         return [self.decorate(stream) for stream in rows]
@@ -834,6 +876,9 @@ class WatchGuide:
 
     def decorate(self, stream: dict[str, Any]) -> dict[str, Any]:
         out = dict(stream)
+        out.pop("playback_url", None)
+        out.pop("url", None)
+        out.pop("direct_source", None)
         current, nxt = self.now_next_for_stream(out)
         title = (current or {}).get("title") or ""
         if not title:

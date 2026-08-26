@@ -2,12 +2,14 @@
 
 Runs beside the dashboard. Live, EPG, and movies/shows refresh every
 watch_sync_seconds / watch_library_sync_seconds (default 4 hours).
-Category clicks then read disk. Credentials never go in the JSON files.
+Category clicks then read disk. Magnum live M3U playback URLs stay in state/
+on the server and are stripped from every browser payload.
 """
 
 from __future__ import annotations
 
 import asyncio
+import gzip
 import logging
 import re
 import time
@@ -28,6 +30,13 @@ from iptv_monitor.player_guide import (
     is_wanted_live_group,
     listings_to_guide_rows,
 )
+from iptv_monitor.player_m3u import (
+    M3U_MAX_BYTES,
+    download_bytes,
+    download_file,
+    header_host,
+    live_from_m3u_text,
+)
 from iptv_monitor.player_xtream import (
     _CATEGORY_KEYS,
     _LIVE_KEYS,
@@ -45,6 +54,7 @@ LIVE_TIMEOUT = httpx.Timeout(connect=15.0, read=600.0, write=60.0, pool=15.0)
 CAT_TIMEOUT = httpx.Timeout(connect=10.0, read=70.0, write=30.0, pool=10.0)
 CAT_RETRY_TIMEOUT = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=10.0)
 EPG_TIMEOUT = httpx.Timeout(connect=8.0, read=25.0, write=15.0, pool=8.0)
+PLAYLIST_TIMEOUT = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
 FORCE_SYNC_NAME = "watch_force_sync"
 FORCE_PLAYLIST_NAME = "watch_force_playlist"
 FORCE_EPG_NAME = "watch_force_epg"
@@ -94,8 +104,19 @@ def parse_xmltv_time(value: str) -> int | None:
     return int(dt.timestamp())
 
 
+def _open_xmltv(path: Path):
+    with path.open("rb") as probe:
+        magic = probe.read(2)
+    if magic == b"\x1f\x8b":
+        return gzip.open(path, "rb")
+    return path.open("rb")
+
+
 def parse_xmltv_file(path: Path, now: int) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
-    """Keep programmes in a sliding window. elem.clear() so a 100MB XML does not stay in RAM."""
+    """Keep programmes in a sliding window. elem.clear() so a large XML does not stay in RAM.
+
+    GitHub XMLTV is often .xml.gz; iterparse the gzip stream instead of writing hundreds of MB to disk.
+    """
     floor = now - EPG_FLOOR
     horizon = now + EPG_HORIZON
     channels: dict[str, list[dict[str, Any]]] = {}
@@ -105,38 +126,39 @@ def parse_xmltv_file(path: Path, now: int) -> tuple[dict[str, list[dict[str, Any
         for key in epg_alias_keys(raw):
             aliases.setdefault(key, canon)
 
-    for _event, elem in ET.iterparse(path, events=("end",)):
-        tag = _local_name(elem.tag)
-        if tag == "channel":
-            cid = str(elem.attrib.get("id") or "").strip()
-            if cid:
-                add_alias(cid, cid)
-                for child in list(elem):
-                    if _local_name(child.tag) == "display-name":
-                        add_alias("".join(child.itertext()), cid)
+    with _open_xmltv(path) as handle:
+        for _event, elem in ET.iterparse(handle, events=("end",)):
+            tag = _local_name(elem.tag)
+            if tag == "channel":
+                cid = str(elem.attrib.get("id") or "").strip()
+                if cid:
+                    add_alias(cid, cid)
+                    for child in list(elem):
+                        if _local_name(child.tag) == "display-name":
+                            add_alias("".join(child.itertext()), cid)
+                elem.clear()
+                continue
+            if tag != "programme":
+                continue
+            channel = str(elem.attrib.get("channel") or "").strip()
+            start = parse_xmltv_time(elem.attrib.get("start") or "")
+            stop = parse_xmltv_time(elem.attrib.get("stop") or "")
+            if not channel or start is None or stop is None or stop <= floor or start >= horizon:
+                elem.clear()
+                continue
+            add_alias(channel, channel)
+            title = ""
+            desc = ""
+            for child in list(elem):
+                name = _local_name(child.tag)
+                if name == "title" and not title:
+                    title = decode_xtream_text("".join(child.itertext()))
+                elif name in {"desc", "sub-title"} and not desc:
+                    desc = decode_xtream_text("".join(child.itertext()))[:400]
+            bucket = channels.setdefault(channel, [])
+            if len(bucket) < EPG_PER_CHANNEL:
+                bucket.append({"start": start, "stop": stop, "title": title, "desc": desc})
             elem.clear()
-            continue
-        if tag != "programme":
-            continue
-        channel = str(elem.attrib.get("channel") or "").strip()
-        start = parse_xmltv_time(elem.attrib.get("start") or "")
-        stop = parse_xmltv_time(elem.attrib.get("stop") or "")
-        if not channel or start is None or stop is None or stop <= floor or start >= horizon:
-            elem.clear()
-            continue
-        add_alias(channel, channel)
-        title = ""
-        desc = ""
-        for child in list(elem):
-            name = _local_name(child.tag)
-            if name == "title" and not title:
-                title = decode_xtream_text("".join(child.itertext()))
-            elif name in {"desc", "sub-title"} and not desc:
-                desc = decode_xtream_text("".join(child.itertext()))[:400]
-        bucket = channels.setdefault(channel, [])
-        if len(bucket) < EPG_PER_CHANNEL:
-            bucket.append({"start": start, "stop": stop, "title": title, "desc": desc})
-        elem.clear()
     for rows in channels.values():
         rows.sort(key=lambda row: int(row["start"]))
     return channels, aliases
@@ -255,6 +277,13 @@ class WatchSyncer:
             need_live = age is None or age >= interval
             need_lib = not self._library_fresh(self.guide.vod) or not self._library_fresh(self.guide.series)
             need_epg = self.guide.has_live() and not self._epg_fresh()
+            try:
+                cfg = load_player_config(self.root)
+                if cfg.configured and bool(cfg.live_m3u_url) != self.guide.live_from_m3u():
+                    need_live = True
+                    need_epg = True
+            except Exception:
+                pass
             if force_playlist or force_epg or need_live or need_lib or need_epg:
                 try:
                     await self.sync_once(
@@ -279,6 +308,8 @@ class WatchSyncer:
             stamp = float(self.guide.data.epg_updated_at or 0)
             if stamp > 0 and self.guide.has_live():
                 waits.append(interval - (time.time() - stamp))
+            elif self.guide.has_live() and not self._epg_fresh():
+                waits.append(180)
             wait = min(waits) if waits else 60
             if wait <= 0 and not self._force_pending():
                 wait = 60
@@ -307,10 +338,18 @@ class WatchSyncer:
             self.guide.interval_seconds = interval
             self.guide.library_interval_seconds = lib_interval
             age = self.guide.age_seconds()
-            live_fresh = (not force_playlist) and bool(self.guide.has_live() and age is not None and age < interval)
+            want_m3u = bool(cfg.live_m3u_url)
+            source_mismatch = want_m3u != self.guide.live_from_m3u()
+            live_fresh = (
+                (not force_playlist)
+                and (not source_mismatch)
+                and bool(self.guide.has_live() and age is not None and age < interval)
+            )
             vod_fresh = (not force_playlist) and self._library_fresh(self.guide.vod)
             series_fresh = (not force_playlist) and self._library_fresh(self.guide.series)
+            epg_ok = (not force_epg) and (not source_mismatch) and self._epg_fresh()
             try:
+                header_epg = ""
                 if live_fresh:
                     logger.info(
                         "Watch guide live still fresh (%ss old, %s streams); skipping live download",
@@ -319,15 +358,18 @@ class WatchSyncer:
                     )
                 else:
                     self.guide.set_phase("live", message="Downloading live channels…")
-                    categories, streams = await asyncio.to_thread(self._download_live, cfg)
-                    self.guide.replace_live(categories, streams)
+                    categories, streams, header_epg = await asyncio.to_thread(
+                        self._download_live, cfg
+                    )
+                    source = "m3u" if want_m3u else "xtream"
+                    self.guide.replace_live(categories, streams, source=source)
                     logger.info(
-                        "Watch guide live: %s categories, %s streams in %.1fs",
+                        "Watch guide live: %s categories, %s streams (%s) in %.1fs",
                         len(categories),
                         len(streams),
+                        source,
                         time.monotonic() - started,
                     )
-                epg_ok = (not force_epg) and self._epg_fresh()
                 if vod_fresh:
                     logger.info(
                         "Watch guide movies still fresh (%ss old, %s titles); skipping",
@@ -366,8 +408,19 @@ class WatchSyncer:
                 else:
                     self.guide.set_phase("epg", message="Downloading EPG…")
                     epg_started = time.monotonic()
+                    epg_url = cfg.live_epg_url or header_epg
+                    use_xmltv = bool(epg_url) or want_m3u
                     try:
-                        filled = await asyncio.to_thread(self._download_short_epg, cfg)
+                        if use_xmltv:
+                            if not epg_url:
+                                logger.warning(
+                                    "Watch guide EPG skipped: live M3U has no url-tvg and live_epg is empty"
+                                )
+                                filled = 0
+                            else:
+                                filled = await asyncio.to_thread(self._download_xmltv_epg, epg_url)
+                        else:
+                            filled = await asyncio.to_thread(self._download_short_epg, cfg)
                         logger.info(
                             "Watch guide EPG: %s channels in %.1fs",
                             filled,
@@ -392,8 +445,10 @@ class WatchSyncer:
             headers={"User-Agent": _STREAM_UA, "Accept": "*/*"},
         )
 
-    def _download_live(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        return self._download_by_category(
+    def _download_live(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+        if cfg.live_m3u_url:
+            return self._download_live_m3u(cfg)
+        categories, streams = self._download_by_category(
             cfg,
             cat_action="get_live_categories",
             list_action="get_live_streams",
@@ -402,6 +457,58 @@ class WatchSyncer:
             progress="Live",
             previous_by_cat=self.guide.data.by_cat,
         )
+        return categories, streams, ""
+
+    def _download_live_m3u(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+        url = cfg.live_m3u_url
+        logger.info("Watch guide live: downloading M3U from %s", header_host(url))
+        self.guide.set_phase("live", message="Downloading live playlist…")
+        data = download_bytes(url, max_bytes=M3U_MAX_BYTES, timeout=PLAYLIST_TIMEOUT)
+        text = data.decode("utf-8", errors="replace")
+        epg_url, categories, streams = live_from_m3u_text(text)
+        keep = [
+            row
+            for row in categories
+            if not is_catch_all_category(str(row.get("category_name") or ""))
+        ]
+        if keep and len(keep) < len(categories):
+            keep_ids = {str(row.get("category_id") or "") for row in keep}
+            streams = [row for row in streams if str(row.get("category_id") or "") in keep_ids]
+            categories = keep
+            logger.info("Watch guide live M3U: skipped catch-all groups")
+        if not streams:
+            raise RuntimeError("Live M3U contained no channels")
+        logger.info(
+            "Watch guide live M3U: %s groups, %s channels",
+            len(categories),
+            len(streams),
+        )
+        return categories, streams, epg_url
+
+    def _download_xmltv_epg(self, url: str) -> int:
+        folder = _state_dir(self.root)
+        raw_path = folder / "watch_epg.bin.tmp"
+        xml_path = folder / "watch_epg.xml.tmp"
+        logger.info("Watch guide EPG: downloading XMLTV from %s", header_host(url))
+
+        def progress(written: int, total: int) -> None:
+            self.guide.set_epg_bytes(written, total)
+
+        try:
+            download_file(
+                url,
+                raw_path,
+                max_bytes=XMLTV_MAX_BYTES,
+                timeout=PLAYLIST_TIMEOUT,
+                on_bytes=progress,
+            )
+            self.guide.set_phase("epg", message="Parsing EPG…")
+            channels, aliases = parse_xmltv_file(raw_path, int(time.time()))
+            self.guide.replace_epg(channels, aliases)
+            return len(channels)
+        finally:
+            raw_path.unlink(missing_ok=True)
+            xml_path.unlink(missing_ok=True)
 
     def _download_vod(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         return self._download_by_category(

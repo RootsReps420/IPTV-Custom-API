@@ -1,8 +1,8 @@
 """Xtream player_api client for the /watch catalogue. Credentials stay on the server.
 
-Fetches categories, streams, EPG, VOD info, series info. Responses are
-whitelisted field-by-field before JSON hits the browser. Stream lists are
-cached ~30 minutes because this panel can take a minute to return them.
+Fetches movies/shows from Xtream player_api. Live TV uses the Magnum M3U in
+player.yaml when live_m3u is set; otherwise it falls back to get_live_streams.
+Responses are whitelisted field-by-field before JSON hits the browser.
 Placeholder dns hosts (portal.example) count as unconfigured.
 """
 
@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from ruamel.yaml import YAML
 
 from iptv_monitor.config import resolve_paths
@@ -52,6 +52,24 @@ class PlayerConfig(BaseModel):
     dns: str = ""
     username: str = ""
     password: str = ""
+    # Magnum live M3U for the TV tab. Empty = Xtream get_live_streams (legacy).
+    live_m3u: str = ""
+    live_epg: str = ""
+
+    @field_validator("live_m3u", "live_epg", mode="before")
+    @classmethod
+    def _blank_url(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @property
+    def live_m3u_url(self) -> str:
+        return (self.live_m3u or "").strip()
+
+    @property
+    def live_epg_url(self) -> str:
+        return (self.live_epg or "").strip()
 
     @property
     def configured(self) -> bool:
@@ -309,6 +327,8 @@ class XtreamCatalogue:
                 cached = self.guide.series_categories()
             if cached is not None:
                 return cached
+            if kind == "live" and cfg.live_m3u_url:
+                return []
             if self.guide.running:
                 return []
         action = {
@@ -327,10 +347,12 @@ class XtreamCatalogue:
         if self.guide is not None:
             cached = self.guide.live_streams(category_id)
             if cached is not None:
-                await self._await_epg_backfill(cfg, category_id, cached)
-                refreshed = self.guide.live_streams(category_id)
-                return refreshed if refreshed is not None else cached
-            if self.guide.running:
+                if not cfg.live_m3u_url:
+                    await self._await_epg_backfill(cfg, category_id, cached)
+                    refreshed = self.guide.live_streams(category_id)
+                    return refreshed if refreshed is not None else cached
+                return cached
+            if cfg.live_m3u_url or self.guide.running:
                 return []
         extra = {"category_id": category_id} if category_id else {}
         rows = [_pick(item, _LIVE_KEYS) for item in _as_list(await self._api(cfg, "get_live_streams", extra))]
@@ -443,6 +465,8 @@ class XtreamCatalogue:
             cached = self.guide.listings_for_stream(stream_id)
             if cached is not None:
                 return cached
+            if cfg.live_m3u_url:
+                return []
         payload = await self._api(
             cfg, "get_short_epg", {"stream_id": stream_id, "limit": "8"}, cache=True
         )

@@ -1,10 +1,17 @@
-# Copy to player.yaml (gitignored). Shared /watch Xtream account (max 5 streams).
+# Copy to player.yaml (gitignored). Shared /watch account (max 5 streams).
 # Overview: Watch portal DNS. Magnum Switch on /owner writes this `dns` field
-# (no EPGenius). /watch follows it after a playlist refresh.
+# (no EPGenius). Movies/Shows follow it after a playlist refresh.
 # Empty username/password = Watch shows "not configured".
 # Put the dedicated 5-connection credentials here on the VPS only. Never commit.
+#
+# Live TV: set live_m3u to the Magnum playlist URL. The TV tab then uses that
+# M3U (and live_epg, or url-tvg from the M3U header) instead of Xtream live.
+# Movies and Shows still use dns/username/password above. Leave both empty to
+# keep the old Xtream live list.
 
 max_concurrent: 5
 dns: "http://portal.example"
 username: ""
 password: ""
+live_m3u: ""
+live_epg: ""

@@ -1,8 +1,9 @@
 """/watch login and player API routes.
 
 Friends get a cookie after POST /api/watch/login (config/watch_users.yaml).
-Catalogue JSON is sanitized Xtream player_api (no panel user/pass).
-Media is same-origin /api/player/media/... which proxies the panel.
+TV uses the Magnum live M3U in player.yaml when set; movies/shows use Xtream.
+Media is same-origin /api/player/media/... which proxies the stream.
+Playback URLs never go to the browser.
 
 Slot heartbeats cap concurrent playback at player.yaml max_concurrent (default 5).
 Watch uses config/player.yaml only. Failover playlists.yaml is never a Watch source.
@@ -33,6 +34,7 @@ from iptv_monitor.player_auth import (
     set_session,
 )
 from iptv_monitor.player_proxy import load_signed_url, panel_media_url, proxy_url
+from iptv_monitor.player_m3u import with_live_ext
 from iptv_monitor.player_guide import WatchGuide
 from iptv_monitor.player_presence import PresenceTracker
 from iptv_monitor.player_slots import SlotTracker
@@ -454,7 +456,15 @@ def register_watch(app: FastAPI, static_dir) -> None:
             stream_id=stream_id,
             username=user,
         )
-        url = panel_media_url(cfg, kind, stream_id, ext)
+        url = ""
+        if kind == "live":
+            playback = svc.guide.live_playback_url(stream_id)
+            if playback:
+                url = with_live_ext(playback, ext)
+            elif cfg.live_m3u_url:
+                raise HTTPException(status_code=404, detail="Unknown live stream.")
+        if not url:
+            url = panel_media_url(cfg, kind, stream_id, ext)
         live_ts = kind == "live" and ext.lstrip(".").lower() == "ts"
         vod = kind in {"movie", "series"} and ext.lstrip(".").lower() not in {"m3u8", "mpd"}
         serializer = None if live_ts else fetch_serializer(_root(request))

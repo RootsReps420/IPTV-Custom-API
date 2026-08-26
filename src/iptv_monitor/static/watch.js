@@ -1402,7 +1402,7 @@ function renderCategories() {
         cat.stream_count != null && cat.stream_count !== ""
           ? ` (${esc(cat.stream_count)})`
           : "";
-      return `<button type="button" class="watch-cat${here}" data-cat="${esc(id)}"><span class="watch-cat-mark">${esc(catMark(name))}</span><span>${esc(name)}${count}</span></button>`;
+      return `<button type="button" class="watch-cat${here}" data-cat="${esc(id)}"><span class="watch-cat-mark">${esc(catMark(name))}</span><span class="watch-cat-label">${esc(name)}${count}</span></button>`;
     })
     .join("");
 }
@@ -1499,7 +1499,7 @@ function renderSearchNav() {
       const extra = state.searchHits.live.length || state.searchHits.movies.length || state.searchHits.series.length
         ? ` (${esc(count)})`
         : "";
-      return `<button type="button" class="watch-cat${here}" data-search-kind="${id}"><span class="watch-cat-mark">${esc(label.slice(0, 2))}</span><span>${esc(label)}${extra}</span></button>`;
+      return `<button type="button" class="watch-cat${here}" data-search-kind="${id}"><span class="watch-cat-mark">${esc(label.slice(0, 2))}</span><span class="watch-cat-label">${esc(label)}${extra}</span></button>`;
     })
     .join("");
 }
