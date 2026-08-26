@@ -8,17 +8,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Watch · Portal Monitor</title>
+  <title>RootsIPTV</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=43" />
+  <link rel="stylesheet" href="/static/styles.css?v=44" />
 </head>
 <body class="watch-body">
   <div class="grid-bg" aria-hidden="true"></div>
 
   <section id="login-panel" class="watch-login">
-    <p class="eyebrow">IPTV · Watch</p>
+    <p class="eyebrow">RootsIPTV</p>
     <h1>Sign in</h1>
     <p class="history-note">Friend logins only. This is not the Playlists / Switch page.</p>
     <form id="login-form" class="watch-login-form">
@@ -35,6 +35,24 @@
     </form>
   </section>
 
+  <section id="terms-panel" class="watch-terms" hidden>
+    <div class="watch-terms-card">
+      <p class="eyebrow">RootsIPTV</p>
+      <h1>Terms of use</h1>
+      <div class="watch-terms-copy">
+        <!-- Edit this block any time. Friends see it after every login. -->
+        <p>This is a private friend stream. Do not share the login, the site address, or any stream links.</p>
+        <p>The service can drop, buffer, or change DNS without notice. There is no uptime promise and no refunds — nobody is paying for a SLA.</p>
+        <p>Do not use this for anything illegal. Do not hammer Refresh list / Refresh EPG. If something is actually broken, tell Dan — do not spam the group chat.</p>
+      </div>
+      <label class="watch-terms-agree">
+        <input id="terms-agree" type="checkbox" />
+        <span>i agree to not whine like a bitch and report any technical issues to big boy dan</span>
+      </label>
+      <button type="button" class="switch-btn" id="terms-ok" disabled>OK</button>
+    </div>
+  </section>
+
   <div id="app-panel" class="watch-app" hidden>
     <p id="watch-banner" class="watch-banner" hidden></p>
     <div id="watch-sync" class="watch-sync" hidden>
@@ -47,14 +65,19 @@
     </div>
     <div class="watch-shell">
       <nav class="watch-rail" aria-label="Library">
-        <p class="watch-brand">Watch</p>
-        <button type="button" class="watch-rail-btn is-here" data-tab="live">TV</button>
-        <button type="button" class="watch-rail-btn" data-tab="movies">Movies</button>
-        <button type="button" class="watch-rail-btn" data-tab="series">Shows</button>
-        <button type="button" class="watch-rail-btn" id="search-btn" data-tab="search">Search</button>
+        <p class="watch-brand">RootsIPTV</p>
+        <div class="watch-rail-nav">
+          <button type="button" class="watch-rail-btn is-here" data-tab="live">TV</button>
+          <button type="button" class="watch-rail-btn" data-tab="movies">Movies</button>
+          <button type="button" class="watch-rail-btn" data-tab="series">Shows</button>
+          <button type="button" class="watch-rail-btn" id="search-btn" data-tab="search">Search</button>
+          <div class="watch-slots" title="How many streams are playing out of the shared cap">
+            <span>Slots</span>
+            <strong id="slot-stat">—</strong>
+          </div>
+        </div>
         <div class="watch-rail-foot">
           <div class="watch-rail-meta">
-            <span>Slots <strong id="slot-stat">—</strong></span>
             <span>Guide <strong id="guide-stat">—</strong></span>
             <span id="user-stat">—</span>
           </div>
@@ -102,6 +125,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=47"></script>
+  <script src="/static/watch.js?v=48"></script>
 </body>
 </html>

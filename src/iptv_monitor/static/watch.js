@@ -38,6 +38,9 @@ const searchBtn = document.getElementById("search-btn");
 const liveBadge = document.getElementById("live-badge");
 const bufferRow = document.getElementById("buffer-row");
 const watchSpinner = document.getElementById("watch-spinner");
+const termsPanel = document.getElementById("terms-panel");
+const termsAgree = document.getElementById("terms-agree");
+const termsOk = document.getElementById("terms-ok");
 
 /* mpegts.js default stash is 384KB. Multi-MB stash (old Medium/Large) waits
  * to fill before the first MSE append, so FHD live never shows a frame.
@@ -204,6 +207,7 @@ async function api(path, options = {}) {
     if (response.status === 401 && appPanel && !appPanel.hidden) {
       state.playingItem = null;
       state.playingLiveId = "";
+      setTermsAgreed(false);
       stopPlayback();
       showLogin();
       showBanner("You were signed out.", "bad");
@@ -834,13 +838,75 @@ function setSlots(slots) {
 }
 
 function showLogin() {
+  if (termsPanel) {
+    termsPanel.hidden = true;
+  }
   loginPanel.hidden = false;
   appPanel.hidden = true;
 }
 
 function showApp() {
+  if (termsPanel) {
+    termsPanel.hidden = true;
+  }
   loginPanel.hidden = true;
   appPanel.hidden = false;
+}
+
+function termsAgreed() {
+  try {
+    return sessionStorage.getItem("watch_terms_ok") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setTermsAgreed(ok) {
+  try {
+    if (ok) {
+      sessionStorage.setItem("watch_terms_ok", "1");
+    } else {
+      sessionStorage.removeItem("watch_terms_ok");
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function requireTerms() {
+  /* Every login (and each new tab) must tick the box before the player unlocks. */
+  if (termsAgreed()) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    if (!termsPanel || !termsAgree || !termsOk) {
+      resolve();
+      return;
+    }
+    loginPanel.hidden = true;
+    appPanel.hidden = true;
+    termsPanel.hidden = false;
+    termsAgree.checked = false;
+    termsOk.disabled = true;
+    const finish = () => {
+      termsOk.removeEventListener("click", onOk);
+      termsAgree.removeEventListener("change", onTick);
+      setTermsAgreed(true);
+      termsPanel.hidden = true;
+      resolve();
+    };
+    const onTick = () => {
+      termsOk.disabled = !termsAgree.checked;
+    };
+    const onOk = () => {
+      if (!termsAgree.checked) {
+        return;
+      }
+      finish();
+    };
+    termsAgree.addEventListener("change", onTick);
+    termsOk.addEventListener("click", onOk);
+  });
 }
 
 function destroyPlayers() {
@@ -1639,6 +1705,7 @@ async function boot() {
       showLogin();
       return;
     }
+    await requireTerms();
     state.user = me.username;
     state.configured = me.configured;
     userStat.textContent = me.username;
@@ -1683,6 +1750,7 @@ loginForm.addEventListener("submit", async (event) => {
         password: document.getElementById("login-pass").value,
       }),
     });
+    setTermsAgreed(false);
     await boot();
   } catch (error) {
     loginError.hidden = false;
@@ -1724,6 +1792,7 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
   } catch {
     /* ignore */
   }
+  setTermsAgreed(false);
   showLogin();
 });
 
