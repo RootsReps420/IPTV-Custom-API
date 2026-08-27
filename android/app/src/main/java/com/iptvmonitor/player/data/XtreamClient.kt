@@ -109,10 +109,29 @@ class XtreamClient(
     }
 
     fun shortEpg(streamId: String, limit: Int = 8): List<EpgEvent> {
-        val json = getJson(
-            "get_short_epg",
-            mapOf("stream_id" to streamId, "limit" to limit.toString()),
-        )
+        return listingsEpg("get_short_epg", streamId, limit)
+    }
+
+    fun tableEpg(streamId: String): List<EpgEvent> {
+        val table = listingsEpg("get_simple_data_table", streamId, limit = 0)
+        if (table.isNotEmpty()) return table
+        return listingsEpg("get_short_epg", streamId, limit = 24)
+    }
+
+    fun xmltvUrl(): String {
+        val url = base.toHttpUrlOrNull() ?: throw XtreamException("Invalid server URL")
+        return url.newBuilder()
+            .addPathSegment("xmltv.php")
+            .addQueryParameter("username", username)
+            .addQueryParameter("password", password)
+            .build()
+            .toString()
+    }
+
+    private fun listingsEpg(action: String, streamId: String, limit: Int): List<EpgEvent> {
+        val extra = mutableMapOf("stream_id" to streamId)
+        if (limit > 0) extra["limit"] = limit.toString()
+        val json = getJson(action, extra)
         val listings = json.optJSONArray("epg_listings") ?: return emptyList()
         val events = mutableListOf<EpgEvent>()
         for (i in 0 until listings.length()) {
@@ -128,7 +147,7 @@ class XtreamClient(
                 channelId = streamId,
             )
         }
-        return events
+        return events.sortedBy { it.startMs }
     }
 
     fun mediaUrl(kind: String, id: String, ext: String): String {

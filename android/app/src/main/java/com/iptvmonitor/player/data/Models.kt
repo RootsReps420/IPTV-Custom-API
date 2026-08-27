@@ -25,6 +25,11 @@ data class SavedPlaylist(
     val password: String = "",
     val m3uUrl: String = "",
     val epgUrl: String = "",
+    val hiddenLiveCategories: List<String> = emptyList(),
+    val hiddenMovieCategories: List<String> = emptyList(),
+    val hiddenSeriesCategories: List<String> = emptyList(),
+    val lastPlaylistSyncAt: Long = 0L,
+    val lastEpgSyncAt: Long = 0L,
 )
 
 data class Category(
@@ -42,6 +47,7 @@ data class CatalogItem(
     val tvgId: String = "",
     val plot: String = "",
     val extension: String = "ts",
+    val sourcePlaylistId: String = "",
 )
 
 data class SeriesShow(
@@ -50,6 +56,7 @@ data class SeriesShow(
     val categoryId: String,
     val logo: String = "",
     val plot: String = "",
+    val sourcePlaylistId: String = "",
 )
 
 data class Episode(

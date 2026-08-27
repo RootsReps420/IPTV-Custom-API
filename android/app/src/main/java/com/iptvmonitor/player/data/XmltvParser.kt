@@ -13,11 +13,23 @@ object XmltvParser {
         "yyyyMMddHHmmssZ",
     )
 
+    const val HORIZON_DAYS = 7
+    const val MAX_EVENTS_PER_CHANNEL = 96
+
     fun parseNowNext(input: InputStream, maxChannels: Int = 8000): Map<String, List<EpgEvent>> {
+        return parse(input, maxChannels)
+    }
+
+    fun parse(
+        input: InputStream,
+        maxChannels: Int = 8000,
+        horizonDays: Int = HORIZON_DAYS,
+    ): Map<String, List<EpgEvent>> {
         val parser = Xml.newPullParser()
         parser.setInput(input, null)
         val now = System.currentTimeMillis()
-        val horizon = now + 12 * 60 * 60 * 1000L
+        val keepFrom = now - 2 * 60 * 60 * 1000L
+        val horizon = now + horizonDays * 24L * 60L * 60L * 1000L
         val byChannel = HashMap<String, MutableList<EpgEvent>>()
         var event = parser.eventType
         var channel = ""
@@ -44,18 +56,18 @@ object XmltvParser {
                         "title" -> inTitle = false
                         "programme" -> {
                             if (channel.isNotBlank() && start > 0 && stop > start &&
-                                stop >= now && start <= horizon
+                                stop >= keepFrom && start <= horizon
                             ) {
                                 val list = byChannel.getOrPut(channel) { mutableListOf() }
-                                if (byChannel.size <= maxChannels || list.isNotEmpty()) {
-                                    if (list.size < 4) {
-                                        list += EpgEvent(
-                                            title = title.toString().trim().ifBlank { "Programme" },
-                                            startMs = start,
-                                            endMs = stop,
-                                            channelId = channel,
-                                        )
-                                    }
+                                if ((byChannel.size <= maxChannels || list.isNotEmpty()) &&
+                                    list.size < MAX_EVENTS_PER_CHANNEL
+                                ) {
+                                    list += EpgEvent(
+                                        title = title.toString().trim().ifBlank { "Programme" },
+                                        startMs = start,
+                                        endMs = stop,
+                                        channelId = channel,
+                                    )
                                 }
                             }
                             channel = ""
@@ -67,7 +79,7 @@ object XmltvParser {
             event = parser.next()
         }
         return byChannel.mapValues { (_, events) ->
-            events.sortedBy { it.startMs }.take(4)
+            events.sortedBy { it.startMs }
         }
     }
 

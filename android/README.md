@@ -2,7 +2,9 @@
 
 Sideloadable IPTV app for Shield, Google TV Streamer, Fire TV, phones, and tablets. You add an **Xtream** login or an **M3U URL** on the device. Magnum / panel passwords are **not** compiled into the APK.
 
-Live MPEG-TS uses ExoPlayer with the same reconnect policy as Watch: network/EOF errors, frozen clock (~4s), stall buffering (4.5s), 0.97× when the cushion thins, at most 6 reconnects. Video goes **straight to the portal**, not through the VPS.
+The browse UI matches Watch: left rail (TV / Movies / Shows / Search), groups, channel list, preview player with now/next EPG. Live MPEG-TS uses ExoPlayer with Watch’s reconnect policy and Small / Medium / Large buffer profiles (0.97× if the cushion thins). Video goes **straight to the portal**, not through the VPS.
+
+Current sideload build: **0.4.0** (`versionCode` 4).
 
 ## Build
 
@@ -52,6 +54,10 @@ Do not put panel credentials in that URL. Bump `versionCode` in `app/build.gradl
 - **M3U:** playlist URL, optional XMLTV EPG URL (or `url-tvg` in the M3U header).
 
 Several playlists can be stored. They sit in EncryptedSharedPreferences on the device.
+
+In **Settings** you can pin a **Live source** (often M3U) and a **Movies & shows** source (often Xtream) so one library uses both. Live buffer Small / Medium / Large is the same as Watch.
+
+On each playlist card: **Sync playlist**, **Sync EPG**, and **Groups** (hide categories you do not want). Live TV is a Watch-style guide: times, now, next, day chips for as far as the XMLTV/xmltv.php feed goes (up to 7 days).
 
 Portals often use HTTP or invalid TLS. The app allows cleartext HTTP and a permissive trust manager for those hosts — same class of compromise as other IPTV APKs. Do not enter banking passwords here.
 

@@ -1,26 +1,219 @@
 package com.iptvmonitor.player.ui
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlin.math.max
 
-/** Visible D-pad focus ring for Shield / Leanback. */
+val LocalWatchHot = compositionLocalOf { false }
+
+@Composable
+fun watchHot(): Boolean = LocalWatchHot.current
+
+@Composable
+fun watchInk(rest: Color = WatchPalette.Muted): Color =
+    if (LocalWatchHot.current) WatchPalette.Up else rest
+
+@Composable
+fun watchWeight(rest: FontWeight = FontWeight.Normal): FontWeight =
+    if (LocalWatchHot.current) FontWeight.Bold else rest
+
+enum class WatchChrome {
+    Item,
+    Cat,
+    Rail,
+    Chip,
+    Ghost,
+    Prog,
+    EpgCh,
+}
+
+private fun WatchChrome.shape(): Shape = when (this) {
+    WatchChrome.Item, WatchChrome.Cat, WatchChrome.Prog -> RoundedCornerShape(6.dp)
+    WatchChrome.Ghost -> RoundedCornerShape(4.dp)
+    else -> RectangleShape
+}
+
+private fun WatchChrome.pad(): PaddingValues = when (this) {
+    WatchChrome.Item, WatchChrome.Cat -> PaddingValues(horizontal = 12.dp, vertical = 12.dp)
+    WatchChrome.Rail -> PaddingValues(horizontal = 12.dp, vertical = 14.dp)
+    WatchChrome.Chip -> PaddingValues(horizontal = 8.dp, vertical = 3.dp)
+    WatchChrome.Ghost -> PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+    WatchChrome.Prog -> PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+    WatchChrome.EpgCh -> PaddingValues(start = 8.dp, end = 10.dp, top = 6.dp, bottom = 6.dp)
+}
+
+/** Outline for text fields and leftover controls. Lists use [WatchHotBox]. */
 @Composable
 fun Modifier.tvFocusBorder(): Modifier {
     var focused by remember { mutableStateOf(false) }
     return this
         .onFocusChanged { focused = it.isFocused }
         .border(
-            width = if (focused) 3.dp else 0.dp,
-            color = if (focused) Color(0xFF7AB8C8) else Color.Transparent,
-            shape = RoundedCornerShape(12.dp),
+            width = if (focused) 1.dp else 0.dp,
+            color = if (focused) WatchPalette.Up else Color.Transparent,
+            shape = RoundedCornerShape(6.dp),
         )
 }
+
+@Composable
+fun WatchBackdrop(content: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .drawBehind {
+                drawRect(WatchPalette.Bg)
+                val step = 48.dp.toPx()
+                val line = WatchPalette.Up.copy(alpha = 0.045f)
+                var x = 0f
+                while (x < size.width) {
+                    drawLine(line, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+                    x += step
+                }
+                var y = 0f
+                while (y < size.height) {
+                    drawLine(line, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                    y += step
+                }
+                drawRect(
+                    Brush.radialGradient(
+                        colorStops = arrayOf(
+                            0.22f to Color.Transparent,
+                            0.75f to WatchPalette.Bg,
+                        ),
+                        center = Offset(size.width / 2f, 0f),
+                        radius = max(size.width, size.height) * 0.9f,
+                    ),
+                )
+            },
+    ) {
+        content()
+    }
+}
+
+@Composable
+fun WatchHotBox(
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    chrome: WatchChrome = WatchChrome.Item,
+    isNow: Boolean = false,
+    contentPadding: PaddingValues? = null,
+    contentAlignment: Alignment = Alignment.CenterStart,
+    content: @Composable BoxScope.(hot: Boolean) -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val sourceFocused by interaction.collectIsFocusedAsState()
+    var focused by remember { mutableStateOf(false) }
+    val hot = selected || focused || sourceFocused
+    val shape = chrome.shape()
+    val fill = chromeFill(chrome, hot, isNow)
+    val stroke = chromeStroke(chrome, hot, selected, isNow)
+    val bar = when (chrome) {
+        WatchChrome.Rail -> hot
+        WatchChrome.Item -> selected
+        else -> false
+    }
+    Box(
+        modifier
+            .onFocusChanged { focused = it.isFocused }
+            .clip(shape)
+            .drawBehind {
+                if (fill.alpha > 0f) drawRect(fill)
+                if (bar) {
+                    drawRect(WatchPalette.Up, size = Size(3.dp.toPx(), size.height))
+                }
+            }
+            .then(
+                if (stroke != null) {
+                    Modifier.border(1.dp, stroke, shape)
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(
+                interactionSource = interaction,
+                indication = ripple(color = WatchPalette.Up.copy(alpha = 0.22f)),
+                onClick = onClick,
+            )
+            .padding(contentPadding ?: chrome.pad()),
+        contentAlignment = contentAlignment,
+    ) {
+        CompositionLocalProvider(LocalWatchHot provides hot) {
+            content(hot)
+        }
+    }
+}
+
+@Composable
+fun WatchListRow(
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    chrome: WatchChrome = WatchChrome.Item,
+    content: @Composable () -> Unit,
+) {
+    WatchHotBox(
+        selected = selected,
+        onClick = onClick,
+        modifier = modifier,
+        chrome = chrome,
+    ) {
+        content()
+    }
+}
+
+private fun chromeFill(chrome: WatchChrome, hot: Boolean, isNow: Boolean): Color = when (chrome) {
+    WatchChrome.Rail -> if (hot) WatchPalette.Hover12 else Color.Transparent
+    WatchChrome.Item -> if (hot) WatchPalette.Hover12 else WatchPalette.Panel
+    WatchChrome.Cat -> if (hot) WatchPalette.Hover16 else WatchPalette.Panel
+    WatchChrome.Chip -> WatchPalette.Panel2
+    WatchChrome.Ghost -> if (hot) WatchPalette.Panel2 else Color.Transparent
+    WatchChrome.Prog -> when {
+        hot -> WatchPalette.Hover12
+        isNow -> WatchPalette.Panel2
+        else -> WatchPalette.Panel
+    }
+    WatchChrome.EpgCh -> if (hot) WatchPalette.Hover12 else Color.Transparent
+}
+
+private fun chromeStroke(chrome: WatchChrome, hot: Boolean, selected: Boolean, isNow: Boolean): Color? =
+    when (chrome) {
+        WatchChrome.Rail, WatchChrome.EpgCh -> null
+        WatchChrome.Item, WatchChrome.Cat -> if (hot) WatchPalette.Up else WatchPalette.Line
+        WatchChrome.Chip -> if (hot || selected) WatchPalette.Up else WatchPalette.Line
+        WatchChrome.Ghost -> WatchPalette.Line
+        WatchChrome.Prog -> when {
+            hot -> WatchPalette.Up
+            isNow -> WatchPalette.NowLine
+            else -> WatchPalette.Line
+        }
+    }

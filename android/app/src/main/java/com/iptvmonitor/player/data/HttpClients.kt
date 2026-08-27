@@ -38,4 +38,12 @@ object HttpClients {
             }
             .build()
     }
+
+    val epg: OkHttpClient by lazy {
+        shared.newBuilder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
 }
