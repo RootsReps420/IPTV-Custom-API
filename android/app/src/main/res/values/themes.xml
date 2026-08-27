@@ -3,6 +3,5 @@
         <item name="android:windowBackground">@color/portal_bg</item>
         <item name="android:statusBarColor">@color/portal_bg</item>
         <item name="android:navigationBarColor">@color/portal_bg</item>
-        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 </resources>

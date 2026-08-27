@@ -55,7 +55,8 @@ object M3uParser {
             val group = meta["group-title"].orEmpty().ifBlank { "Live" }
             val name = meta["name"].orEmpty().ifBlank { "Channel $index" }
             val id = streamId(line, usedIds)
-            val vod = vodPath.matcher(URI(line).path ?: "").find()
+            val path = runCatching { URI(line).path }.getOrNull().orEmpty()
+            val vod = vodPath.matcher(path).find()
             val kind = when {
                 line.contains("/series/", ignoreCase = true) -> MediaKind.SERIES
                 line.contains("/movie/", ignoreCase = true) -> MediaKind.MOVIE

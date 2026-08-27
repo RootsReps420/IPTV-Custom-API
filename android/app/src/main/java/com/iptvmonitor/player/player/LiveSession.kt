@@ -166,6 +166,9 @@ class LiveSession(
         if (released || !isLive) return
         if (reconnectPosted) return
 
+        if (isLive) {
+            player.playWhenReady = true
+        }
         if (player.playWhenReady && player.isPlaying &&
             player.playbackState == Player.STATE_READY
         ) {
@@ -253,6 +256,7 @@ class LiveSession(
             reconnectPosted = false
             if (released || !isLive || currentUrl.isBlank()) return@postDelayed
             startedAt = now()
+            lastHealthyAt = 0L
             lastPosition = C.TIME_UNSET
             lastPositionAt = now()
             bufferingSince = 0L
