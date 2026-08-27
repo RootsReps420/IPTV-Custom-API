@@ -1,8 +1,13 @@
 # Copy to playlists.yaml (gitignored) and fill in real values.
 #
+# Overview: EPGenius accounts for the owner Playlists table. Watch uses config/player.yaml.
 # name + current_dns are enough for URL checks and the dashboard.
-# playlist_id / username / password / discord_id are required for live swaps and Discord tests.
-# current_dns is the portal URL as EPGenius takes it (usually no port).
+# failover: false = no automatic swap. Manual Switch still works within the same pool.
+# pool: strong8k (default) or magnum. Playlists only fail over to URLs with the same pool.
+# Magnum uses the same EPGenius update_creds call as Strong 8K; Watch DNS follows Magnum swaps.
+# playlist_id / username / password / discord_id are required for live swaps and Discord.
+# current_dns is rewritten on the VPS after a successful EPGenius swap — PC copy can be stale.
+# manual_from_dns is set by dashboard Switch so Switch back can return to the original host.
 
 playlists:
   - name: account-1

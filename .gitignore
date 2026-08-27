@@ -1,8 +1,14 @@
+# Gitignore for IPTV-Custom-API.
+# Secrets and live DNS stay on the machine that runs the monitor (usually the VPS).
+# Playlists.yaml is rewritten on failover (current_dns) — never commit it.
+
 tools/
 logs/
 .env
 config/playlists.yaml
 config/urls.yaml
+config/player.yaml
+config/watch_users.yaml
 config/*.yaml.tmp
 state/
 .venv/

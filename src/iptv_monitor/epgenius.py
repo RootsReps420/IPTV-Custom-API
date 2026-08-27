@@ -1,4 +1,9 @@
-"""EPGenius public update_creds call — this is the actual playlist DNS swap."""
+"""EPGenius public update_creds call — this is the actual playlist DNS swap.
+
+POST playlist_id + dns + Xtream user/pass with the API key and Discord ID headers.
+Success is the only moment we persist current_dns to playlists.yaml.
+Timeouts are shorter for manual Switch (12s) than auto failover (20s).
+"""
 
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ async def update_creds(
     new_dns: str,
     timeout_seconds: float = 20,
 ) -> None:
+    """Push new portal DNS to EPGenius. Raises EpgeniusError on HTTP or network failure."""
     headers = {
         "Authorization": secrets.epgenius_api_key,
         "X-Discord-ID": playlist.discord_id,

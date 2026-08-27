@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from iptv_monitor.config import AppConfig, Playlist, Secrets
+from iptv_monitor.config import AppConfig, Playlist, Secrets, normalize_pool
 
 logger = logging.getLogger("iptv_monitor.notify")
 
@@ -179,8 +179,18 @@ async def notify_swap(
         {"name": "Old URL", "value": old_url, "inline": False},
         {"name": "New URL", "value": new_url, "inline": False},
     ]
+    magnum = normalize_pool(playlist.pool) == "magnum"
     if test:
         description = "Dry run. EPGenius was not called and playlist DNS was not changed."
+    elif magnum and manual:
+        description = (
+            "Manual Magnum switch — EPGenius updated (Magnum pool only). "
+            "Watch DNS on the VPS follows this host."
+        )
+    elif magnum:
+        description = (
+            "Magnum pool. EPGenius updated. Watch DNS on the VPS follows this host."
+        )
     elif manual:
         description = "Manual switch — EPGenius was updated without waiting for a down check."
     else:
@@ -248,7 +258,8 @@ def _playlist_line(row: dict[str, Any]) -> str:
     dns = _host_label(str(row.get("current_dns") or ""))
     ns = _ns_tag(row)
     extra = f" · {ns}" if ns else ""
-    return f"{mark} **{name}** → `{dns}`{extra}"
+    mode = " · monitor" if row.get("failover") is False else ""
+    return f"{mark} **{name}** → `{dns}`{extra}{mode}"
 
 
 def _chunk_field(name: str, lines: list[str]) -> list[dict[str, Any]]:

@@ -1,4 +1,10 @@
 <!DOCTYPE html>
+<!--
+  Public + owner status page (same HTML).
+  JS calls /api/public on `/` and /api/status on `/owner`.
+  Playlists / Current DNS / Switch only render when the JSON has owner: true.
+  Cache-bust static URLs (?v=) after CSS/JS changes.
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -7,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=22" />
+  <link rel="stylesheet" href="/static/styles.css?v=48" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -18,6 +24,7 @@
         <h1>Portal Monitor</h1>
         <a class="key-btn" href="/history">History</a>
         <a class="key-btn" href="/key">Info</a>
+        <a class="key-btn" href="/watch" id="watch-link" hidden>Watch</a>
         <a class="key-btn" href="/owner" id="owner-link">Playlists</a>
         <a class="key-btn" href="/" id="public-link" hidden>Public</a>
       </div>
@@ -34,6 +41,10 @@
       <div class="stat" id="stat-playlists-wrap" hidden>
         <span class="label">Playlists</span>
         <span id="stat-playlists">—</span>
+      </div>
+      <div class="stat" id="stat-watch-wrap" hidden>
+        <span class="label">Watch</span>
+        <span id="stat-watch">—</span>
       </div>
       <div class="stat">
         <span class="label">Last check</span>
@@ -53,6 +64,7 @@
       <h2>Playlists</h2>
       <span id="playlist-count" class="count"></span>
     </div>
+    <p class="history-note">Strong 8K and Magnum use separate URL pools so credentials never cross. Magnum playlists auto-failover via EPGenius like Strong 8K, but only onto Magnum-tagged URLs. Switch / Choose URL / Switch back still work. After a Magnum swap, Watch DNS on the VPS (<code>player.yaml</code>) follows the new host and /watch refreshes the live list.</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -67,6 +79,30 @@
           </tr>
         </thead>
         <tbody id="playlist-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="watchers" id="watchers-section" hidden>
+    <div class="section-head">
+      <h2>Watch sessions</h2>
+      <span id="watchers-count" class="count"></span>
+    </div>
+    <p class="history-note">Who is signed in on /watch: one row per tab (duplicates from cookie remints are collapsed). Bandwidth is counted on the VPS from bytes already proxied. Buffering stats ride the existing /me and heartbeat calls — no extra stream traffic. Log out signs that Watch user out on every tab and device until they sign in again.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Logged in</th>
+            <th>IP</th>
+            <th>Status</th>
+            <th>Quality</th>
+            <th>Watching</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="watchers-body"></tbody>
       </table>
     </div>
   </section>
@@ -94,6 +130,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=22"></script>
+  <script src="/static/app.js?v=32"></script>
 </body>
 </html>

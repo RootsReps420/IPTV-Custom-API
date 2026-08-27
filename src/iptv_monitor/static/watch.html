@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<!--
+  Friend IPTV player. Login is a site account (watch_users.yaml), not Xtream.
+  hls.js for VOD HLS if needed; live uses mpegts.js on desktop Chrome/Edge.
+  iPhone/iPad Chrome is WebKit: native HLS (.m3u8), not MPEG-TS / mse.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RootsIPTV</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css?v=51" />
+</head>
+<body class="watch-body">
+  <div class="grid-bg" aria-hidden="true"></div>
+
+  <section id="login-panel" class="watch-login">
+    <p class="eyebrow">RootsIPTV</p>
+    <h1>Sign in</h1>
+    <p class="history-note">Friend logins only. This is not the Playlists / Switch page.</p>
+    <form id="login-form" class="watch-login-form">
+      <label>
+        Username
+        <input id="login-user" name="username" autocomplete="username" required />
+      </label>
+      <label>
+        Password
+        <input id="login-pass" name="password" type="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit" class="switch-btn">Sign in</button>
+      <p id="login-error" class="watch-error" hidden></p>
+    </form>
+  </section>
+
+  <section id="password-panel" class="watch-terms" hidden>
+    <div class="watch-terms-card">
+      <p class="eyebrow">RootsIPTV</p>
+      <h1>Set a new password</h1>
+      <p class="history-note">Everyone must choose their own password. It is stored as a hash — we never keep the password itself.</p>
+      <ul class="watch-pw-rules">
+        <li>At least 8 characters</li>
+        <li>Uppercase and lowercase letters</li>
+        <li>A number</li>
+        <li>A special character (for example ! @ # $ %)</li>
+        <li>Not the shared password you just used, and not your username</li>
+      </ul>
+      <form id="password-form" class="watch-login-form">
+        <label>
+          Current password
+          <input id="pw-current" name="current_password" type="password" autocomplete="current-password" required />
+        </label>
+        <label>
+          New password
+          <input id="pw-new" name="new_password" type="password" autocomplete="new-password" required minlength="8" maxlength="128" />
+        </label>
+        <label>
+          Confirm new password
+          <input id="pw-confirm" name="confirm_password" type="password" autocomplete="new-password" required minlength="8" maxlength="128" />
+        </label>
+        <button type="submit" class="switch-btn">Save password</button>
+        <button type="button" class="watch-refresh-btn" id="pw-logout-btn">Log out</button>
+        <p id="password-error" class="watch-error" hidden></p>
+      </form>
+    </div>
+  </section>
+
+  <section id="terms-panel" class="watch-terms" hidden>
+    <div class="watch-terms-card">
+      <p class="eyebrow">RootsIPTV</p>
+      <h1>Terms of use</h1>
+      <div class="watch-terms-copy">
+        <!-- Edit this block any time. Friends see it after every login. -->
+        <p>BEFORE STREAMING LIVE TV - CHOOSE 'MEDIUM' BUFFER TO AVOID JITTER - CHOOSE BEFORE PRESSING A STREAM!!!!!</p>
+        <p>The service can drop, buffer, or change DNS without notice. There is no uptime promise but the server runs 24/7 — so if all streams are down, notify Dan.</p>
+        <p>Do not hammer Refresh list / Refresh EPG - it updates every 4 hours automatically. If something is actually broken, tell Dan and he will fix.</p>
+      </div>
+      <label class="watch-terms-agree">
+        <input id="terms-agree" type="checkbox" />
+        <span>i agree to not whine like a bitch and report any technical issues to big boy Dan</span>
+      </label>
+      <button type="button" class="switch-btn" id="terms-ok" disabled>OK</button>
+    </div>
+  </section>
+
+  <div id="app-panel" class="watch-app" hidden>
+    <p id="watch-banner" class="watch-banner" hidden></p>
+    <div id="watch-sync" class="watch-sync" hidden>
+      <div class="watch-sync-row">
+        <strong id="watch-sync-label">Guide sync</strong>
+        <span id="watch-sync-eta"></span>
+      </div>
+      <div class="watch-sync-bar" aria-hidden="true"><span id="watch-sync-fill"></span></div>
+      <div id="watch-sync-detail" class="watch-sync-detail"></div>
+    </div>
+    <div class="watch-shell">
+      <nav class="watch-rail" aria-label="Library">
+        <p class="watch-brand">RootsIPTV</p>
+        <div class="watch-rail-nav">
+          <button type="button" class="watch-rail-btn is-here" data-tab="live">TV</button>
+          <button type="button" class="watch-rail-btn" data-tab="movies">Movies</button>
+          <button type="button" class="watch-rail-btn" data-tab="series">Shows</button>
+          <button type="button" class="watch-rail-btn" id="search-btn" data-tab="search">Search</button>
+          <div class="watch-slots" title="How many streams are playing out of the shared cap">
+            <span>Slots</span>
+            <strong id="slot-stat">—</strong>
+          </div>
+        </div>
+        <div class="watch-rail-foot">
+          <div class="watch-rail-meta">
+            <span>Guide <strong id="guide-stat">—</strong></span>
+            <span id="user-stat">—</span>
+          </div>
+          <div class="watch-refresh">
+            <button type="button" class="watch-refresh-btn" id="refresh-playlist-btn" title="Re-download live, movies, and shows">Refresh list</button>
+            <button type="button" class="watch-refresh-btn" id="refresh-epg-btn" title="Re-download programme times and titles">Refresh EPG</button>
+          </div>
+          <button type="button" class="watch-rail-btn" id="logout-btn">Log out</button>
+        </div>
+      </nav>
+      <aside id="category-list" class="watch-cats" aria-label="Groups"></aside>
+      <section class="watch-stage" id="watch-stage">
+        <div class="watch-channel-col">
+          <div class="watch-browse-tools">
+            <input id="watch-search" type="search" placeholder="Filter this group…" autocomplete="off" spellcheck="false" />
+          </div>
+          <div id="item-list" class="watch-items"></div>
+          <div id="series-panel" class="watch-series" hidden></div>
+        </div>
+        <div class="watch-preview-card">
+          <div class="watch-video-wrap">
+            <video id="player" controls playsinline webkit-playsinline></video>
+            <div id="watch-spinner" class="watch-spinner" hidden><span></span></div>
+            <span id="live-badge" class="watch-live-badge" hidden>LIVE</span>
+          </div>
+          <div id="stream-stat" class="watch-stream-stat" hidden></div>
+          <div class="watch-buffer" id="buffer-row">
+            <span>Live buffer</span>
+            <button type="button" data-buf="small" title="Start immediately. Smaller jitter cushion.">Small</button>
+            <button type="button" data-buf="medium" title="Start immediately. Default cushion; eases to 0.97× if it thins.">Medium</button>
+            <button type="button" data-buf="large" title="Start immediately. Larger cushion after playback has started.">Large</button>
+          </div>
+          <div class="watch-now">
+            <div id="now-clock" class="watch-clock"></div>
+            <div id="now-title" class="hist-host">Select a channel</div>
+            <div id="now-epg" class="hist-url"></div>
+            <div id="now-next" class="watch-next"></div>
+            <div id="now-progress-wrap" class="watch-progress" hidden>
+              <span id="now-progress"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
+  <script src="/static/watch.js?v=56"></script>
+</body>
+</html>

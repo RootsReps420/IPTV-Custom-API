@@ -1,15 +1,43 @@
-# Reverse-proxy the dashboard. App stays on 127.0.0.1:8787.
-# Public site has no login. /owner and /api/status use the same Caddy user (dan)
-# with a base64(bcrypt) hash — Ubuntu Caddy 2.6.2.
-# Do not copy this file over /etc/caddy/Caddyfile blindly: keep the live hash.
+# Reverse proxy for the Python app on 127.0.0.1:8787.
+#
+# Open (no Caddy login): `/watch` `/api/watch/*` `/api/player/*` `/static/*`
+# /watch login is IN THE APP (cookie), not Caddy.
+# Caddy `dan`: `/` `/history` `/key` `/owner` and owner APIs (switch, kick, status).
+# Caddy `Steve`: `/` and `/history` only (plus `/api/public` `/api/history` those pages need).
+# Steve cannot open `/key`, `/owner`, or switch/kick/status APIs.
+#
+# Do not gzip `/api/player/*` (live MPEG-TS / HLS). Do not copy this file over
+# /etc/caddy/Caddyfile blindly: keep the live bcrypt hashes.
 
 vps-4f889186.vps.ovh.net {
-	encode gzip
+	# Live streams are already compressed video; gzip would buffer and stall playback.
+	@notplayer {
+		not path /api/player /api/player/*
+	}
+	encode @notplayer gzip
+	@monitor {
+		path / /history /history/* /api/public /api/history
+	}
 	@owner {
-		path /owner /owner/ /api/status /api/switch /api/switch-back
+		not path /watch /watch/* /api/watch /api/watch/* /api/player /api/player/* /static /static/*
+		not path / /history /history/* /api/public /api/history
+		not path /.well-known /.well-known/*
+	}
+	basicauth @monitor {
+		dan REPLACE_WITH_BASE64_HASH
+		Steve REPLACE_WITH_STEVE_BASE64_HASH
 	}
 	basicauth @owner {
 		dan REPLACE_WITH_BASE64_HASH
 	}
-	reverse_proxy 127.0.0.1:8787
+	# flush_interval -1: stream MPEG-TS to the browser without waiting for full responses.
+	# Catalogue JSON from this panel can take ~60s; default upstream timeout is too short.
+	reverse_proxy 127.0.0.1:8787 {
+		flush_interval -1
+		transport http {
+			dial_timeout 10s
+			read_timeout 24h
+			write_timeout 24h
+		}
+	}
 }

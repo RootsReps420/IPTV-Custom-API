@@ -1,4 +1,9 @@
 # IPTV portal monitor
+#
+# Overview: long-running service that health-checks IPTV portals, fails playlists
+# over via EPGenius, serves a public status site + owner Switch UI + History, and
+# (separately) a login-gated /watch Chromium player. Run one copy only — usually
+# systemd on the OVH VPS. See deploy/README.md for production.
 
 A long-running Python service that watches IPTV portal URLs, fails a playlist over to a healthy standby via EPGenius when the live URL dies, posts Discord alerts, and serves a local dashboard.
 
@@ -63,15 +68,16 @@ When a live URL is unhealthy:
 
 - **1st and 2nd** consecutive failures: wait (Discord “down” on the first transition).
 - **3rd** (~30s at a 10s check interval): pick a standby that is healthy **this cycle** and is not the failed URL, in this order: no Cloudflare → Cloudflare NS only → Cloudflare proxy. Prefer standbys with at least 2 consecutive successes within that group.
-- Call EPGenius `POST /api/public/update_creds` with the playlist id, new DNS, username, and password.
+- Call EPGenius `POST /api/public/update_creds` with the playlist id, new DNS, username, and password. Magnum playlists use the same call, but only onto URLs tagged `pool: magnum`.
+- After a Magnum swap, write Watch’s portal DNS into `player.yaml` and refresh `/watch` so the live M3U follows the new host.
 - On success, write the new URL into `playlists.yaml` `current_dns`, update the in-memory playlist, and refresh the dashboard (playlists table + Current DNS) on that same cycle.
 - If no eligible standby exists, Discord gets “No healthy standby” and EPGenius is not called.
 
 ## Dashboard
 
-On the VPS, `https://vps-4f889186.vps.ovh.net` is public (standby pool health only). Playlists and Current DNS are on `/owner`, behind the same Caddy login (`dan`) you already use. Locally the app is `http://127.0.0.1:8787`.
+On the VPS, `https://vps-4f889186.vps.ovh.net` (monitor, History, Info, Playlists) is behind the same Caddy login (`dan`) you already use for `/owner`. Friends use **`/watch`**, which stays on the Watch site login only. Locally the app is `http://127.0.0.1:8787`.
 
-- Public: available pool cards (`dns` / `tcp` / `ts`, nameserver badge), plus standby down/up events
+- Public: available pool cards (`dns` / `tcp` / `ts`, nameserver badge), plus standby down/up events (Caddy `dan` login on the VPS)
 - Owner (`/owner`): the same, plus Current DNS, the playlists table (no passwords), a Switch button, and Switch back after a manual swap
 
 Do not port-forward 8787 to the public internet.

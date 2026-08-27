@@ -1,4 +1,11 @@
-"""Per-URL health checks: DNS, TCP, optional HTTP GET /, then MPEG-TS."""
+"""Per-URL health checks: DNS, TCP, optional HTTP GET /, then MPEG-TS.
+
+A host is up only if DNS resolves, TCP connects to the portal port, and (when
+enabled) a short Xtream MPEG-TS pull succeeds. HTTP GET / is off by default —
+Xtream panels often return junk on `/` while streams still work.
+
+`normalize_url` is the shared key format for stats, History, and YAML.
+"""
 
 from __future__ import annotations
 

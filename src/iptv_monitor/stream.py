@@ -29,6 +29,7 @@ _LAST_GOOD_ID: int | None = None
 # MAG / Xtream panel codes. 452/453 = blocked; 456 = geo; 464 = DNS locked.
 _PANEL_DENY_STATUSES = {452, 453, 456, 464}
 _PLACEHOLDER_MARKERS = ("black.ts", "/video/black")
+_STREAM_BLOCK_MARKERS = ("cloudflare-terms-of-service-abuse",)
 
 Credentials = list[tuple[str, str]]
 
@@ -62,6 +63,12 @@ def _auth_ok(payload: object) -> bool:
 def _is_placeholder_url(url: str) -> bool:
     low = url.lower()
     return any(marker in low for marker in _PLACEHOLDER_MARKERS)
+
+
+def _is_blocked_stream_url(url: str) -> bool:
+    """Cloudflare TOS-abuse interstitial: a short fake MPEG-TS file, not a live pipe."""
+    low = (url or "").lower()
+    return any(marker in low for marker in _STREAM_BLOCK_MARKERS)
 
 
 def _deny_status(hops: list[int]) -> int | None:
@@ -167,6 +174,8 @@ async def _probe_stream_ids(
             denied = _deny_status(hops)
             if denied is not None:
                 return None, f"live HTTP {denied}"
+            if _is_blocked_stream_url(url) or _is_blocked_stream_url(final_url):
+                return False, "cloudflare-stream-block"
             if _is_placeholder_url(url) or _is_placeholder_url(final_url):
                 last_detail = "placeholder black.ts"
                 continue
@@ -233,6 +242,8 @@ async def _try_credentials(
         return True, None, None
     if ok is None:
         return False, "stream_452", detail
+    if detail == "cloudflare-stream-block":
+        return False, "stream_blocked", detail
 
     listed = await _stream_ids(client, api, username, password, f"{base}|{username}")
     remaining = [item for item in listed if item not in set(cheap)]
@@ -242,6 +253,8 @@ async def _try_credentials(
             return True, None, None
         if ok is None:
             return False, "stream_452", detail
+        if detail == "cloudflare-stream-block":
+            return False, "stream_blocked", detail
     return False, "stream_no_mpegts", detail or "no mpegts"
 
 

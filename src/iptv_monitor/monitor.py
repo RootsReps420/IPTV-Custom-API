@@ -1,4 +1,18 @@
-"""Main loop: probe URLs, count failures, swap via EPGenius, feed the dashboard."""
+"""Main loop: probe URLs, count failures, swap via EPGenius, feed the dashboard.
+
+Each cycle reloads YAML, health-checks every live + standby host, records
+healthy→down edges (24h frequent-failure file AND 90-day History store), then
+auto-fails live playlists after 3 consecutive downs. Immediately before EPGenius,
+the chosen standby is probed again (DNS + TCP + MPEG-TS). Auto / Switch try the
+next ranked host if that fails; Choose URL aborts. Manual Switch / Choose URL /
+Switch back share `_swap_lock` with auto failover so they cannot race.
+
+This module never auto-swaps a playlist with failover: false.
+Manual Switch / Choose URL / Switch back still work, only onto URLs in the same
+provider pool. Strong 8K and Magnum credentials are never mixed on health checks
+or failovers. Magnum swaps call EPGenius like Strong 8K, then point /watch at the
+new DNS.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +24,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from iptv_monitor.config import AppConfig, Playlist, load_config, load_settings, resolve_paths, update_playlist_dns
+from iptv_monitor.config import (
+    AppConfig,
+    Playlist,
+    load_config,
+    load_settings,
+    normalize_pool,
+    pool_label,
+    resolve_paths,
+    update_player_dns,
+    update_playlist_dns,
+    DEFAULT_POOL,
+)
 from iptv_monitor.epgenius import EpgeniusError, update_creds
 from iptv_monitor.health import HealthResult, check_url, check_urls, normalize_url
 from iptv_monitor.history import UrlHistoryStore
@@ -27,6 +52,8 @@ logger = logging.getLogger("iptv_monitor.monitor")
 
 # Only used by `test dashboard --demo-down` so the red banner can be reviewed.
 DEMO_DOWN_URL = "http://dry-run-demo.invalid"
+# Cap pre-swap rechecks so a mass outage cannot stall the loop on every "green" host.
+_MAX_PRE_SWAP_RECHECKS = 6
 
 
 class SwitchError(Exception):
@@ -61,6 +88,7 @@ class FailoverPlan:
 
 @dataclass
 class SharedState:
+    """In-memory dashboard snapshot. Public vs owner is a filter, not a second store."""
     """Snapshot the dashboard polls. Keep passwords off this object."""
 
     last_cycle_at: datetime | None = None
@@ -74,6 +102,7 @@ class SharedState:
     dry_run: bool = False
 
     def add_event(self, kind: str, message: str) -> None:
+        """Prepend a dashboard event. Keep 40 so the public page stays small."""
         self.events.insert(
             0,
             {
@@ -85,6 +114,7 @@ class SharedState:
         self.events = self.events[:40]
 
     def snapshot(self) -> dict[str, Any]:
+        """Full owner payload including live DNS and playlists."""
         live_up = sum(1 for row in self.live if row.get("healthy"))
         avail_up = sum(1 for row in self.available if row.get("healthy"))
         return {
@@ -142,6 +172,27 @@ def _public_event(item: dict[str, Any]) -> bool:
     return not (message.startswith("live ") or message.startswith("both "))
 
 
+def _pool_for_url(cfg: AppConfig, url: str) -> str:
+    """Provider pool for a host: urls.yaml tag, else the playlist that currently lives there."""
+    try:
+        key = normalize_url(url)
+    except ValueError:
+        return DEFAULT_POOL
+    for item in cfg.available_pool:
+        try:
+            if normalize_url(item.url) == key:
+                return normalize_pool(item.pool)
+        except ValueError:
+            continue
+    for playlist in cfg.playlists:
+        try:
+            if normalize_url(playlist.current_dns) == key:
+                return normalize_pool(playlist.pool)
+        except ValueError:
+            continue
+    return DEFAULT_POOL
+
+
 def _role(url: str, live: set[str], available: set[str]) -> str:
     in_live = url in live
     in_avail = url in available
@@ -169,12 +220,16 @@ def _url_view(
     playlist_names: list[str],
     *,
     frequent_threshold: int = 3,
+    pool: str = DEFAULT_POOL,
 ) -> dict[str, Any]:
     proxied, any_cf = _cloudflare_flag(result)
     down_events = len(stats.down_at)
+    tagged = normalize_pool(pool)
     return {
         "url": url,
         "role": role,
+        "pool": tagged,
+        "pool_label": pool_label(tagged),
         "healthy": bool(result.healthy) if result else False,
         "dns_ok": bool(result.dns_ok) if result else False,
         "tcp_ok": bool(result.tcp_ok) if result else False,
@@ -207,6 +262,8 @@ class Monitor:
         self.last_plans: list[FailoverPlan] = []
         self.status_board = DiscordStatusBoard()
         self._swap_lock = asyncio.Lock()
+        self.watch_syncer = None
+        self.watch_service = None
         self._load_failure_history()
         days = 90
         try:
@@ -304,14 +361,46 @@ class Monitor:
             await asyncio.sleep(interval)
 
     async def run_cycle(self, *, swap: bool, notify: bool) -> None:
+        """One probe of every live + standby URL, then optional failover + Discord."""
         cfg = load_config(self.root)
         settings = cfg.settings
         self.shared.check_interval_seconds = settings.check_interval_seconds
 
         live_keys = [normalize_url(item.current_dns) for item in cfg.playlists]
         available_keys = [normalize_url(url) for url in cfg.available_urls]
-        credentials = [(item.username, item.password) for item in cfg.playlists]
-        results = await check_urls(live_keys + available_keys, settings, credentials)
+        grouped: dict[str, list[str]] = {}
+        claimed: dict[str, str] = {}
+        for playlist in cfg.playlists:
+            key = normalize_url(playlist.current_dns)
+            pool = normalize_pool(playlist.pool)
+            grouped.setdefault(pool, [])
+            if key not in claimed:
+                claimed[key] = pool
+                grouped[pool].append(key)
+        for item in cfg.available_pool:
+            key = normalize_url(item.url)
+            pool = normalize_pool(item.pool)
+            grouped.setdefault(pool, [])
+            if key not in claimed:
+                claimed[key] = pool
+                grouped[pool].append(key)
+            elif claimed[key] != pool:
+                logger.warning(
+                    "URL %s is tagged %s and %s; health-checking as %s",
+                    key,
+                    claimed[key],
+                    pool,
+                    claimed[key],
+                )
+        results: dict[str, HealthResult] = {}
+        for pool, urls in grouped.items():
+            creds = [
+                (item.username, item.password)
+                for item in cfg.playlists
+                if normalize_pool(item.pool) == pool and item.username and item.password
+            ]
+            batch = await check_urls(urls, settings, creds or None)
+            results.update(batch)
 
         live_set = set(live_keys)
         available_set = set(available_keys)
@@ -423,10 +512,15 @@ class Monitor:
             affected = [
                 playlist
                 for playlist in cfg.playlists
-                if normalize_url(playlist.current_dns) == live_url
+                if playlist.failover and normalize_url(playlist.current_dns) == live_url
+            ]
+            if not affected:
+                continue
+            pool_keys = [
+                normalize_url(url) for url in cfg.urls_in_pool(affected[0].pool)
             ]
             candidate = self._pick_candidate(
-                available_keys,
+                pool_keys,
                 live_url,
                 results,
                 min_successes,
@@ -499,7 +593,23 @@ class Monitor:
                         plan.threshold,
                     )
                     continue
-                if plan.status == "no_standby":
+                affected = [
+                    playlist
+                    for playlist in fresh.playlists
+                    if playlist.failover
+                    and normalize_url(playlist.current_dns) == plan.failed_url
+                ]
+                if not affected:
+                    continue
+                chosen: str | None = None
+                if plan.status == "swap" and plan.candidate:
+                    chosen, _reason = await self._confirmed_candidate(
+                        fresh,
+                        affected[0],
+                        preferred=plan.candidate,
+                        allow_fallback=True,
+                    )
+                if not chosen:
                     logger.warning("No healthy standby for failed live URL %s", plan.failed_url)
                     self.shared.add_event(
                         "warn",
@@ -507,16 +617,9 @@ class Monitor:
                     )
                     await notify_no_standby(fresh.secrets, plan.failed_url, plan.playlists)
                     continue
-                if plan.candidate is None:
-                    continue
-                affected = [
-                    playlist
-                    for playlist in fresh.playlists
-                    if normalize_url(playlist.current_dns) == plan.failed_url
-                ]
                 for playlist in affected:
                     await self._swap_playlist(
-                        fresh, playlist, plan.failed_url, plan.candidate
+                        fresh, playlist, plan.failed_url, chosen
                     )
 
     def _pick_candidate(
@@ -527,6 +630,7 @@ class Monitor:
         min_successes: int,
         *,
         frequent_threshold: int = 3,
+        exclude: set[str] | None = None,
         log: bool = True,
     ) -> str | None:
         """Pick a healthy standby.
@@ -535,9 +639,12 @@ class Monitor:
         no Cloudflare → CF NS → CF proxy. Frequent-failure standbys are only used
         when every other healthy option is already out.
         """
+        blocked = {failed_url}
+        if exclude:
+            blocked.update(exclude)
         picked = self._pick_from_healthy(
             available_keys,
-            failed_url,
+            blocked,
             results,
             min_successes,
             allow_frequent=False,
@@ -548,7 +655,7 @@ class Monitor:
             return picked
         return self._pick_from_healthy(
             available_keys,
-            failed_url,
+            blocked,
             results,
             min_successes,
             allow_frequent=True,
@@ -562,7 +669,7 @@ class Monitor:
     def _pick_from_healthy(
         self,
         available_keys: list[str],
-        failed_url: str,
+        exclude: set[str],
         results: dict[str, HealthResult],
         min_successes: int,
         *,
@@ -573,7 +680,7 @@ class Monitor:
         # 0 = no Cloudflare, 1 = Cloudflare nameservers only, 2 = orange-cloud proxy
         buckets: list[list[str]] = [[], [], []]
         for url in available_keys:
-            if url == failed_url:
+            if url in exclude:
                 continue
             result = results.get(url)
             if result is None or not result.healthy:
@@ -606,17 +713,111 @@ class Monitor:
                 return pool[0]
         return None
 
-    def _candidate_for(self, cfg: AppConfig, current_url: str, *, log: bool = False) -> str | None:
+    def _candidate_for(self, cfg: AppConfig, playlist: Playlist, *, log: bool = False) -> str | None:
         if not self._last_results:
             return None
+        current = normalize_url(playlist.current_dns)
+        pool_keys = [normalize_url(url) for url in cfg.urls_in_pool(playlist.pool)]
         return self._pick_candidate(
-            [normalize_url(url) for url in cfg.available_urls],
-            normalize_url(current_url),
+            pool_keys,
+            current,
             self._last_results,
             cfg.settings.min_consecutive_successes_for_swap,
             frequent_threshold=max(2, int(cfg.settings.frequent_failure_down_events)),
             log=log,
         )
+
+    def _pool_credentials(self, cfg: AppConfig, pool: str | None) -> list[tuple[str, str]]:
+        wanted = normalize_pool(pool)
+        return [
+            (item.username, item.password)
+            for item in cfg.playlists
+            if normalize_pool(item.pool) == wanted and item.username and item.password
+        ]
+
+    async def _recheck_target(
+        self, cfg: AppConfig, playlist: Playlist, url: str
+    ) -> HealthResult:
+        """Fresh DNS + TCP + MPEG-TS of a swap target. Updates the in-memory snapshot."""
+        creds = self._pool_credentials(cfg, playlist.pool)
+        result = await check_url(url, cfg.settings, creds or None)
+        if cfg.settings.stream_check_enabled and result.healthy and result.stream_ok is not True:
+            result.healthy = False
+            result.fail_reason = result.fail_reason or "stream_not_verified"
+            result.stream_ok = False
+        self._ingest_recheck(cfg, result)
+        return result
+
+    def _ingest_recheck(self, cfg: AppConfig, result: HealthResult) -> None:
+        """Fold a pre-swap probe into stats so a failed host is not picked again."""
+        try:
+            url = normalize_url(result.url)
+        except ValueError:
+            url = result.url
+        stats = self._stat(url)
+        stats.last_result = result
+        self._last_results[url] = result
+        if result.healthy:
+            return
+        window = self._failure_window(cfg.settings)
+        if self._record_down_event(stats, result, window):
+            self.url_history.record(url, result.fail_reason)
+        stats.consecutive_failures += 1
+        stats.consecutive_successes = 0
+        stats.last_healthy = False
+
+    async def _confirmed_candidate(
+        self,
+        cfg: AppConfig,
+        playlist: Playlist,
+        *,
+        preferred: str | None = None,
+        allow_fallback: bool = True,
+    ) -> tuple[str | None, str | None]:
+        """Re-probe the chosen host before EPGenius.
+
+        Auto / Switch fall through to the next ranked standby if it fails.
+        Choose URL does not. Returns (url, None) or (None, last fail reason).
+        """
+        skipped: set[str] = set()
+        current = normalize_url(playlist.current_dns)
+        pool_keys = [normalize_url(url) for url in cfg.urls_in_pool(playlist.pool)]
+        min_successes = cfg.settings.min_consecutive_successes_for_swap
+        frequent_threshold = max(2, int(cfg.settings.frequent_failure_down_events))
+        next_url = preferred
+        last_reason: str | None = None
+        for _attempt in range(_MAX_PRE_SWAP_RECHECKS):
+            if next_url is None:
+                if not allow_fallback:
+                    break
+                next_url = self._pick_candidate(
+                    pool_keys,
+                    current,
+                    self._last_results,
+                    min_successes,
+                    frequent_threshold=frequent_threshold,
+                    exclude=skipped,
+                    log=True,
+                )
+            if not next_url:
+                break
+            candidate = next_url
+            next_url = None
+            skipped.add(candidate)
+            logger.info("Pre-swap recheck of %s (DNS/TCP/MPEG-TS)", candidate)
+            result = await self._recheck_target(cfg, playlist, candidate)
+            if result.healthy:
+                logger.info("Pre-swap recheck passed for %s", candidate)
+                return candidate, None
+            last_reason = result.fail_reason or "down"
+            logger.warning("Pre-swap recheck failed for %s (%s)", candidate, last_reason)
+            self.shared.add_event(
+                "warn",
+                f"Pre-swap recheck failed for {candidate} ({last_reason})",
+            )
+            if not allow_fallback:
+                break
+        return None, last_reason
 
     def _find_playlist(self, cfg: AppConfig, playlist_id: str) -> Playlist:
         wanted = str(playlist_id).strip()
@@ -655,32 +856,61 @@ class Monitor:
             playlist = self._find_playlist(cfg, playlist_id)
             old_url = normalize_url(playlist.current_dns)
             if target_url:
-                candidate = self._resolve_chosen_url(cfg, old_url, target_url)
+                preferred = self._resolve_chosen_url(cfg, playlist, target_url)
+                candidate, reason = await self._confirmed_candidate(
+                    cfg, playlist, preferred=preferred, allow_fallback=False
+                )
+                if not candidate:
+                    self._publish_after_manual(cfg)
+                    raise SwitchError(
+                        f"That URL failed a fresh check ({reason or 'down'}). Not switching.",
+                        409,
+                    )
             else:
-                candidate = self._candidate_for(cfg, old_url, log=True)
-            if not candidate:
-                raise SwitchError("No healthy standby to switch to.", 409)
+                preferred = self._candidate_for(cfg, playlist, log=True)
+                if not preferred:
+                    raise SwitchError("No healthy standby to switch to.", 409)
+                candidate, reason = await self._confirmed_candidate(
+                    cfg, playlist, preferred=preferred, allow_fallback=True
+                )
+                if not candidate:
+                    self._publish_after_manual(cfg)
+                    raise SwitchError(
+                        f"No standby passed a fresh check ({reason or 'down'}). Not switching.",
+                        409,
+                    )
             await self._swap_playlist(
                 cfg, playlist, old_url, candidate, manual=True
             )
             self._publish_after_manual(cfg)
+            magnum = normalize_pool(playlist.pool) == "magnum"
             return {
                 "ok": True,
                 "playlist_id": playlist.playlist_id,
                 "name": playlist.name,
                 "from": old_url,
                 "to": candidate,
+                "mode": "epgenius",
+                "watch": magnum,
             }
 
-    def _resolve_chosen_url(self, cfg: AppConfig, current_url: str, raw: str) -> str:
+    def _resolve_chosen_url(self, cfg: AppConfig, playlist: Playlist, raw: str) -> str:
+        """Validate a user-picked URL is in this playlist's provider pool and healthy."""
         try:
             candidate = normalize_url(raw)
         except ValueError as exc:
             raise SwitchError("Invalid target URL.", 400) from exc
-        pool = {normalize_url(url) for url in cfg.available_urls}
-        if candidate not in pool:
-            raise SwitchError("That URL is not in the available pool.", 400)
-        if candidate == current_url:
+        current = normalize_url(playlist.current_dns)
+        wanted = normalize_pool(playlist.pool)
+        matching = {
+            normalize_url(url) for url in cfg.urls_in_pool(playlist.pool)
+        }
+        if candidate not in matching:
+            raise SwitchError(
+                f"That URL is not in the {pool_label(wanted)} pool.",
+                400,
+            )
+        if candidate == current:
             raise SwitchError("Playlist is already on that URL.", 409)
         result = self._last_results.get(candidate)
         if result is None:
@@ -688,10 +918,10 @@ class Monitor:
         if not result.healthy:
             reason = result.fail_reason or "down"
             raise SwitchError(
-                f"That URL is down ({reason}). Choose a healthy one from the pool.",
+                f"That URL is down ({reason}). Choose a healthy one from the {pool_label(wanted)} pool.",
                 409,
             )
-        logger.info("Standby candidate %s (user-selected)", candidate)
+        logger.info("Standby candidate %s (user-selected, pool %s)", candidate, wanted)
         return candidate
 
     async def manual_revert(self, playlist_id: str) -> dict[str, Any]:
@@ -725,12 +955,10 @@ class Monitor:
                     "already": True,
                 }
 
-            credentials = [(item.username, item.password) for item in cfg.playlists]
-            result = await check_url(target, cfg.settings, credentials)
-            self._last_results[result.url] = result
-            self._stat(result.url).last_result = result
+            result = await self._recheck_target(cfg, playlist, target)
             if not result.healthy:
                 reason = result.fail_reason or "down"
+                self._publish_after_manual(cfg)
                 raise SwitchError(
                     f"Original DNS failed the health check ({reason}). Not switching back.",
                     409,
@@ -740,13 +968,52 @@ class Monitor:
                 cfg, playlist, current, target, revert=True
             )
             self._publish_after_manual(cfg)
+            magnum = normalize_pool(playlist.pool) == "magnum"
             return {
                 "ok": True,
                 "playlist_id": playlist.playlist_id,
                 "name": playlist.name,
                 "from": current,
                 "to": target,
+                "mode": "epgenius",
+                "watch": magnum,
             }
+
+    def _kick_watch_refresh(self) -> None:
+        """Reload player.yaml immediately and queue a /watch catalogue pull."""
+        from iptv_monitor.player_sync import queue_watch_force
+
+        queue_watch_force(self.root, "playlist")
+        watch = getattr(self, "watch_service", None)
+        if watch is not None and hasattr(watch, "invalidate_config"):
+            watch.invalidate_config()
+        syncer = getattr(self, "watch_syncer", None)
+        if syncer is not None and hasattr(syncer, "wake"):
+            syncer.wake()
+
+    def _apply_watch_dns(self, cfg: AppConfig, old_url: str, new_url: str) -> None:
+        """After a Magnum EPGenius swap, point /watch at the same host."""
+        try:
+            update_player_dns(cfg.paths.player, new_url)
+        except Exception:
+            logger.exception("EPGenius swapped Magnum DNS but could not update player.yaml")
+            self.shared.add_event(
+                "warn",
+                "Magnum EPGenius swapped; Watch player.yaml DNS was not updated",
+            )
+        watch = getattr(self, "watch_service", None)
+        guide = getattr(watch, "guide", None) if watch is not None else None
+        if guide is not None and hasattr(guide, "rewrite_live_playback_host"):
+            try:
+                rewritten = guide.rewrite_live_playback_host(old_url, new_url)
+                if rewritten:
+                    logger.info(
+                        "Rewrote %s Watch live playback URLs onto the new Magnum DNS",
+                        rewritten,
+                    )
+            except Exception:
+                logger.exception("Could not rewrite Watch live playback hosts")
+        self._kick_watch_refresh()
 
     async def _swap_playlist(
         self,
@@ -792,6 +1059,8 @@ class Monitor:
         except Exception:
             logger.exception("API succeeded but failed to persist current_dns for %s", playlist.name)
         playlist.current_dns = new_url
+        if normalize_pool(playlist.pool) == "magnum":
+            self._apply_watch_dns(cfg, old_url, new_url)
         logger.info("Swapped %s from %s to %s", playlist.name, old_url, new_url)
         prefix = "manual revert " if revert else ("manual " if manual else "")
         self.shared.add_event("swap", f"{prefix}{playlist.name}: {old_url} -> {new_url}")
@@ -823,6 +1092,7 @@ class Monitor:
         live_set: set[str],
         available_set: set[str],
     ) -> None:
+        """Refresh SharedState rows the dashboard polls."""
         names_by_url: dict[str, list[str]] = {}
         for playlist in cfg.playlists:
             key = normalize_url(playlist.current_dns)
@@ -839,11 +1109,12 @@ class Monitor:
                     self._stat(url),
                     names_by_url.get(url, []),
                     frequent_threshold=threshold,
+                    pool=_pool_for_url(cfg, url),
                 )
             )
         available_rows = []
-        for url in cfg.available_urls:
-            key = normalize_url(url)
+        for item in cfg.available_pool:
+            key = normalize_url(item.url)
             available_rows.append(
                 _url_view(
                     key,
@@ -852,6 +1123,7 @@ class Monitor:
                     self._stat(key),
                     names_by_url.get(key, []),
                     frequent_threshold=threshold,
+                    pool=item.pool,
                 )
             )
 
@@ -881,7 +1153,10 @@ class Monitor:
                     "nameserver": result.nameserver if result else None,
                     "cloudflare_proxied": proxied,
                     "cloudflare": any_cf,
-                    "next_standby": self._candidate_for(cfg, dns_key),
+                    "failover": bool(playlist.failover),
+                    "pool": normalize_pool(playlist.pool),
+                    "pool_label": pool_label(playlist.pool),
+                    "next_standby": self._candidate_for(cfg, playlist),
                     "revert_dns": revert_dns,
                 }
             )

@@ -1,7 +1,12 @@
 """90-day per-URL outage history for the History tab.
 
-Separate from state/failure_history.json, which is only the 24h window used
-for the Frequent failure badge and failover skip list.
+Stored in state/url_history.json (gitignored). Separate from
+state/failure_history.json, which is only the 24h window used for the
+Frequent failure badge and failover skip list — do not stretch that prune
+window to 90 days or almost every host becomes “frequent”.
+
+Public /api/history omits currently-live hosts that are not in the available pool
+so Current DNS does not leak. Counts are separate outages (up→down), not duration.
 """
 
 from __future__ import annotations
@@ -105,6 +110,7 @@ class UrlHistoryStore:
             self._prune_url(url)
 
     def save(self) -> None:
+        """Atomic replace so a crash mid-write cannot leave truncated JSON."""
         self.prune_all()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".json.tmp")

@@ -1,4 +1,8 @@
 #!/bin/bash
+# First-time Caddy + HTTPS + owner basicauth on the OVH VPS.
+# Writes /etc/caddy/Caddyfile and /home/ubuntu/.dashboard-login (password file).
+# Do not re-run on a live box — it would replace the Caddy hash and owner password.
+# After Watch shipped, live Caddy also skips gzip on /api/player; this template may lag.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 HOST="vps-4f889186.vps.ovh.net"

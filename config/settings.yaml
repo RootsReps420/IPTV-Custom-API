@@ -1,5 +1,7 @@
 # How often to probe every live and available URL.
+# Overview: runtime knobs for the monitor loop and dashboard bind.
 # YAML reloads each cycle. Python code changes still need a process restart.
+# VPS production must keep dashboard_host: 127.0.0.1 (Caddy proxies). Local may use 0.0.0.0.
 check_interval_seconds: 10
 
 # Live URL must fail this many cycles in a row before EPGenius is called.
@@ -39,3 +41,8 @@ frequent_failure_window_hours: 24
 
 # History tab: how long to keep per-URL down events.
 history_retention_days: 90
+
+# Watch: live channels + now/next EPG into state/. 14400 = 4 hours.
+watch_sync_seconds: 14400
+# Movies/Shows lists. Same 4-hour cadence as live + EPG.
+watch_library_sync_seconds: 14400

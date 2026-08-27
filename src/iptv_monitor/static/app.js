@@ -1,4 +1,7 @@
-/* Dashboard: poll /api/status every 4s and render playlists, URL cards, events. */
+/* Dashboard: poll /api/status (owner) or /api/public every 4s.
+ * Renders URL cards, events, and (owner only) playlists + Switch / Choose URL.
+ * Same script on `/` and `/owner` — isOwnerView() picks the API.
+ */
 
 const liveList = document.getElementById("live-list");
 const availList = document.getElementById("avail-list");
@@ -18,10 +21,16 @@ const playlistSection = document.getElementById("playlists-section");
 const playlistStatWrap = document.getElementById("stat-playlists-wrap");
 const liveSection = document.getElementById("live-section");
 const liveStatWrap = document.getElementById("stat-live-wrap");
+const watchersSection = document.getElementById("watchers-section");
+const watchersBody = document.getElementById("watchers-body");
+const watchStatWrap = document.getElementById("stat-watch-wrap");
+const statWatch = document.getElementById("stat-watch");
 const ownerLink = document.getElementById("owner-link");
 const publicLink = document.getElementById("public-link");
+const watchLink = document.getElementById("watch-link");
 
 function isOwnerView() {
+  // Caddy only protects /owner; this path check is what shows playlists in JS.
   return location.pathname === "/owner" || location.pathname.startsWith("/owner/");
 }
 
@@ -38,6 +47,34 @@ function fmtTime(iso) {
     return "waiting…";
   }
   return new Date(iso).toLocaleTimeString();
+}
+
+function fmtAge(seconds) {
+  const n = Math.max(0, Number(seconds) || 0);
+  if (n < 60) {
+    return `${n}s`;
+  }
+  if (n < 3600) {
+    const m = Math.floor(n / 60);
+    const s = n % 60;
+    return s ? `${m}m ${s}s` : `${m}m`;
+  }
+  const h = Math.floor(n / 3600);
+  const m = Math.floor((n % 3600) / 60);
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function watchKindLabel(kind) {
+  if (kind === "live") {
+    return "Live";
+  }
+  if (kind === "movie") {
+    return "Movie";
+  }
+  if (kind === "series") {
+    return "Series";
+  }
+  return "";
 }
 
 function secondsUntilNext(iso, interval) {
@@ -82,6 +119,12 @@ function nsBadge(item) {
   return `<span class="${cls}" title="${esc(title)}">${esc(label)}</span>`;
 }
 
+function poolBadge(item) {
+  const label = item.pool_label || (item.pool === "magnum" ? "Magnum" : "Strong 8K");
+  const cls = item.pool === "magnum" ? "pill magnum" : "pill strong8k";
+  return `<span class="${cls}">${esc(label)}</span>`;
+}
+
 function card(item) {
   const state = item.healthy ? "up" : "down";
   const reason = item.fail_reason ? `<span>reason ${esc(item.fail_reason)}</span>` : "";
@@ -99,6 +142,7 @@ function card(item) {
       <div class="card-top">
         <div class="url">${esc(item.url)}</div>
         <div class="pills">
+          ${poolBadge(item)}
           ${nsBadge(item)}
           ${frequent}
           <span class="pill ${state}">${state}</span>
@@ -130,13 +174,28 @@ function renderGrouped(el, countEl, items, emptyText, grid) {
     el.innerHTML = `<div class="empty">${emptyText}</div>`;
     return;
   }
+  const magnum = items.filter((item) => item.pool === "magnum");
+  const rest = items.filter((item) => item.pool !== "magnum");
   const buckets = {
-    proxy: items.filter((item) => item.cloudflare_proxied),
-    ns: items.filter((item) => item.cloudflare && !item.cloudflare_proxied),
-    other: items.filter((item) => !item.cloudflare),
+    proxy: rest.filter((item) => item.cloudflare_proxied),
+    ns: rest.filter((item) => item.cloudflare && !item.cloudflare_proxied),
+    other: rest.filter((item) => !item.cloudflare),
   };
   const listClass = grid ? "cards cards-grid" : "cards";
-  el.innerHTML = CF_GROUPS.map((group) => {
+  const magnumBlock = magnum.length
+    ? `
+      <div class="url-group">
+        <div class="url-group-head">
+          <h3>Magnum</h3>
+          <span class="count">${magnum.filter((item) => item.healthy).length}/${magnum.length} up</span>
+        </div>
+        <div class="${listClass}">${magnum.map(card).join("")}</div>
+      </div>
+    `
+    : "";
+  el.innerHTML =
+    magnumBlock +
+    CF_GROUPS.map((group) => {
     const rows = buckets[group.id];
     if (!rows.length) {
       return "";
@@ -155,6 +214,9 @@ function renderGrouped(el, countEl, items, emptyText, grid) {
 }
 
 const switching = new Set();
+let switchNotice = "";
+let switchNoticeUntil = 0;
+// Keep Choose URL open across 4s re-renders.
 let pickOpen = null;
 let pickValue = "";
 
@@ -179,10 +241,11 @@ function apiError(data, fallback) {
   return fallback;
 }
 
-function poolChoices(currentDns) {
-  const current = String(currentDns || "");
+function poolChoices(playlist) {
+  const current = String(playlist.current_dns || "");
+  const pool = playlist.pool || "strong8k";
   return (latest?.available || [])
-    .filter((item) => item.url && item.url !== current)
+    .filter((item) => item.url && item.url !== current && (item.pool || "strong8k") === pool)
     .slice()
     .sort((a, b) => {
       if (Boolean(a.healthy) !== Boolean(b.healthy)) {
@@ -196,7 +259,7 @@ function pickerMarkup(item, id, dryRun, busy) {
   if (pickOpen !== id) {
     return "";
   }
-  const choices = poolChoices(item.current_dns);
+  const choices = poolChoices(item);
   if (!choices.length) {
     return `<div class="switch-picker"><span class="muted">No other URLs in the pool.</span></div>`;
   }
@@ -233,6 +296,7 @@ function pickerMarkup(item, id, dryRun, busy) {
 }
 
 function renderPlaylists(items) {
+  // Re-render replaces innerHTML; restore Choose URL dropdown focus if it was open.
   const keepPickerFocus = Boolean(
     document.activeElement && document.activeElement.matches("[data-pick-url]")
   );
@@ -253,11 +317,17 @@ function renderPlaylists(items) {
       const nsCls = item.cloudflare ? "status-warn" : "";
       const id = String(item.playlist_id ?? "");
       const busy = switching.has(id);
+      const autoOff = item.failover === false;
       const target = item.next_standby;
       const canSwitch = Boolean(target) && !dryRun;
+      const magnum = item.pool === "magnum";
       const title = target
-        ? `Switch to ${hostOf(target)}`
-        : "No healthy standby right now";
+        ? magnum
+          ? `Switch to ${hostOf(target)} (Magnum pool only). Fresh MPEG-TS check first. Watch follows this DNS.`
+          : `Switch to ${hostOf(target)} (fresh MPEG-TS check first)`
+        : magnum
+          ? "No healthy Magnum standby right now"
+          : "No healthy standby right now";
       const btnLabel = busy ? "Switching…" : "Switch";
       const revertTo = item.revert_dns;
       const canRevert = Boolean(revertTo) && !dryRun;
@@ -269,7 +339,11 @@ function renderPlaylists(items) {
       const chooseLabel = chooseOpen ? "Close" : "Choose URL";
       return `
         <tr>
-          <td>${esc(item.name)}</td>
+          <td>${esc(item.name)}${
+            item.pool_label
+              ? ` <span class="pill ${item.pool === "magnum" ? "magnum" : "strong8k"}">${esc(item.pool_label)}</span>`
+              : ""
+          }</td>
           <td>${esc(item.playlist_id)}</td>
           <td>${esc(item.username)}</td>
           <td>${esc(item.current_dns)}</td>
@@ -277,6 +351,11 @@ function renderPlaylists(items) {
           <td class="${cls}">${label}</td>
           <td>
             <div class="switch-actions">
+              ${
+                autoOff
+                  ? `<span class="monitor-only" title="No automatic swap. Switch still calls EPGenius within this playlist's pool.">Manual only</span>`
+                  : ""
+              }
               <button
                 type="button"
                 class="switch-btn${busy ? " busy" : ""}"
@@ -288,7 +367,7 @@ function renderPlaylists(items) {
                 type="button"
                 class="switch-btn choose${chooseOpen ? " is-here" : ""}"
                 data-choose="${esc(id)}"
-                title="Pick a specific URL from the available pool"
+                title="Pick a specific URL from this playlist's pool"
                 ${dryRun || busy ? "disabled" : ""}
               >${chooseLabel}</button>
               ${
@@ -317,6 +396,133 @@ function renderPlaylists(items) {
   }
 }
 
+function fmtRes(width, height) {
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  if (!w || !h) {
+    return "";
+  }
+  let tag = "";
+  if (w >= 3800 || h >= 2100) {
+    tag = "4K";
+  } else if (w >= 2500 || h >= 1400) {
+    tag = "1440p";
+  } else if (w >= 1800 || h >= 800) {
+    tag = "1080p";
+  } else if (w >= 1200 || h >= 700) {
+    tag = "720p";
+  }
+  return tag ? `${w}×${h} ${tag}` : `${w}×${h}`;
+}
+
+function fmtMbps(kbps) {
+  const n = Number(kbps) || 0;
+  if (n <= 0) {
+    return "";
+  }
+  if (n >= 1000) {
+    return `${(n / 1000).toFixed(1)} Mb/s`;
+  }
+  return `${Math.round(n)} kb/s`;
+}
+
+function qualityClass(level) {
+  if (level === "good") {
+    return "status-play";
+  }
+  if (level === "ok") {
+    return "status-warn";
+  }
+  if (level === "poor") {
+    return "status-down";
+  }
+  return "";
+}
+
+function renderWatchers(watch) {
+  if (!watchersSection || !watchersBody) {
+    return;
+  }
+  const sessions = watch?.sessions || [];
+  const slots = watch?.slots || {};
+  const countEl = document.getElementById("watchers-count");
+  const playing = watch?.playing || 0;
+  const online = watch?.online || sessions.length;
+  const slotBit =
+    slots.max != null ? ` · slots ${slots.used ?? 0}/${slots.max}` : "";
+  if (countEl) {
+    countEl.textContent = sessions.length
+      ? `${online} online · ${playing} playing${slotBit}`
+      : "none";
+  }
+  if (!sessions.length) {
+    watchersBody.innerHTML = `<tr><td colspan="7">Nobody is signed in to /watch right now.</td></tr>`;
+    return;
+  }
+  watchersBody.innerHTML = sessions
+    .map((row) => {
+      const playingNow = Boolean(row.playing);
+      const kind = watchKindLabel(row.kind);
+      const title = row.title || "";
+      const detail = row.detail || "";
+      const watching = playingNow
+        ? `${kind ? `${kind} · ` : ""}${title || "Playing…"}`
+        : "Browsing";
+      const extra = [];
+      if (playingNow && detail && detail !== title) {
+        extra.push(`<span class="muted">${esc(detail)}</span>`);
+      }
+      if (playingNow && row.watching_seconds) {
+        extra.push(`<span class="muted">on this ${esc(fmtAge(row.watching_seconds))}</span>`);
+      }
+      const bits = [];
+      if (row.quality) {
+        bits.push(row.quality);
+      }
+      const rate = fmtMbps(row.kbps);
+      if (rate) {
+        bits.push(rate);
+      }
+      if (row.width && row.height) {
+        bits.push(fmtRes(row.width, row.height));
+      }
+      if (row.audio) {
+        bits.push(row.audio);
+      }
+      const qualMain = bits.length ? bits.join(" · ") : playingNow ? "measuring…" : "—";
+      const qualExtra = [];
+      if (playingNow && row.buffer_s) {
+        qualExtra.push(`${row.buffer_s}s buffer`);
+      }
+      if (playingNow && row.stalls_60s) {
+        qualExtra.push(`${row.stalls_60s} stall${row.stalls_60s === 1 ? "" : "s"}/min`);
+      }
+      if (playingNow && row.drop_pct) {
+        qualExtra.push(`${row.drop_pct}% drops`);
+      }
+      const who = String(row.username || "");
+      const kicking = switching.has(`kick:${who}`);
+      return `
+        <tr>
+          <td>${esc(who)}</td>
+          <td>${esc(fmtAge(row.logged_in_seconds))}</td>
+          <td>${esc(row.ip || "—")}</td>
+          <td class="${playingNow ? "status-play" : ""}">${playingNow ? "playing" : "idle"}</td>
+          <td class="quality-cell ${qualityClass(row.quality)}">${esc(qualMain)}${
+            qualExtra.length ? `<span class="muted">${esc(qualExtra.join(" · "))}</span>` : ""
+          }</td>
+          <td class="watching-cell">${esc(watching)}${extra.join("")}</td>
+          <td>
+            <button type="button" class="switch-btn kick${kicking ? " busy" : ""}" data-kick="${esc(who)}" ${
+              kicking ? "disabled" : ""
+            } title="Sign ${esc(who)} out of /watch on every tab and device">Log out</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
 async function postSwitch(path, playlistId, failPrefix, extra = {}) {
   if (!playlistId || switching.has(playlistId)) {
     return;
@@ -338,6 +544,10 @@ async function postSwitch(path, playlistId, failPrefix, extra = {}) {
     }
     pickOpen = null;
     pickValue = "";
+    if (data.watch) {
+      switchNotice = `Swapped to ${hostOf(data.to)}. Watch will refresh the list shortly.`;
+      switchNoticeUntil = Date.now() + 20000;
+    }
     await refresh();
   } catch (error) {
     renderAlerts([`${failPrefix}: ${error.message}`]);
@@ -356,6 +566,41 @@ function switchPlaylist(playlistId, targetUrl) {
 
 function switchBackPlaylist(playlistId) {
   return postSwitch("/api/switch-back", playlistId, "Switch back failed");
+}
+
+async function kickWatchUser(username) {
+  const who = String(username || "").trim();
+  const key = `kick:${who}`;
+  if (!who || switching.has(key)) {
+    return;
+  }
+  if (!window.confirm(`Sign ${who} out of Watch on every tab and device?`)) {
+    return;
+  }
+  switching.add(key);
+  if (latest) {
+    renderWatchers(latest.watch);
+  }
+  try {
+    const response = await fetch("/api/status", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: who, kick: true }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(apiError(data, `HTTP ${response.status}`));
+    }
+    await refresh();
+  } catch (error) {
+    renderAlerts([`Could not sign ${who} out: ${error.message}`]);
+  } finally {
+    switching.delete(key);
+    if (latest) {
+      renderWatchers(latest.watch);
+    }
+  }
 }
 
 if (playlistBody) {
@@ -410,6 +655,16 @@ if (playlistBody) {
   });
 }
 
+if (watchersBody) {
+  watchersBody.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-kick]");
+    if (!button || button.disabled) {
+      return;
+    }
+    kickWatchUser(button.getAttribute("data-kick"));
+  });
+}
+
 function renderEvents(items) {
   if (!items || !items.length) {
     eventList.innerHTML = `<li class="empty-events">No events yet this process. Downs, recoveries, and swaps show up here.</li>`;
@@ -437,11 +692,19 @@ function alertClass(text) {
   if (lower.startsWith("all portal urls are up")) {
     return "alert ok";
   }
+  if (lower.startsWith("watch dns")) {
+    return "alert ok";
+  }
   return "alert";
 }
 
 function renderAlerts(items, fallbackError) {
   const messages = [...(items || [])];
+  if (switchNotice && Date.now() < switchNoticeUntil) {
+    messages.unshift(switchNotice);
+  } else {
+    switchNotice = "";
+  }
   if (fallbackError && !messages.includes(fallbackError)) {
     messages.unshift(fallbackError);
   }
@@ -465,6 +728,7 @@ function tickCountdown() {
 }
 
 async function refresh() {
+  // Owner path talks to /api/status (Caddy auth). Public path uses /api/public.
   try {
     const owner = isOwnerView();
     const response = await fetch(owner ? "/api/status" : "/api/public");
@@ -483,9 +747,17 @@ async function refresh() {
     if (liveStatWrap) {
       liveStatWrap.hidden = !signedIn;
     }
+    if (watchStatWrap) {
+      watchStatWrap.hidden = !signedIn;
+    }
     if (signedIn) {
       statLive.textContent = `${counts.live_up ?? "—"}/${counts.live_total ?? "—"} up`;
       statPlaylists.textContent = String(counts.playlists ?? (data.playlists || []).length);
+      if (statWatch) {
+        const online = counts.watch_online ?? (data.watch?.online ?? 0);
+        const playing = counts.watch_playing ?? (data.watch?.playing ?? 0);
+        statWatch.textContent = `${playing} playing · ${online} online`;
+      }
     }
     if (ownerLink) {
       ownerLink.hidden = signedIn;
@@ -493,11 +765,17 @@ async function refresh() {
     if (publicLink) {
       publicLink.hidden = !signedIn;
     }
+    if (watchLink) {
+      watchLink.hidden = !signedIn;
+    }
     if (playlistSection) {
       playlistSection.hidden = !signedIn;
     }
     if (liveSection) {
       liveSection.hidden = !signedIn;
+    }
+    if (watchersSection) {
+      watchersSection.hidden = !signedIn;
     }
     modePill.hidden = !data.dry_run;
     tickCountdown();
@@ -506,6 +784,7 @@ async function refresh() {
     if (signedIn) {
       renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false);
       renderPlaylists(data.playlists || []);
+      renderWatchers(data.watch);
     }
     renderEvents(data.events || []);
   } catch (error) {

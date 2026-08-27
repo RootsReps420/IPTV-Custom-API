@@ -1,7 +1,11 @@
-"""Load settings, playlists, standby URLs, and secrets.
+"""Load settings, playlists, standby URLs, Watch configs, and .env secrets.
 
-YAML is re-read every monitor cycle, so edits to playlists / urls / settings
-apply without a restart. Python code changes still need the process restarted.
+YAML under config/ is re-read every monitor cycle (and Watch re-reads player.yaml
+per request), so playlist / URL / settings edits apply without a restart.
+Python code changes still need `systemctl restart iptv-monitor`.
+
+Gitignored live files: playlists.yaml, urls.yaml, player.yaml, watch_users.yaml, .env
+Examples in this folder are safe to commit.
 """
 
 from __future__ import annotations
@@ -13,6 +17,20 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
+
+DEFAULT_POOL = "strong8k"
+
+
+def normalize_pool(value: str | None) -> str:
+    """Magnum vs Strong 8K. Unknown / missing values are Strong 8K."""
+    compact = "".join(ch for ch in (value or "").lower() if ch.isalnum())
+    if compact == "magnum":
+        return "magnum"
+    return DEFAULT_POOL
+
+
+def pool_label(value: str | None) -> str:
+    return "Magnum" if normalize_pool(value) == "magnum" else "Strong 8K"
 
 
 class Settings(BaseModel):
@@ -40,6 +58,10 @@ class Settings(BaseModel):
     frequent_failure_down_events: int = 3
     frequent_failure_window_hours: int = 24
     history_retention_days: int = 90
+    # How often Watch re-downloads live channels + EPG into state/ (seconds).
+    watch_sync_seconds: int = 14400
+    # Movies/Shows catalogue. Same 4-hour cadence as live + EPG.
+    watch_library_sync_seconds: int = 14400
 
 
 class Playlist(BaseModel):
@@ -53,6 +75,18 @@ class Playlist(BaseModel):
     current_dns: str
     # Set on a dashboard manual switch; Switch back returns here after a health check.
     manual_from_dns: str | None = None
+    # False = no automatic EPGenius swap. Manual Switch is still allowed within this pool.
+    failover: bool = True
+    # strong8k and magnum never share standbys — different provider credentials.
+    # Magnum still calls EPGenius; Watch DNS in player.yaml follows Magnum swaps.
+    pool: str = DEFAULT_POOL
+
+
+class PoolUrl(BaseModel):
+    """One standby URL, tagged so Magnum and Strong 8K cannot cross-failover."""
+
+    url: str
+    pool: str = DEFAULT_POOL
 
 
 class Secrets(BaseModel):
@@ -69,6 +103,8 @@ class Paths(BaseModel):
     settings: Path
     playlists: Path
     urls: Path
+    player: Path
+    watch_users: Path
     env: Path
 
 
@@ -77,7 +113,15 @@ class AppConfig(BaseModel):
     settings: Settings
     secrets: Secrets
     playlists: list[Playlist]
-    available_urls: list[str] = Field(default_factory=list)
+    available_pool: list[PoolUrl] = Field(default_factory=list)
+
+    @property
+    def available_urls(self) -> list[str]:
+        return [item.url for item in self.available_pool]
+
+    def urls_in_pool(self, pool: str | None) -> list[str]:
+        wanted = normalize_pool(pool)
+        return [item.url for item in self.available_pool if normalize_pool(item.pool) == wanted]
 
 
 def _yaml() -> YAML:
@@ -89,10 +133,12 @@ def _yaml() -> YAML:
 
 
 def _safe_yaml() -> YAML:
+    """Load-only YAML (no round-trip). Used for settings / playlists / urls reads."""
     return YAML(typ="safe")
 
 
 def resolve_paths(root: Path | None = None) -> Paths:
+    """Canonical paths under the project root (cwd if root is None)."""
     base = Path(root) if root else Path.cwd()
     config_dir = base / "config"
     return Paths(
@@ -101,6 +147,8 @@ def resolve_paths(root: Path | None = None) -> Paths:
         settings=config_dir / "settings.yaml",
         playlists=config_dir / "playlists.yaml",
         urls=config_dir / "urls.yaml",
+        player=config_dir / "player.yaml",
+        watch_users=config_dir / "watch_users.yaml",
         env=base / ".env",
     )
 
@@ -110,6 +158,8 @@ def ensure_runtime_configs(paths: Paths) -> None:
     pairs = (
         (paths.playlists, paths.config_dir / "playlists.example.yaml"),
         (paths.urls, paths.config_dir / "urls.example.yaml"),
+        (paths.player, paths.config_dir / "player.example.yaml"),
+        (paths.watch_users, paths.config_dir / "watch_users.example.yaml"),
     )
     for dest, example in pairs:
         if not dest.exists() and example.exists():
@@ -127,22 +177,33 @@ def load_playlists(path: Path) -> list[Playlist]:
     return [Playlist.model_validate(item) for item in raw]
 
 
-def load_available_urls(path: Path) -> list[str]:
-    """Standby pool, de-duplicated, same order as the file."""
+def load_available_pool(path: Path) -> list[PoolUrl]:
+    """Standby pool with provider tags. Plain strings default to Strong 8K."""
     data = _safe_yaml().load(path.read_text(encoding="utf-8")) or {}
     urls = data.get("available") or []
-    unique: list[str] = []
+    unique: list[PoolUrl] = []
     seen: set[str] = set()
     for item in urls:
-        value = str(item).strip()
+        pool = DEFAULT_POOL
+        if isinstance(item, dict):
+            value = str(item.get("url") or item.get("dns") or "").strip()
+            pool = normalize_pool(item.get("pool") or item.get("label"))
+        else:
+            value = str(item).strip()
         if not value or value in seen:
             continue
         seen.add(value)
-        unique.append(value)
+        unique.append(PoolUrl(url=value, pool=pool))
     return unique
 
 
+def load_available_urls(path: Path) -> list[str]:
+    """Standby pool URLs only (order preserved)."""
+    return [item.url for item in load_available_pool(path)]
+
+
 def load_secrets(env_path: Path) -> Secrets:
+    """Read .env. EPGenius + Discord webhooks are required; status webhook is optional."""
     load_dotenv(env_path, override=False)
     missing = [
         name
@@ -169,6 +230,7 @@ def load_secrets(env_path: Path) -> Secrets:
 
 
 def load_config(root: Path | None = None) -> AppConfig:
+    """Full runtime config. Copies example YAML into gitignored files on first run."""
     paths = resolve_paths(root)
     if not paths.settings.exists():
         raise FileNotFoundError(f"Missing settings file: {paths.settings}")
@@ -184,7 +246,7 @@ def load_config(root: Path | None = None) -> AppConfig:
         settings=load_settings(paths.settings),
         secrets=load_secrets(paths.env),
         playlists=load_playlists(paths.playlists),
-        available_urls=load_available_urls(paths.urls),
+        available_pool=load_available_pool(paths.urls),
     )
 
 
@@ -218,3 +280,17 @@ def update_playlist_dns(
     with tmp.open("w", encoding="utf-8") as handle:
         yaml.dump(data, handle)
     tmp.replace(playlists_path)
+
+
+def update_player_dns(player_path: Path, new_dns: str) -> None:
+    """Write Watch's portal DNS in player.yaml after a Magnum EPGenius swap."""
+    yaml = _yaml()
+    if not player_path.exists():
+        raise FileNotFoundError(f"Missing player file: {player_path}")
+    with player_path.open(encoding="utf-8") as handle:
+        data = yaml.load(handle) or {}
+    data["dns"] = new_dns
+    tmp = player_path.with_suffix(".yaml.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        yaml.dump(data, handle)
+    tmp.replace(player_path)

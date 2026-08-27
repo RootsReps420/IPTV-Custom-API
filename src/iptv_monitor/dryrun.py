@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from iptv_monitor.config import load_config, update_playlist_dns
+from iptv_monitor.config import load_config, normalize_pool, update_player_dns, update_playlist_dns
 from iptv_monitor.dashboard import serve_dashboard
 from iptv_monitor.epgenius import update_creds
 from iptv_monitor.health import normalize_url
@@ -14,6 +14,7 @@ from iptv_monitor.notify import notify_no_standby, notify_swap, notify_url_down,
 
 
 async def run_url_check(monitor: Monitor) -> int:
+    """One cycle, print the table. No EPGenius, no Discord."""
     monitor.shared.dry_run = True
     await monitor.run_cycle(swap=False, notify=False)
     print(monitor.format_table())
@@ -24,6 +25,7 @@ async def run_url_check(monitor: Monitor) -> int:
 
 
 async def run_failover_preview(monitor: Monitor) -> int:
+    """Show what would swap if the 3-failure threshold were already met."""
     monitor.shared.dry_run = True
     await monitor.run_cycle(swap=False, notify=False)
     print(monitor.format_table())
@@ -35,6 +37,7 @@ async def run_failover_preview(monitor: Monitor) -> int:
 
 
 async def run_discord_test(root: Path | None) -> int:
+    """Send [TEST] webhook payloads. Never calls EPGenius."""
     cfg = load_config(root)
     if not cfg.playlists:
         raise RuntimeError("config/playlists.yaml has no playlists")
@@ -155,6 +158,11 @@ async def run_apply(
     print(f"  {old_url} -> {new_url}")
     await update_creds(cfg.secrets, playlist, new_url)
     update_playlist_dns(cfg.paths.playlists, playlist.playlist_id, new_url)
+    if normalize_pool(playlist.pool) == "magnum":
+        update_player_dns(cfg.paths.player, new_url)
+        from iptv_monitor.player_sync import queue_watch_force
+
+        queue_watch_force(root, "playlist")
     await notify_swap(cfg.secrets, playlist, old_url, new_url, manual=True)
     print("EPGenius accepted. Discord swap alert sent.")
     return 0
@@ -167,6 +175,7 @@ async def run_dashboard_test(
     host: str,
     port: int,
 ) -> int:
+    """Serve the UI with dry_run on so Switch / EPGenius cannot fire."""
     monitor.shared.dry_run = True
 
     async def loop() -> None:

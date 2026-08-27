@@ -1,4 +1,8 @@
 # VPS operations
+#
+# Overview: how to run, update, and debug the live copy at /home/ubuntu/iptv-monitor.
+# Git push does not update the VPS. Copy files then `sudo systemctl restart iptv-monitor`.
+# Never overwrite /etc/caddy/Caddyfile with deploy/Caddyfile without keeping the live hash.
 
 The live monitor runs on the Ubuntu VPS, not the Windows PC.
 
@@ -6,7 +10,7 @@ The live monitor runs on the Ubuntu VPS, not the Windows PC.
 |---|---|
 | App directory | `/home/ubuntu/iptv-monitor` |
 | Process | systemd unit `iptv-monitor` (`deploy/iptv-monitor.service`) |
-| Dashboard | `https://vps-4f889186.vps.ovh.net` (public standby pool). Playlists and Current DNS at `/owner` (same Caddy login). App binds `127.0.0.1:8787`. |
+| Dashboard | `https://vps-4f889186.vps.ovh.net` (Caddy `dan` login). Playlists and Current DNS at `/owner`. App binds `127.0.0.1:8787`. `/watch` is the friend player (app login only). |
 | Discord | Alerts, swaps, and the status-board webhook — no tunnel needed |
 
 `systemctl enable` means it **starts on reboot**. `Restart=always` means it comes back if the process crashes.
@@ -74,17 +78,26 @@ Caddy terminates HTTPS and proxies to `127.0.0.1:8787`. Port 8787 stays closed.
 
 | URL | Login | What it shows |
 |-----|--------|----------------|
-| `https://vps-4f889186.vps.ovh.net` | none | Standby URL pool health. Safe to share. |
-| `https://vps-4f889186.vps.ovh.net/history` | none | 90-day outage counts per standby URL (no currently-live DNS). |
-| `/api/history` | none | JSON for the History tab. |
-| `/api/public` | none | JSON used by the public page (no live DNS, no playlist rows). |
+| `https://vps-4f889186.vps.ovh.net` | `dan` | Standby URL pool health. |
+| `https://vps-4f889186.vps.ovh.net/history` | `dan` | 90-day outage counts per standby URL (no currently-live DNS). |
+| `/api/history` | `dan` | JSON for the History tab. |
+| `/api/public` | `dan` | JSON used by the `/` page (no live DNS, no playlist rows). |
 | `/api/status` | `dan` | Full JSON including live DNS and playlists. |
 | `/api/switch` | `dan` | POST `{ "playlist_id": "..." }` — best healthy standby. Optional `target_url` picks a specific healthy pool URL. |
-| `/api/switch-back` | `dan` | POST `{ "playlist_id": "..." }` — health-check the pre-manual URL, then EPGenius back to it. |
+| `https://vps-4f889186.vps.ovh.net/watch` | site login (`config/watch_users.yaml`) | Web IPTV player (live / movies / series). Uses `config/player.yaml`, not failover playlists. |
+| `/api/watch/*` `/api/player/*` `/static/*` | Watch cookie (no Caddy) | Player login, catalogue, media proxy, and Watch CSS/JS. |
 
-The **Playlists** button on the public page is `/owner`. The browser’s HTTP basic-auth prompt is the same login you already use. Standby hostnames in the available pool stay visible; currently-live DNS and playlist identity are hidden.
+The **Playlists** button is `/owner`. Caddy HTTP basic-auth (`dan`) covers the monitor, History, Info, and owner APIs. Friends should open **`/watch`**, not `/`. `/watch` uses `config/player.yaml` (dedicated Xtream account, max 5 streams) and `config/watch_users.yaml` (site logins). Never copy DanMain / failover playlists into `player.yaml` on the VPS.
 
-Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Auth is only on `/owner`, `/api/status`, `/api/switch`, and `/api/switch-back`. When you edit the Caddyfile, keep the `@owner` matcher — do not wrap the whole site in `basicauth` again.
+```bash
+cd /home/ubuntu/iptv-monitor
+.venv/bin/python -m iptv_monitor.hash_password
+# paste the hash into config/watch_users.yaml
+# put the 5-connection Xtream dns/username/password in config/player.yaml
+sudo systemctl restart iptv-monitor
+```
+
+Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Caddy `dan` covers Info, Playlists, and owner APIs. `Steve` (if present) can only open `/` and `/history`. `/watch` is app-level login. When you edit the Caddyfile, keep Watch and `/api/player/*` out of `basicauth` or playback will prompt friends for `dan`. `encode gzip` must not apply to `/api/player/*` or live MPEG-TS will buffer. After Caddyfile edits on this Ubuntu 2.6.2 box, **`systemctl restart caddy`** (do not `reload`).
 
 To change the owner password, in PuTTY. Ubuntu’s Caddy 2.6.2 expects a **base64** hash, not a raw `$2a$...` line and not backslash-escaped dollars.
 
@@ -106,7 +119,7 @@ Copy the `dan JDJh...` line (no `$`, no backslashes). Then:
 sudo nano /etc/caddy/Caddyfile
 ```
 
-Replace the existing `dan ...` line inside `basicauth @owner` with that line. Leave the `@owner` path matcher in place. Save, then:
+Replace the existing `dan ...` line inside `basicauth @protected` with that line. Leave the `@protected` path matcher in place. Save, then:
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile
