@@ -1,114 +1,263 @@
 # IPTV portal monitor
-#
-# Overview: long-running service that health-checks IPTV portals, fails playlists
-# over via EPGenius, serves a public status site + owner Switch UI + History, and
-# (separately) a login-gated /watch Chromium player. Run one copy only — usually
-# systemd on the OVH VPS. See deploy/README.md for production.
 
-A long-running Python service that watches IPTV portal URLs, fails a playlist over to a healthy standby via EPGenius when the live URL dies, posts Discord alerts, and serves a local dashboard.
+One Python service that:
 
-It is meant to run on one machine (this PC via Task Scheduler, or later a Pi / VPS). Do not run two copies at once.
+1. **Health-checks** Xtream portal hostnames (live DNS + a shared standby pool).
+2. **Fails playlists over** through EPGenius when a live host stays down.
+3. **Serves a status site** (public pool, owner playlists, 90-day history).
+4. **Serves Watch** — a login-gated browser player on a dedicated account.
 
-## How a check cycle works
+Run **one copy**. Two processes will fight over EPGenius and Discord.
 
-Every `check_interval_seconds` (default 10s) the monitor:
+Production is systemd behind Caddy on a VPS. Day-to-day ops: [deploy/README.md](deploy/README.md).
 
-1. Reloads `config/playlists.yaml`, `config/urls.yaml`, and `config/settings.yaml`.
-2. Builds two URL lists:
-   - **Live** — each playlist’s `current_dns`
-   - **Standby** — the shared `available` list in `urls.yaml`
-3. Probes **every** unique URL the same way (live and standby).
-4. Updates per-URL failure / success counters.
-5. If a **live** URL has failed **3 cycles in a row**, swaps those playlists to a standby that passed **this** cycle.
-6. Refreshes the dashboard snapshot. Discord fires only on state changes (down, recovered, swap, no standby, EPGenius error). If `DISCORD_WEBHOOK_STATUS` is set, one status-channel message is edited in place (no extra posts).
+---
 
-Changing YAML is picked up on the next cycle. Changing Python code needs a process restart (`IPTVPortalMonitor` task).
+## How the pieces fit
+
+```mermaid
+flowchart LR
+  subgraph clients [Clients]
+    Owner[Owner browser]
+    Friend[Watch browser]
+    Apps[IPTV apps]
+  end
+
+  subgraph edge [VPS]
+    Caddy[Caddy HTTPS]
+    App[Monitor + Watch]
+  end
+
+  subgraph upstream [Upstream]
+    Portals[Portal hosts]
+    EPG[EPGenius]
+    Disc[Discord webhooks]
+  end
+
+  Owner --> Caddy
+  Friend --> Caddy
+  Caddy --> App
+  App -->|DNS TCP MPEG-TS| Portals
+  App -->|update_creds| EPG
+  EPG -->|new portal DNS| Apps
+  App -->|alerts swaps status| Disc
+```
+
+Caddy terminates TLS and proxies to the app on `127.0.0.1:8787`. That port stays closed on the firewall. Watch and its media APIs are **not** behind Caddy basic-auth; they use the Watch site login. The monitor pages and owner APIs are.
+
+```mermaid
+flowchart TB
+  subgraph caddy [Caddy]
+    BA[Basic-auth: monitor + owner]
+    Open[No Caddy login]
+  end
+
+  BA --> Pub["/  /history  /key"]
+  BA --> Own["/owner  switch  kick"]
+  Open --> W["/watch"]
+  Open --> API["/api/watch  /api/player  /static"]
+```
+
+A **read-only** Caddy user (optional) can open `/` and `/history` only — not Playlists, Info, Switch, or kick.
+
+---
+
+## Check cycle
+
+Every `check_interval_seconds` (default 10s):
+
+```mermaid
+flowchart TD
+  A[Reload YAML] --> B[Probe every live + standby host]
+  B --> C[Update fail / success counters]
+  C --> D{Live host down 3 cycles in a row?}
+  D -->|no| E[Publish dashboard snapshot]
+  D -->|yes| F[Pick best healthy standby in the same pool]
+  F --> G[Re-check that host now: DNS + TCP + MPEG-TS]
+  G -->|fail| H[Try next ranked standby up to 6]
+  G -->|pass| I[EPGenius update_creds]
+  H -->|one passes| I
+  H -->|none pass| J[No standby — do not call EPGenius]
+  I --> K[Write current_dns]
+  K --> L{Magnum playlist?}
+  L -->|yes| M[Update Watch portal DNS]
+  L -->|no| E
+  M --> E
+  J --> E
+```
+
+YAML (`settings`, `playlists`, `urls`) is re-read **every cycle**. Python or static file changes need a process restart.
+
+The dashboard snapshot is published only when a cycle **finishes**. After a restart the panel can sit on “waiting…” with no cards for a minute or two while every host is probed.
+
+---
 
 ## What “healthy” means
 
-A URL is healthy only if every **enabled** check passes. Defaults:
+A host is healthy when this cycle’s probe returns **no** `fail_reason`. Checks run in order; the first failure wins. Nameserver lookup is informational only — it never fails a URL.
 
-| Check | Default | What it actually does |
-|-------|---------|------------------------|
-| DNS | on | Resolve A/AAAA. Fail examples: `dns_nxdomain`, `dns_timeout`. |
-| TCP | on | Connect to the portal port (80 unless the URL has a port). Fail examples: `tcp_timeout`, `tcp_refused`. |
-| HTTP GET `/` | **off** | Too noisy on Xtream panels (many return odd status on `/`). |
-| MPEG-TS stream | **on** | Xtream `player_api.php` then a short `GET /live/user/pass/id.ts`. Looks for MPEG-TS sync byte `0x47` / `video/mp2t`. |
+| Step | Default | Pass if |
+|------|---------|---------|
+| DNS | on (5s) | A/AAAA exists (or the host is already an IP) |
+| TCP | on (5s) | Something accepts a connection on the portal port |
+| HTTP `GET /` | **off** | Xtream homepages lie; leave this off |
+| MPEG-TS | on (10s) | Xtream auth works **and** a short live-TS prefix looks like real MPEG-TS |
 
-These panels do **not** serve multicast UDP. Players pull **HTTP MPEG-TS**. That is what the `ts` flag on the dashboard is.
+These panels do not serve multicast UDP. Players pull **HTTP MPEG-TS**. That is the `mpeg-ts` flag on the cards.
 
-Stream-check outcomes you will see as `fail_reason`:
+The stream probe (from the machine running the monitor):
 
-| Reason | Meaning |
-|--------|---------|
-| `stream_no_api` | `player_api.php` returned 404 — not an Xtream panel (parked domain, nginx default, etc.). |
-| `stream_blocked` | API or stream returned 401/403, a Cloudflare challenge page, or non-JSON HTML instead of Xtream JSON. |
-| `stream_452` | Panel returned HTTP 452/453/456/464 (blocked, geo, or DNS-locked). All channels are unusable on that host. |
-| `stream_auth` | Xtream JSON came back but `user_info.auth` was not 1 for our playlist accounts. |
-| `stream_no_mpegts` | Logged in, but the live path did not return MPEG-TS (placeholder `black.ts` redirects do not count). |
-| `stream_timeout` / `stream_error` | Network timeout or request error talking to the API/stream. |
+1. `player_api.php` with a playlist account from the **same provider pool**.
+2. Rejects 401/403, panel codes 452/453/456/464, Cloudflare challenge HTML, TOS-abuse interstitials.
+3. Reads about three MPEG-TS packets from `/live/{user}/{pass}/{id}.ts` and hangs up.
+4. Ignores placeholder `black.ts` redirects.
 
-The stream check uses the username/password from `playlists.yaml` against **every** URL (standbys too). Same credentials, different DNS — that is how EPGenius failover works.
+So “mpeg-ts ok” means: **this account authenticated on this hostname, and one live id returned a few packets within 10 seconds, from the VPS.** It is not a guarantee that every channel will play on every ISP. That is why swaps **re-probe the chosen host immediately before EPGenius**.
 
-## Cloudflare flags
+| `fail_reason` | Meaning |
+|---------------|---------|
+| `dns_nxdomain` / `dns_timeout` / `dns_no_records` | Name did not resolve in time |
+| `tcp_timeout` / `tcp_refused` | Port closed or unreachable |
+| `stream_no_api` | `player_api.php` returned 404 |
+| `stream_blocked` | 401/403, Cloudflare challenge, or non-JSON HTML |
+| `stream_452` | Panel 452/453/456/464 — blocked, geo, or DNS-locked |
+| `stream_auth` | JSON came back but Xtream `auth` was not 1 |
+| `stream_no_mpegts` | Logged in, but the live path was not MPEG-TS |
+| `stream_timeout` / `stream_error` | Network timeout or request error |
+| `stream_not_verified` | Pre-swap recheck: DNS/TCP passed but MPEG-TS did not |
 
-Each hostname also gets a nameserver lookup (walks `host` → parent zone for NS records) and a check of whether the resolved IP sits in [Cloudflare’s published proxy ranges](https://www.cloudflare.com/ips/).
+---
 
-The dashboard badge is **informational** (no top banner):
+## Provider pools
 
-- **Cloudflare proxy** — orange-cloud / anycast IP. Last-choice swap target (most likely to block streams).
-- **Cloudflare NS** — domain uses `*.ns.cloudflare.com` but the A record is origin (grey-cloud). Second-choice swap target.
-- **ns aws / godaddy / …** — other DNS hosts.
+Standby URLs and playlists are tagged with a **pool**. Default is `strong8k`. Magnum hosts must set `pool: magnum`.
 
-This flag does not by itself mark a URL down. A Cloudflare-proxied host can still pass DNS, TCP, and HTTP MPEG-TS.
+- Health checks use only credentials from playlists in that pool.
+- Failover, Switch, and Choose URL only move a playlist onto a URL in the **same** pool.
+- The two providers never share logins or swap targets.
+
+---
 
 ## Failover
 
-When a live URL is unhealthy:
+### Auto
 
-- **1st and 2nd** consecutive failures: wait (Discord “down” on the first transition).
-- **3rd** (~30s at a 10s check interval): pick a standby that is healthy **this cycle** and is not the failed URL, in this order: no Cloudflare → Cloudflare NS only → Cloudflare proxy. Prefer standbys with at least 2 consecutive successes within that group.
-- Call EPGenius `POST /api/public/update_creds` with the playlist id, new DNS, username, and password. Magnum playlists use the same call, but only onto URLs tagged `pool: magnum`.
-- After a Magnum swap, write Watch’s portal DNS into `player.yaml` and refresh `/watch` so the live M3U follows the new host.
-- On success, write the new URL into `playlists.yaml` `current_dns`, update the in-memory playlist, and refresh the dashboard (playlists table + Current DNS) on that same cycle.
-- If no eligible standby exists, Discord gets “No healthy standby” and EPGenius is not called.
+When a **live** host is down:
 
-## Dashboard
+- Failures **1 and 2**: wait. Discord “down” on the first healthy→down edge.
+- Failure **3** (~30s at a 10s interval): pick a standby that is healthy **this cycle**, same pool, not the failed URL.
 
-On the VPS, `https://vps-4f889186.vps.ovh.net` (monitor, History, Info, Playlists) is behind the same Caddy login (`dan`) you already use for `/owner`. Friends use **`/watch`**, which stays on the Watch site login only. Locally the app is `http://127.0.0.1:8787`.
+Pick order:
 
-- Public: available pool cards (`dns` / `tcp` / `ts`, nameserver badge), plus standby down/up events (Caddy `dan` login on the VPS)
-- Owner (`/owner`): the same, plus Current DNS, the playlists table (no passwords), a Switch button, and Switch back after a manual swap
+1. Not Frequent failure, then Frequent failure only if nothing else is up.
+2. Inside that: origin (no Cloudflare) → Cloudflare nameservers only → Cloudflare orange-cloud proxy.
+3. Prefer hosts with at least `min_consecutive_successes_for_swap` (default 2) consecutive passes.
 
-Do not port-forward 8787 to the public internet.
+Playlists with `failover: false` are never auto-swapped. Manual Switch still works.
 
-## Remote status (Discord)
+### Pre-swap recheck
 
-The local dashboard is LAN-only. For a glance from any network, add a **dedicated Discord channel** and a third webhook. The monitor keeps **one** message in that channel and **edits** it. Discord does not notify on edits, so a 15s check cycle will not spam you.
+The cycle snapshot is a shortlist. Immediately before EPGenius:
 
-Create a channel such as `#iptv-status`, create a webhook there, and put it in `.env` as `DISCORD_WEBHOOK_STATUS`. Mute the channel if you like — you still open it when you want the board.
+- Probe that host again (DNS + TCP + MPEG-TS).
+- **Auto** and **Switch**: if it fails, try the next ranked standby (up to 6). A failed recheck is logged and counts as a down.
+- **Choose URL**: if your pick fails, abort — current DNS is left as-is.
+- **Switch back**: same full recheck of the original host.
 
-The embed lists playlists, live URLs, and standbys with `dns` / `tcp` / `ts` flags. It updates immediately when something actually changes (down, recovered, fail count toward swap, DNS change). If everything is stable it only refreshes the “checked … ago” line every `discord_status_min_interval_seconds` (default 60).
+### After EPGenius succeeds
 
-A slash-command bot (`/status`) would also work, but it needs a Discord application, a bot token, an invite, and a persistent gateway connection. The edited webhook message is the same data with none of that setup. Add a bot later if you want pull-on-demand without opening the channel.
+- Write `current_dns` in `playlists.yaml` on the machine that is running (the live copy).
+- Magnum: also write Watch’s portal DNS in `player.yaml` and refresh the in-memory live list.
+- Discord swap webhook fires (this channel includes panel usernames/passwords by design — keep it private).
 
-Do not put this webhook in the swaps channel — the status board has no passwords, but swaps still do.
+---
+
+## Cloudflare and Frequent failure
+
+| Badge | Meaning | Effect on failover |
+|-------|---------|-------------------|
+| Cloudflare proxy | A/AAAA is in Cloudflare’s published proxy ranges (orange-cloud) | Last-choice standby |
+| Cloudflare NS | NS is Cloudflare but the A record is origin (grey-cloud) | Second-choice standby |
+| Frequent failure | At least 3 **separate** downs in 24 hours | Skipped while any other healthy option exists |
+
+Cloudflare does **not** mark a host down. A proxied host can still pass MPEG-TS.
+
+Frequent failure is **not** History. The 24-hour file is only for the badge and skip list. The History tab stores 90 days of separate outages (up→down), not how long an outage lasted.
+
+---
+
+## Web UI
+
+| Path | Who | What |
+|------|-----|------|
+| `/` | Monitor login | Standby cards (`dns` / `tcp` / `mpeg-ts`), alerts, events. No live DNS, no playlists. |
+| `/owner` | Owner login | The same, plus Current DNS, playlists, Switch / Choose URL / Switch back, Watch sessions + kick. |
+| `/history` | Monitor login | 90-day outage counts. Public JSON omits currently-live hosts that are not in the standby pool. |
+| `/key` | Owner login | Legend (UP / DOWN / Cloudflare / Frequent failure / Switch / Watch). |
+| `/watch` | Watch site login | Browser player. Not a Caddy user. |
+
+Owner JSON includes playlist **usernames** and current DNS. It does not include panel passwords.
+
+---
+
+## Watch
+
+A Chromium player for friends, on a **dedicated** Xtream account (`config/player.yaml`, default 5 concurrent streams). Do not put failover playlist credentials in `player.yaml`.
+
+```mermaid
+flowchart LR
+  subgraph watch [Watch]
+    TV[TV tab]
+    VOD[Movies / Shows]
+  end
+
+  TV -->|M3U + EPG| Magnum[Magnum playlist URL]
+  VOD -->|Xtream API| Panel[player.yaml dns + user]
+  Magnum -.->|host follows Magnum EPGenius swaps| Panel
+```
+
+- **TV**: Magnum M3U (and EPG from `url-tvg` or `live_epg`). Playback URLs stay on the server; the browser gets a proxy.
+- **Movies / Shows**: Xtream lists from `player.yaml`.
+- Site users live in `watch_users.yaml` as PBKDF2 hashes only. First login forces a password change.
+- Owner can see who is online/playing and sign a user out on every device.
+
+---
+
+## Discord
+
+Three optional webhooks in `.env`:
+
+| Webhook | Channel | Behaviour |
+|---------|---------|-----------|
+| `DISCORD_WEBHOOK_ALERTS` | Down / up / no standby / EPGenius errors | New posts on transitions |
+| `DISCORD_WEBHOOK_SWAPS` | DNS changes | Includes panel credentials — private channel only |
+| `DISCORD_WEBHOOK_STATUS` | One status board | **Edits** a single message (no notify spam). Immediate on real changes; “checked … ago” at most every `discord_status_min_interval_seconds` (default 60). |
+
+Do not put the status webhook in the swaps channel.
+
+---
 
 ## Files
 
-| Path | Purpose |
-|------|---------|
-| `.env` | EPGenius API key and Discord webhooks (swaps, alerts, optional status board). **Never commit.** |
-| `config/playlists.yaml` | Accounts: Discord ID, playlist ID, username, password, live `current_dns`. **Never commit.** |
-| `config/urls.yaml` | Shared standby portal URLs. **Never commit.** |
-| `config/settings.yaml` | Intervals, which checks run, dashboard bind address. |
-| `config/*.example.yaml` | Templates to copy on first setup. |
-| `src/iptv_monitor/` | The app. |
-| `logs/monitor.log` | Rotating log. |
+| Path | In git? | Notes |
+|------|---------|--------|
+| `.env` | **No** | EPGenius key, Discord webhooks. Copy from `.env.example`. |
+| `config/playlists.yaml` | **No** | Accounts, `current_dns` (rewritten on swap). |
+| `config/urls.yaml` | **No** | Standby pool. Magnum rows need `pool: magnum`. |
+| `config/player.yaml` | **No** | Watch portal + optional live M3U. |
+| `config/watch_users.yaml` | **No** | Watch site logins (hashes only). |
+| `config/settings.yaml` | Yes | Intervals, checks, dashboard bind. Production must keep `dashboard_host: 127.0.0.1`. |
+| `config/*.example.yaml` | Yes | Templates. |
+| `state/` | **No** | 24h failure stamps, 90-day history, Watch cache. |
+| `logs/monitor.log` | **No** | Rotating log. |
+| `src/iptv_monitor/` | Yes | The app. |
+| `deploy/` | Yes | systemd unit, Caddy **template** (replace hostname and hashes on the server). |
 
-`current_dns` must be the portal URL **as EPGenius expects it** (usually `http://host` with no `:8080` unless the panel really uses that port).
+`current_dns` must be the portal URL **as EPGenius expects it** (usually `http://host`, no extra port unless the panel really uses one).
 
-Passwords are included on the **swaps** Discord webhook on purpose. They are not shown on the dashboard.
+The copy of `playlists.yaml` on a laptop is often stale. The live DNS is whatever the running process last wrote.
+
+---
 
 ## Setup
 
@@ -121,13 +270,23 @@ pip install -e .
 copy .env.example .env
 copy config\playlists.example.yaml config\playlists.yaml
 copy config\urls.example.yaml config\urls.yaml
+copy config\player.example.yaml config\player.yaml
+copy config\watch_users.example.yaml config\watch_users.yaml
 ```
 
-Fill in `.env`, `playlists.yaml`, and `urls.yaml`. On Windows, if `python` is a Store stub, use `.\.venv\Scripts\python.exe`.
+Fill in `.env` and the gitignored YAML files. Hash a Watch password with:
+
+```powershell
+.\.venv\Scripts\python.exe main.py watch-hash
+```
+
+Paste the hash into `watch_users.yaml`. On Windows, if `python` is a Store stub, use `.\.venv\Scripts\python.exe`.
+
+---
 
 ## Commands
 
-None of the dry-run commands call EPGenius or rewrite `current_dns`.
+Dry-run commands do **not** call EPGenius or rewrite `current_dns`.
 
 ```powershell
 .\.venv\Scripts\python.exe main.py check
@@ -136,57 +295,50 @@ None of the dry-run commands call EPGenius or rewrite `current_dns`.
 .\.venv\Scripts\python.exe main.py test discord
 .\.venv\Scripts\python.exe main.py test dashboard
 .\.venv\Scripts\python.exe main.py test dashboard --demo-down
-.\.venv\Scripts\python.exe main.py apply DanMain
+.\.venv\Scripts\python.exe main.py apply account-1
+.\.venv\Scripts\python.exe main.py watch-hash
 ```
 
 | Command | What it does |
 |---------|----------------|
-| `check` / `test urls` | One probe of live + standby. Prints a table and a this-cycle failover preview. |
-| `test failover` | Same probes, then prints what **would** swap if the 3-failure threshold were already met. |
-| `test discord` | Sends `[TEST]` messages to alerts and swaps. If a status webhook is set, posts a one-off `[TEST]` board (does not replace the live board). |
+| `check` / `test urls` | One probe of live + standby. Table + this-cycle failover preview. |
+| `test failover` | Same probes, then what **would** swap if the 3-failure threshold were already met. |
+| `test discord` | `[TEST]` posts to alerts and swaps. Status webhook gets a one-off test board (does not replace the live message). |
 | `test dashboard` | UI with live probes, no Discord, no swaps. |
 | `test dashboard --demo-down` | Same, plus a fake down URL so the red banner is visible. |
-| `apply DanMain` | Push that playlist’s `current_dns` to EPGenius **and** send the Discord swap alert. Use `--dns` / `--from-url` if needed. |
+| `apply <playlist>` | Push that playlist’s `current_dns` to EPGenius and send the swap alert. `--dns` / `--from-url` if needed. |
+| `watch-hash` | Print a PBKDF2 hash for `watch_users.yaml`. |
 | `python main.py` | **Live:** swaps and Discord are real. |
 | `python main.py --no-dashboard` | Live checks without the web UI. |
 
 `python main.py --once` is an alias for `check`.
 
-## Keep it running on Windows
+---
 
-Close any other `main.py` first (port 8787 can only bind once). Then:
+## Keep it running
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install-windows-task.ps1
-```
+**VPS (live):** systemd unit `iptv-monitor`. Git push does **not** update the server — copy files, then restart for Python/static changes. YAML-only edits reload on the next cycle. See [deploy/README.md](deploy/README.md).
 
-That registers Task Scheduler job `IPTVPortalMonitor`: starts at logon, restarts on crash, no run-time limit, uses `pythonw.exe` (no console). Logs: `logs\monitor.log`.
+**Windows (lab only):** Task Scheduler job from `scripts/install-windows-task.ps1`. Do **not** enable this while the VPS unit is live.
 
-Remove with `scripts\uninstall-windows-task.ps1`. The PC must be on and you must be logged in; sleep still pauses it.
+Production `config/settings.yaml` must bind the dashboard to `127.0.0.1`. The git copy may use `0.0.0.0` for local LAN testing — do not copy that bind address onto the VPS wholesale.
 
-## Keep it running on the VPS
+---
 
-**This is the live monitor.** Day-to-day: updates, git vs secrets, restart rules, dashboard tunnel — see [deploy/README.md](deploy/README.md).
-
-Short version: GitHub does **not** update the VPS. Copy or `git pull` on the server, then `sudo systemctl restart iptv-monitor` for Python changes. Playlist/URL YAML is edited on the VPS and reloads by itself. Do not run the Windows task at the same time.
-
-Dashboard (SSH tunnel, then `http://127.0.0.1:8787`):
-
-```powershell
-ssh -L 8787:127.0.0.1:8787 ubuntu@YOUR_VPS_IP
-```
-
-## Layout of the code
+## Code map
 
 | Module | Role |
 |--------|------|
-| `config.py` | Load settings, playlists, URLs, `.env`. Persist `current_dns` after a swap. |
+| `config.py` | Settings, playlists, URLs, `.env`. Persist `current_dns` / Watch DNS after a swap. |
 | `health.py` | Per-URL DNS → TCP → optional HTTP → MPEG-TS. |
 | `stream.py` | Xtream `player_api.php` + short MPEG-TS read. |
 | `nameserver.py` | NS lookup and Cloudflare proxy-range detection. |
-| `monitor.py` | Cycle loop, counters, failover plans, dashboard state. |
+| `monitor.py` | Cycle, counters, failover, pre-swap recheck, dashboard snapshot. |
+| `history.py` | 90-day outage store (`state/url_history.json`). |
 | `epgenius.py` | `update_creds` HTTP call. |
-| `notify.py` | Discord webhooks. |
-| `dashboard.py` | FastAPI + static UI. |
+| `notify.py` | Discord webhooks + edited status board. |
+| `dashboard.py` | FastAPI routes for monitor / owner / history. |
+| `watch.py` / `player_*.py` | Watch login, catalogue, media proxy, presence, slots. |
+| `player_sync.py` | Periodic M3U / Xtream / EPG refresh into `state/`. |
 | `dryrun.py` | `check` / `test` commands. |
 | `__main__.py` | CLI and logging. |

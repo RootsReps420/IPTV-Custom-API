@@ -1,50 +1,49 @@
 # VPS operations
-#
-# Overview: how to run, update, and debug the live copy at /home/ubuntu/iptv-monitor.
-# Git push does not update the VPS. Copy files then `sudo systemctl restart iptv-monitor`.
-# Never overwrite /etc/caddy/Caddyfile with deploy/Caddyfile without keeping the live hash.
 
-The live monitor runs on the Ubuntu VPS, not the Windows PC.
+How to run, update, and debug the **live** copy. Git push does not update the server. Copy files, then restart if the change was Python or static assets.
+
+Run **one** monitor. Do not also run the Windows Task Scheduler job.
 
 | | |
 |---|---|
-| App directory | `/home/ubuntu/iptv-monitor` |
+| App directory | `/home/ubuntu/iptv-monitor` (adjust if you installed elsewhere) |
 | Process | systemd unit `iptv-monitor` (`deploy/iptv-monitor.service`) |
-| Dashboard | `https://vps-4f889186.vps.ovh.net` (Caddy `dan` login). Playlists and Current DNS at `/owner`. App binds `127.0.0.1:8787`. `/watch` is the friend player (app login only). |
-| Discord | Alerts, swaps, and the status-board webhook — no tunnel needed |
-
-`systemctl enable` means it **starts on reboot**. `Restart=always` means it comes back if the process crashes.
+| Dashboard | Caddy HTTPS → app on `127.0.0.1:8787` |
+| Discord | Alerts, swaps, optional status-board webhook |
 
 ```bash
-systemctl is-enabled iptv-monitor   # enabled
-systemctl is-active iptv-monitor    # active
+systemctl is-enabled iptv-monitor
+systemctl is-active iptv-monitor
 sudo journalctl -u iptv-monitor -n 50 --no-pager
 ```
 
-Do **not** also run `scripts/install-windows-task.ps1` or a second `main.py`. Two copies will fight over failovers.
+`Restart=always` brings the process back after a crash or reboot.
 
-## The VPS does not pull git by itself
+---
 
-Pushing to GitHub does nothing on the server. Someone has to copy or `git pull` on the VPS, then restart if the change was Python.
-
-The first deploy was a file copy into `/home/ubuntu/iptv-monitor`. That folder may not be a git clone. Until it is, update by copying files (WinSCP / `pscp`) the same way.
-
-## What is in git vs what stays on the VPS
+## Git vs secrets
 
 | Path | In git? | How to update live |
 |------|---------|-------------------|
 | `src/`, `main.py`, `deploy/` | Yes | Copy or `git pull`, then **restart** |
-| `config/settings.yaml` | Yes | Copy or `git pull`. YAML is re-read every cycle; restart anyway if unsure |
-| `.env` | **No** | Edit on the VPS only |
-| `config/playlists.yaml` | **No** | Edit on the VPS (or copy that file up). Reloads next cycle, no restart |
+| `src/iptv_monitor/static/` | Yes | Copy, then restart (or at least cache-bust `?v=` in HTML) |
+| `config/settings.yaml` | Yes | Copy carefully. Production **must** keep `dashboard_host: 127.0.0.1`. YAML reloads each cycle. |
+| `.env` | **No** | Edit on the server only |
+| `config/playlists.yaml` | **No** | Edit on the server. Reloads next cycle. Failover rewrites `current_dns` here. |
 | `config/urls.yaml` | **No** | Same as playlists |
+| `config/player.yaml` | **No** | Watch portal + M3U. Magnum swaps rewrite `dns`. |
+| `config/watch_users.yaml` | **No** | Watch site hashes |
+| `state/` | **No** | Failure history, URL history, Watch catalogue cache |
+| Live `/etc/caddy/Caddyfile` | **No** | Do **not** overwrite with `deploy/Caddyfile` without keeping live hashes and hostname |
 
-Never commit `.env`, `playlists.yaml`, or `urls.yaml`. Failover writes `current_dns` into `playlists.yaml` **on the VPS**. That is the live DNS. The copy on your PC can be stale.
+Never commit `.env`, playlists, urls, player, or watch-users YAML. The laptop copy of `playlists.yaml` can be stale.
 
-## After you change code on the PC
+---
 
-1. Commit and push if you want GitHub as backup.
-2. Get the changed files onto `/home/ubuntu/iptv-monitor` (copy, or `git pull` if that directory is a clone).
+## After you change code
+
+1. Push to GitHub if you want a backup (code only).
+2. Copy the changed files onto the app directory (or `git pull` if that directory is a clone).
 3. Restart:
 
 ```bash
@@ -53,7 +52,7 @@ sudo systemctl restart iptv-monitor
 systemctl is-active iptv-monitor
 ```
 
-If Python dependencies changed (`pyproject.toml`), also:
+If `pyproject.toml` changed:
 
 ```bash
 cd /home/ubuntu/iptv-monitor
@@ -61,45 +60,57 @@ cd /home/ubuntu/iptv-monitor
 sudo systemctl restart iptv-monitor
 ```
 
+---
+
 ## After you change playlists or standby URLs
 
-Edit `/home/ubuntu/iptv-monitor/config/playlists.yaml` or `urls.yaml` on the VPS (nano, WinSCP, etc.). Wait one check interval. No restart.
+Edit `config/playlists.yaml` or `config/urls.yaml` **on the server**. Wait one check cycle. No restart.
 
-Manual EPGenius push from the VPS:
-
-```bash
-cd /home/ubuntu/iptv-monitor
-.venv/bin/python main.py apply DanMain --dns http://new-host.example --from-url http://old-host.example
-```
-
-## Dashboard in a browser (Caddy)
-
-Caddy terminates HTTPS and proxies to `127.0.0.1:8787`. Port 8787 stays closed.
-
-| URL | Login | What it shows |
-|-----|--------|----------------|
-| `https://vps-4f889186.vps.ovh.net` | `dan` | Standby URL pool health. |
-| `https://vps-4f889186.vps.ovh.net/history` | `dan` | 90-day outage counts per standby URL (no currently-live DNS). |
-| `/api/history` | `dan` | JSON for the History tab. |
-| `/api/public` | `dan` | JSON used by the `/` page (no live DNS, no playlist rows). |
-| `/api/status` | `dan` | Full JSON including live DNS and playlists. |
-| `/api/switch` | `dan` | POST `{ "playlist_id": "..." }` — best healthy standby. Optional `target_url` picks a specific healthy pool URL. |
-| `https://vps-4f889186.vps.ovh.net/watch` | site login (`config/watch_users.yaml`) | Web IPTV player (live / movies / series). Uses `config/player.yaml`, not failover playlists. |
-| `/api/watch/*` `/api/player/*` `/static/*` | Watch cookie (no Caddy) | Player login, catalogue, media proxy, and Watch CSS/JS. |
-
-The **Playlists** button is `/owner`. Caddy HTTP basic-auth (`dan`) covers the monitor, History, Info, and owner APIs. Friends should open **`/watch`**, not `/`. `/watch` uses `config/player.yaml` (dedicated Xtream account, max 5 streams) and `config/watch_users.yaml` (site logins). Never copy DanMain / failover playlists into `player.yaml` on the VPS.
+Manual EPGenius push:
 
 ```bash
 cd /home/ubuntu/iptv-monitor
-.venv/bin/python -m iptv_monitor.hash_password
-# paste the hash into config/watch_users.yaml
-# put the 5-connection Xtream dns/username/password in config/player.yaml
-sudo systemctl restart iptv-monitor
+.venv/bin/python main.py apply account-1 --dns http://new-host.example --from-url http://old-host.example
 ```
 
-Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Caddy `dan` covers Info, Playlists, and owner APIs. `Steve` (if present) can only open `/` and `/history`. `/watch` is app-level login. When you edit the Caddyfile, keep Watch and `/api/player/*` out of `basicauth` or playback will prompt friends for `dan`. `encode gzip` must not apply to `/api/player/*` or live MPEG-TS will buffer. After Caddyfile edits on this Ubuntu 2.6.2 box, **`systemctl restart caddy`** (do not `reload`).
+Watch password hash:
 
-To change the owner password, in PuTTY. Ubuntu’s Caddy 2.6.2 expects a **base64** hash, not a raw `$2a$...` line and not backslash-escaped dollars.
+```bash
+cd /home/ubuntu/iptv-monitor
+.venv/bin/python main.py watch-hash
+# paste into config/watch_users.yaml, then restart
+```
+
+---
+
+## Caddy
+
+Caddy terminates HTTPS and proxies to `127.0.0.1:8787`. Port **8787 stays closed**. Firewall: **22, 80, 443** only.
+
+`deploy/Caddyfile` is a **template**. The live file is `/etc/caddy/Caddyfile`. When you edit Caddy:
+
+1. Keep the live basic-auth hashes (do not paste template placeholders).
+2. Keep Watch, `/api/watch/*`, `/api/player/*`, and `/static/*` **out** of basic-auth.
+3. Do **not** gzip `/api/player/*` (live MPEG-TS will buffer).
+4. Validate, then **`systemctl restart caddy`** (do not `reload` on this box — reload has taken the site down).
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl restart caddy
+sudo systemctl status caddy
+```
+
+Typical access:
+
+| Path | Login | What it shows |
+|------|--------|----------------|
+| `/` `/history` | Caddy (owner and optional read-only user) | Standby pool / 90-day history |
+| `/key` `/owner` | Caddy **owner only** | Legend, playlists, Switch, Watch kick |
+| `/api/public` `/api/history` | Same as `/` | JSON for those pages |
+| `/api/status` `/api/switch` `/api/switch-back` | Owner only | Full snapshot + failover |
+| `/watch` `/api/watch/*` `/api/player/*` | Watch site cookie (not Caddy) | Player, catalogue, media proxy |
+
+To rotate the owner password, generate a hash the way **this** Caddy build expects (Ubuntu 2.6.2 wants **base64** of the bcrypt string, not a raw `$2a$` line):
 
 ```bash
 python3 << 'PY'
@@ -109,88 +120,37 @@ pw2 = getpass.getpass("Again: ")
 if pw != pw2 or not pw:
     raise SystemExit("Passwords did not match")
 raw = subprocess.check_output(["caddy", "hash-password", "--plaintext", pw], text=True).strip()
-print("dan " + base64.b64encode(raw.encode()).decode())
+print("owner " + base64.b64encode(raw.encode()).decode())
 PY
 ```
 
-Copy the `dan JDJh...` line (no `$`, no backslashes). Then:
+Put that user line inside the owner `basicauth` matcher. Leave path matchers in place.
 
-```bash
-sudo nano /etc/caddy/Caddyfile
-```
-
-Replace the existing `dan ...` line inside `basicauth @protected` with that line. Leave the `@protected` path matcher in place. Save, then:
-
-```bash
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-```
-
-```bash
-sudo systemctl status caddy
-sudo journalctl -u caddy -n 50 --no-pager
-```
-
-Firewall should allow **22, 80, 443** only. Do not allow 8787.
-
-The SSH tunnel still works if Caddy is down:
+If Caddy is down, an SSH tunnel still works:
 
 ```powershell
-ssh -i $env:USERPROFILE\.ssh\id_ed25519_iptv_vps -N -L 8787:127.0.0.1:8787 ubuntu@198.244.234.149
+ssh -N -L 8787:127.0.0.1:8787 ubuntu@YOUR_VPS
 ```
 
 Then `http://127.0.0.1:8787`.
 
-## Optional: make the VPS a git clone
+---
 
-Only for **code**. Keep secrets untracked on the server.
+## Optional: git clone on the server
+
+Code only. Keep secrets untracked.
 
 ```bash
-# If the folder is not a clone yet, clone beside it, then move secrets across.
-# If the GitHub repo is private, add a deploy key on the VPS first.
-
 cd /home/ubuntu/iptv-monitor
 git pull
 sudo systemctl restart iptv-monitor
 ```
 
-A private repo will not `git pull` until the VPS has a deploy key (or you keep copying files).
+A private repo needs a deploy key (or keep copying files).
 
-## SSH login (password vs key)
+---
 
-The `ubuntu` user already has a login password (whatever you set with `passwd` in PuTTY). That **is** the SSH password. It cannot be set from this PC without an existing login.
-
-To change it, in PuTTY:
-
-```bash
-passwd
-```
-
-Do not paste that password into chat or into this repo.
-
-To let this PC copy files / restart the service without a password, add an SSH **key** (preferred). On Windows PowerShell. Do **not** use `-N ""` — PowerShell strips that and ssh-keygen errors. Either press Enter twice when asked for a passphrase, or use `cmd`:
-
-```powershell
-ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\id_ed25519_iptv_vps
-Get-Content $env:USERPROFILE\.ssh\id_ed25519_iptv_vps.pub
-```
-
-On the VPS, append that one public line:
-
-```bash
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-nano ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
-```
-
-Then test from Windows:
-
-```powershell
-ssh -i $env:USERPROFILE\.ssh\id_ed25519_iptv_vps ubuntu@YOUR_VPS_IP
-```
-
-## First install (already done on this box)
+## First install
 
 ```bash
 sudo cp /home/ubuntu/iptv-monitor/deploy/iptv-monitor.service /etc/systemd/system/
@@ -200,4 +160,6 @@ sudo ufw allow OpenSSH
 sudo ufw --force enable
 ```
 
-On the VPS, `config/settings.yaml` must keep `dashboard_host: 127.0.0.1`.
+On the server, `config/settings.yaml` must keep `dashboard_host: 127.0.0.1`. Recreate `.venv` on the target architecture — do not copy an x86 venv onto ARM.
+
+Caddy: prefer `apt install caddy` for the host architecture. `deploy/install-caddy.sh` is a first-boot helper with an amd64 fallback; do not run it on a live box (it would replace hashes) and do not use the amd64 deb on ARM.
