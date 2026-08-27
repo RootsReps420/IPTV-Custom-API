@@ -323,8 +323,8 @@ function renderPlaylists(items) {
       const magnum = item.pool === "magnum";
       const title = target
         ? magnum
-          ? `Switch to ${hostOf(target)} (Magnum pool only). Watch follows this DNS.`
-          : `Switch to ${hostOf(target)}`
+          ? `Switch to ${hostOf(target)} (Magnum pool only). Fresh MPEG-TS check first. Watch follows this DNS.`
+          : `Switch to ${hostOf(target)} (fresh MPEG-TS check first)`
         : magnum
           ? "No healthy Magnum standby right now"
           : "No healthy standby right now";

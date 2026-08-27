@@ -129,12 +129,16 @@
         <h2>Switch / Choose URL</h2>
       </div>
       <p>
-        On the Playlists page, <strong>Switch</strong> immediately moves that playlist to the
+        On the Playlists page, <strong>Switch</strong> picks the
         best healthy standby (same preference as auto failover: origin, then Cloudflare NS,
         then Cloudflare proxy; frequent-failure standbys are skipped while anything else is up).
         Magnum playlists only list Magnum-tagged URLs; Strong 8K only lists Strong 8K.
         <strong>Choose URL</strong> opens a dropdown of that pool so you can pick a specific
-        host instead. Down URLs are listed but cannot be selected. After either action,
+        host instead. Down URLs are listed but cannot be selected. Immediately before
+        EPGenius runs, that host is probed again (DNS, TCP, and MPEG-TS). Auto-failover
+        and <strong>Switch</strong> try the next ranked standby if it fails;
+        <strong>Choose URL</strong> aborts and leaves you on the current DNS.
+        After either action,
         <strong>Switch back</strong> can return to the original DNS if that host is still healthy.
         Magnum auto-failover uses the same EPGenius call as Strong 8K.
       </p>
