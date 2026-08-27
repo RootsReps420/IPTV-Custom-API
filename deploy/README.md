@@ -97,7 +97,7 @@ cd /home/ubuntu/iptv-monitor
 sudo systemctl restart iptv-monitor
 ```
 
-Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Caddy `dan` auth is on every path except `/watch`, `/api/watch/*`, `/api/player/*`, and `/static/*`. `/watch` is app-level login. When you edit the Caddyfile, keep the `@protected` matcher — do not wrap `/watch` or `/api/player/*` in `basicauth` or playback will prompt friends for `dan`. `encode gzip` must not apply to `/api/player/*` or live MPEG-TS will buffer.
+Unit: `caddy` (`deploy/Caddyfile`, `deploy/install-caddy.sh`). Caddy `dan` covers Info, Playlists, and owner APIs. `Steve` (if present) can only open `/` and `/history`. `/watch` is app-level login. When you edit the Caddyfile, keep Watch and `/api/player/*` out of `basicauth` or playback will prompt friends for `dan`. `encode gzip` must not apply to `/api/player/*` or live MPEG-TS will buffer. After Caddyfile edits on this Ubuntu 2.6.2 box, **`systemctl restart caddy`** (do not `reload`).
 
 To change the owner password, in PuTTY. Ubuntu’s Caddy 2.6.2 expects a **base64** hash, not a raw `$2a$...` line and not backslash-escaped dollars.
 

@@ -2,11 +2,12 @@
 #
 # Open (no Caddy login): `/watch` `/api/watch/*` `/api/player/*` `/static/*`
 # /watch login is IN THE APP (cookie), not Caddy.
-# Everything else (including `/` `/history` `/key` `/owner` and those APIs)
-# uses basicauth user `dan`.
+# Caddy `dan`: `/` `/history` `/key` `/owner` and owner APIs (switch, kick, status).
+# Caddy `Steve`: `/` and `/history` only (plus `/api/public` `/api/history` those pages need).
+# Steve cannot open `/key`, `/owner`, or switch/kick/status APIs.
 #
 # Do not gzip `/api/player/*` (live MPEG-TS / HLS). Do not copy this file over
-# /etc/caddy/Caddyfile blindly: keep the live bcrypt hash.
+# /etc/caddy/Caddyfile blindly: keep the live bcrypt hashes.
 
 vps-4f889186.vps.ovh.net {
 	# Live streams are already compressed video; gzip would buffer and stall playback.
@@ -14,11 +15,19 @@ vps-4f889186.vps.ovh.net {
 		not path /api/player /api/player/*
 	}
 	encode @notplayer gzip
-	# Friends only need /watch. Static + player APIs stay open so that page can load.
-	@protected {
-		not path /watch /watch/* /api/watch /api/watch/* /api/player /api/player/* /static /static/*
+	@monitor {
+		path / /history /history/* /api/public /api/history
 	}
-	basicauth @protected {
+	@owner {
+		not path /watch /watch/* /api/watch /api/watch/* /api/player /api/player/* /static /static/*
+		not path / /history /history/* /api/public /api/history
+		not path /.well-known /.well-known/*
+	}
+	basicauth @monitor {
+		dan REPLACE_WITH_BASE64_HASH
+		Steve REPLACE_WITH_STEVE_BASE64_HASH
+	}
+	basicauth @owner {
 		dan REPLACE_WITH_BASE64_HASH
 	}
 	# flush_interval -1: stream MPEG-TS to the browser without waiting for full responses.

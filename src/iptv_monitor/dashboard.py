@@ -4,6 +4,8 @@ Open without Caddy: `/watch`, `/api/watch/*`, `/api/player/*`, `/static`
   (Watch still uses the app cookie / site login).
 Caddy `dan` basicauth: `/`, `/owner`, `/history`, `/key`, `/api/public`,
   `/api/history`, `/api/status`, `/api/switch`, `/api/switch-back`, `/api/kick-watch`
+Caddy `Steve` (if configured): `/` and `/history` only (`/api/public`, `/api/history`).
+  Not `/key`, `/owner`, or owner APIs. Not a /watch user.
 Watch (app cookie): `/watch`, `/api/watch/*`, `/api/player/*` — registered in watch.py
 `/api/watch/me` requires a session cookie (401 if signed out).
 iOS native HLS may omit cookies; media uses signed `k` query as well.
