@@ -228,7 +228,7 @@ class LiveSession(
         }
     }
 
-    private fun scheduleReconnect(why: String) {
+    private fun scheduleReconnect() {
         if (!isLive || reconnectPosted || released) return
         if (reconnectTries >= MAX_TRIES) {
             listener.onState(
