@@ -1,0 +1,41 @@
+package com.iptvmonitor.player.data
+
+import okhttp3.OkHttpClient
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
+
+/** VLC UA — same family the monitor uses so panels that fingerprint clients still answer. */
+const val STREAM_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
+
+object HttpClients {
+    val trustAll: X509TrustManager = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+    }
+
+    val shared: OkHttpClient by lazy {
+        val ssl = SSLContext.getInstance("TLS")
+        ssl.init(null, arrayOf(trustAll), SecureRandom())
+        OkHttpClient.Builder()
+            .sslSocketFactory(ssl.socketFactory, trustAll)
+            .hostnameVerifier { _, _ -> true }
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("User-Agent", STREAM_USER_AGENT)
+                        .header("Accept", "*/*")
+                        .build(),
+                )
+            }
+            .build()
+    }
+}
