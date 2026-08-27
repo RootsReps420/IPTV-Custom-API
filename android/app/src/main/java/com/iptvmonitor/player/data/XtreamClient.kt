@@ -1,7 +1,9 @@
 package com.iptvmonitor.player.data
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
 import okhttp3.Request
+import okio.Buffer
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -17,9 +19,19 @@ class XtreamClient(
     val base: String = normalizeBase(rawServer)
 
     fun authenticate() {
-        val json = getJson(null)
-        val auth = json.optJSONObject("user_info")?.opt("auth")
-        val ok = auth == 1 || auth == "1" || auth == true || auth == "true"
+        val body = getRaw(null, client = HttpClients.probe, maxBytes = 262_144)
+        val trimmed = body.trimStart()
+        if (trimmed.startsWith("<")) {
+            throw XtreamException("Server did not return Xtream JSON")
+        }
+        val ok = runCatching {
+            val auth = JSONObject(body).optJSONObject("user_info")?.opt("auth")
+            auth == 1 || auth == "1" || auth == true || auth == "true"
+        }.getOrDefault(
+            body.contains("\"auth\":1") ||
+                body.contains("\"auth\":\"1\"") ||
+                body.contains("\"auth\":true"),
+        )
         if (!ok) {
             throw XtreamException("Xtream login failed")
         }
@@ -184,7 +196,12 @@ class XtreamClient(
         return JSONObject(getRaw(action, extra))
     }
 
-    private fun getRaw(action: String?, extra: Map<String, String> = emptyMap()): String {
+    private fun getRaw(
+        action: String?,
+        extra: Map<String, String> = emptyMap(),
+        client: OkHttpClient = HttpClients.shared,
+        maxBytes: Long = Long.MAX_VALUE,
+    ): String {
         val builder = (base.toHttpUrlOrNull() ?: throw XtreamException("Invalid server URL"))
             .newBuilder()
             .addPathSegment("player_api.php")
@@ -195,11 +212,21 @@ class XtreamClient(
         }
         extra.forEach { (k, v) -> builder.addQueryParameter(k, v) }
         val request = Request.Builder().url(builder.build()).get().build()
-        HttpClients.shared.newCall(request).execute().use { response ->
+        client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw XtreamException("HTTP ${response.code}")
             }
-            return response.body?.string().orEmpty().ifBlank { "{}" }
+            val body = response.body ?: return "{}"
+            if (maxBytes == Long.MAX_VALUE) {
+                return body.string().ifBlank { "{}" }
+            }
+            val buf = Buffer()
+            val source = body.source()
+            while (buf.size < maxBytes && !source.exhausted()) {
+                val want = minOf(8_192L, maxBytes - buf.size)
+                if (source.read(buf, want) == -1L) break
+            }
+            return buf.readUtf8().ifBlank { "{}" }
         }
     }
 

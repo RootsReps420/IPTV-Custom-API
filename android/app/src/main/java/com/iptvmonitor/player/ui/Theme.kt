@@ -27,6 +27,8 @@ object WatchPalette {
     val Stage = Color(0xFF080A0F)
     val LiveRed = Color(0xFFC81E1E)
     val NowLine = Color(0xFF3D5368)
+    /** rgba(125, 255, 195, 0.10) — switch-btn hover */
+    val Hover10 = Color(0x1A7DFFC3)
     /** rgba(125, 255, 195, 0.12) — item/rail hover */
     val Hover12 = Color(0x1F7DFFC3)
     /** rgba(125, 255, 195, 0.16) — category hover */

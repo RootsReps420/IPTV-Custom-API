@@ -1,6 +1,7 @@
 package com.iptvmonitor.player.data
 
 import okhttp3.Request
+import okio.Buffer
 import java.io.InputStream
 import java.util.zip.GZIPInputStream
 
@@ -17,6 +18,18 @@ class CatalogRepository {
         return when (playlist.kind) {
             PlaylistKind.XTREAM -> loadXtream(playlist)
             PlaylistKind.M3U -> loadM3u(playlist, withEpg = false)
+        }
+    }
+
+    /** Cheap login / M3U sanity check. Must not download EPG or the full catalogue. */
+    fun probe(playlist: SavedPlaylist) {
+        when (playlist.kind) {
+            PlaylistKind.XTREAM -> XtreamClient(
+                playlist.server,
+                playlist.username,
+                playlist.password,
+            ).authenticate()
+            PlaylistKind.M3U -> probeM3u(playlist.m3uUrl)
         }
     }
 
@@ -66,6 +79,29 @@ class CatalogRepository {
             seriesCategories = runCatching { client.seriesCategories() }.getOrDefault(emptyList()),
             series = runCatching { client.seriesShows() }.getOrDefault(emptyList()),
         )
+    }
+
+    private fun probeM3u(url: String) {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) throw XtreamException("M3U URL is empty")
+        val request = Request.Builder().url(trimmed).get().build()
+        HttpClients.probe.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw XtreamException("M3U HTTP ${response.code}")
+            }
+            val body = response.body ?: throw XtreamException("M3U was empty")
+            val buf = Buffer()
+            val source = body.source()
+            val cap = 65_536L
+            while (buf.size < cap && !source.exhausted()) {
+                val want = minOf(8_192L, cap - buf.size)
+                if (source.read(buf, want) == -1L) break
+            }
+            val head = buf.readUtf8()
+            if (!head.contains("#EXTM3U", ignoreCase = true) && !head.contains("#EXTINF", ignoreCase = true)) {
+                throw XtreamException("URL did not look like an M3U playlist")
+            }
+        }
     }
 
     private fun loadM3u(playlist: SavedPlaylist, withEpg: Boolean): Catalog {

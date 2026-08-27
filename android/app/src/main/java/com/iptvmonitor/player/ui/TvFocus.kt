@@ -52,6 +52,8 @@ enum class WatchChrome {
     Rail,
     Chip,
     Ghost,
+    Accent,
+    Danger,
     Prog,
     EpgCh,
 }
@@ -67,6 +69,7 @@ private fun WatchChrome.pad(): PaddingValues = when (this) {
     WatchChrome.Rail -> PaddingValues(horizontal = 12.dp, vertical = 14.dp)
     WatchChrome.Chip -> PaddingValues(horizontal = 8.dp, vertical = 3.dp)
     WatchChrome.Ghost -> PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+    WatchChrome.Accent, WatchChrome.Danger -> PaddingValues(horizontal = 10.dp, vertical = 6.dp)
     WatchChrome.Prog -> PaddingValues(horizontal = 8.dp, vertical = 4.dp)
     WatchChrome.EpgCh -> PaddingValues(start = 8.dp, end = 10.dp, top = 6.dp, bottom = 6.dp)
 }
@@ -197,6 +200,8 @@ private fun chromeFill(chrome: WatchChrome, hot: Boolean, isNow: Boolean): Color
     WatchChrome.Cat -> if (hot) WatchPalette.Hover16 else WatchPalette.Panel
     WatchChrome.Chip -> WatchPalette.Panel2
     WatchChrome.Ghost -> if (hot) WatchPalette.Panel2 else Color.Transparent
+    WatchChrome.Accent -> if (hot) WatchPalette.Hover10 else Color.Transparent
+    WatchChrome.Danger -> if (hot) Color(0x1FFF6B6B) else Color.Transparent
     WatchChrome.Prog -> when {
         hot -> WatchPalette.Hover12
         isNow -> WatchPalette.Panel2
@@ -211,6 +216,8 @@ private fun chromeStroke(chrome: WatchChrome, hot: Boolean, selected: Boolean, i
         WatchChrome.Item, WatchChrome.Cat -> if (hot) WatchPalette.Up else WatchPalette.Line
         WatchChrome.Chip -> if (hot || selected) WatchPalette.Up else WatchPalette.Line
         WatchChrome.Ghost -> WatchPalette.Line
+        WatchChrome.Accent -> WatchPalette.Up
+        WatchChrome.Danger -> WatchPalette.Down
         WatchChrome.Prog -> when {
             hot -> WatchPalette.Up
             isNow -> WatchPalette.NowLine

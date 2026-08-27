@@ -19,13 +19,15 @@ import com.iptvmonitor.player.data.PlaylistKind
 import com.iptvmonitor.player.data.PlaylistStore
 import com.iptvmonitor.player.data.SavedPlaylist
 import com.iptvmonitor.player.data.SeriesShow
-import com.iptvmonitor.player.data.XtreamClient
 import com.iptvmonitor.player.player.BufferProfile
 import com.iptvmonitor.player.player.LiveSession
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 enum class BrowseTab { LIVE, MOVIES, SHOWS, SEARCH }
 
@@ -93,6 +95,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         }
 
     private var epgJob: Job? = null
+    private var saveJob: Job? = null
 
     init {
         session.applyProfile(bufferProfile)
@@ -136,20 +139,15 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     fun vodSourceId(): String? = settingsStore.vodSourceId
 
     fun savePlaylist(playlist: SavedPlaylist) {
-        viewModelScope.launch {
+        saveJob?.cancel()
+        saveJob = viewModelScope.launch {
             loading = true
             loadingLabel = "Checking playlist…"
             error = null
             try {
-                withContext(Dispatchers.IO) {
-                    if (playlist.kind == PlaylistKind.XTREAM) {
-                        XtreamClient(
-                            playlist.server,
-                            playlist.username,
-                            playlist.password,
-                        ).authenticate()
-                    } else {
-                        repo.load(playlist.copy(epgUrl = ""))
+                withTimeout(28_000) {
+                    withContext(Dispatchers.IO) {
+                        repo.probe(playlist)
                     }
                 }
                 store.upsert(playlist)
@@ -160,6 +158,10 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
                 if (settingsStore.vodSourceId == null && playlist.kind == PlaylistKind.XTREAM) {
                     settingsStore.vodSourceId = playlist.id
                 }
+            } catch (exc: TimeoutCancellationException) {
+                error = "Portal did not answer in time. Check the URL and try again."
+            } catch (exc: CancellationException) {
+                throw exc
             } catch (exc: Exception) {
                 error = exc.message ?: "Could not load playlist"
             } finally {
