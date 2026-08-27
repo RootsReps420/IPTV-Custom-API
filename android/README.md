@@ -13,7 +13,7 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk` (also copied to `android/PortalPlayer-debug.apk` after a local build). Application id is `com.iptvmonitor.player.debug`.
 
 Release (sideload this one):
 
@@ -29,15 +29,22 @@ keytool -genkey -v -keystore "$env:USERPROFILE\portal-player.jks" -keyalg RSA -k
 
 Then either use Android Studio **Generate Signed Bundle / APK**, or add `android/keystore.properties` (gitignored if you keep the JKS out of the repo) and wire `signingConfigs` later. Until then, `assembleRelease` uses the debug key unless you configure signing in Studio.
 
-## Sideload with Downloader
+## Sideload on Shield
 
-1. Host the **signed** APK on HTTPS (GitHub Release, or a static file on your own server). Do not put panel credentials in that URL.
-2. On a phone/PC, open [Downloader](https://aftvnews.com/downloader/) and create a code that points at the APK URL.
-3. On the TV: install **Downloader** from Amazon (Fire TV) or Play Store → allow **Install unknown apps** for Downloader → enter the code → install.
+Unknown sources: Settings → Device Preferences → Security & restrictions → Unknown sources → allow for **Downloader** (or Files).
 
-Shield and Google TV Streamer also accept the APK via USB/`adb install`. Fire Stick is the usual Downloader path.
+**USB:** copy `PortalPlayer-debug.apk` onto a stick, open it with Files / Downloader on the Shield.
 
-Bump `versionCode` in `app/build.gradle.kts` for each new APK. Downloader does not auto-update; share a new code or the same URL with a new file.
+**PC + adb** (Shield and this machine on the same network, USB debugging on):
+
+```powershell
+adb connect SHIELD_IP:5555
+adb install -r android\PortalPlayer-debug.apk
+```
+
+**Downloader without a phone:** on the Shield, open Downloader and paste an HTTPS URL to the APK. A short code is optional (created in a browser at aftvnews); the app accepts a full URL.
+
+Do not put panel credentials in that URL. Bump `versionCode` in `app/build.gradle.kts` for each new APK.
 
 ## Playlists
 

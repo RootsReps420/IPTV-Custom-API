@@ -70,7 +70,7 @@ fun PlaylistListScreen(
                 Card(
                     onClick = { onOpen(item) },
                     colors = CardDefaults.cardColors(),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().tvFocusBorder(),
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(item.name, style = MaterialTheme.typography.titleMedium)

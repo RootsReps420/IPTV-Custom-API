@@ -21,7 +21,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import android.app.Activity
+import android.view.WindowManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
@@ -34,6 +37,12 @@ import com.iptvmonitor.player.player.LiveSession
 fun PlayerScreen(viewModel: PortalViewModel) {
     val target = viewModel.playing ?: return
     val context = LocalContext.current
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        val window = (view.context as? Activity)?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
     var ui by remember { mutableStateOf(LiveSession.LiveUiState()) }
     val session = remember {
         LiveSession(context) { ui = it }
@@ -99,6 +108,11 @@ fun PlayerScreen(viewModel: PortalViewModel) {
             }
             if (ui.message.isNotBlank()) {
                 Text(ui.message, color = Color(0xFFFFCDD2), style = MaterialTheme.typography.bodySmall)
+            }
+            if (ui.gaveUp) {
+                TextButton(onClick = { session.play(target.url, target.live) }) {
+                    Text("Retry", color = Color.White)
+                }
             }
         }
     }

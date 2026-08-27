@@ -1,5 +1,6 @@
 package com.iptvmonitor.player
 
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -21,7 +22,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        val isTv = resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK ==
+            Configuration.UI_MODE_TYPE_TELEVISION
+        if (!isTv) enableEdgeToEdge()
         setContent {
             PortalTheme {
                 Surface(Modifier.fillMaxSize()) {

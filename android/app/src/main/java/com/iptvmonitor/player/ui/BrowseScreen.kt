@@ -146,7 +146,10 @@ private fun ItemGrid(viewModel: PortalViewModel, items: List<CatalogItem>) {
         modifier = Modifier.fillMaxSize(),
     ) {
         items(items, key = { it.id + it.playbackUrl }) { item ->
-            Card(onClick = { viewModel.playItem(item) }) {
+            Card(
+                onClick = { viewModel.playItem(item) },
+                modifier = Modifier.tvFocusBorder(),
+            ) {
                 Column {
                     AsyncImage(
                         model = item.logo.ifBlank { null },
@@ -190,7 +193,10 @@ private fun ShowGrid(viewModel: PortalViewModel, shows: List<SeriesShow>) {
         modifier = Modifier.fillMaxSize(),
     ) {
         items(shows, key = { it.id }) { show ->
-            Card(onClick = { viewModel.openSeries(show) }) {
+            Card(
+                onClick = { viewModel.openSeries(show) },
+                modifier = Modifier.tvFocusBorder(),
+            ) {
                 Column {
                     AsyncImage(
                         model = show.logo.ifBlank { null },

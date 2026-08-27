@@ -112,7 +112,7 @@ object M3uParser {
         val attrs = mutableMapOf<String, String>()
         val matcher = attr.matcher(meta)
         while (matcher.find()) {
-            attrs[matcher.group(1).lowercase(Locale.US)] = matcher.group(2)
+            attrs[matcher.group(1)?.lowercase(Locale.US) ?: continue] = matcher.group(2).orEmpty()
         }
         val display = name.ifBlank { attrs["tvg-name"].orEmpty() }
         attrs["name"] = display

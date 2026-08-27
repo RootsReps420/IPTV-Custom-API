@@ -16,6 +16,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import com.iptvmonitor.player.data.HttpClients
 import com.iptvmonitor.player.data.STREAM_USER_AGENT
 
@@ -51,6 +53,7 @@ class LiveSession(
     val player: ExoPlayer = ExoPlayer.Builder(appContext)
         .setLoadControl(liveLoadControl())
         .setHandleAudioBecomingNoisy(true)
+        .setWakeMode(C.WAKE_MODE_NETWORK)
         .build()
         .also { it.playWhenReady = true }
 
@@ -268,7 +271,7 @@ class LiveSession(
         }, RECONNECT_DELAY_MS)
     }
 
-    private fun mediaSource(url: String, live: Boolean): MediaSource {
+    private fun mediaSource(url: String, @Suppress("UNUSED_PARAMETER") live: Boolean): MediaSource {
         val item = MediaItem.fromUri(url)
         val lower = url.lowercase()
         return if (lower.contains(".m3u8") || lower.contains("application/vnd.apple")) {
@@ -276,7 +279,8 @@ class LiveSession(
                 .setAllowChunklessPreparation(true)
                 .createMediaSource(item)
         } else {
-            ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(item)
+            ProgressiveMediaSource.Factory(dataSourceFactory, mpegTsExtractors())
+                .createMediaSource(item)
         }
     }
 
@@ -306,6 +310,14 @@ class LiveSession(
                 reconnecting = reconnectPosted,
             ),
         )
+    }
+
+    private fun mpegTsExtractors(): DefaultExtractorsFactory {
+        return DefaultExtractorsFactory()
+            .setTsExtractorFlags(
+                DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
+                    DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS,
+            )
     }
 
     private fun now() = SystemClock.elapsedRealtime()

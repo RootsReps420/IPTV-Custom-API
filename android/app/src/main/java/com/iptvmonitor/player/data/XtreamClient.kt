@@ -1,5 +1,6 @@
 package com.iptvmonitor.player.data
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
@@ -88,7 +89,8 @@ class XtreamClient(
             val arr = episodes.optJSONArray(seasonKey) ?: continue
             for (i in 0 until arr.length()) {
                 val row = arr.optJSONObject(i) ?: continue
-                val id = row.optString("id").ifBlank { continue }
+                val id = row.optString("id")
+                if (id.isBlank()) continue
                 val ext = row.optString("container_extension").ifBlank { "mp4" }
                 val epNum = row.optString("episode_num").toIntOrNull()
                     ?: row.optInt("episode", i + 1)
