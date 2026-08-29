@@ -44,9 +44,9 @@ import com.iptvmonitor.player.data.SeriesShow
 import kotlinx.coroutines.delay
 
 @Composable
-fun HomeScreen(viewModel: PortalViewModel) {
+fun HomeScreen(viewModel: PortalViewModel, modifier: Modifier = Modifier) {
     Column(
-        Modifier
+        modifier
             .fillMaxSize()
             .background(WatchPalette.Bg)
             .padding(horizontal = 36.dp, vertical = 28.dp),
@@ -345,6 +345,12 @@ fun PlaylistEditorOverlay(
                             favouriteLiveIds = initial?.favouriteLiveIds.orEmpty(),
                             favouriteMovieIds = initial?.favouriteMovieIds.orEmpty(),
                             favouriteShowIds = initial?.favouriteShowIds.orEmpty(),
+                            liveGroupOrder = initial?.liveGroupOrder.orEmpty(),
+                            movieGroupOrder = initial?.movieGroupOrder.orEmpty(),
+                            showGroupOrder = initial?.showGroupOrder.orEmpty(),
+                            liveGroupNames = initial?.liveGroupNames.orEmpty(),
+                            movieGroupNames = initial?.movieGroupNames.orEmpty(),
+                            showGroupNames = initial?.showGroupNames.orEmpty(),
                         ),
                     )
                 }
@@ -497,8 +503,8 @@ fun WatchAction(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-fun BoxChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    WatchHotBox(selected = selected, onClick = onClick, chrome = WatchChrome.Chip) { hot ->
+fun BoxChip(label: String, selected: Boolean, allowFocus: Boolean = true, onClick: () -> Unit) {
+    WatchHotBox(selected = selected, onClick = onClick, chrome = WatchChrome.Chip, allowFocus = allowFocus) { hot ->
         Text(label, color = if (hot) WatchPalette.Text else WatchPalette.Muted, fontSize = 11.sp)
     }
 }
@@ -515,7 +521,7 @@ fun ItemMenuOverlay(viewModel: PortalViewModel) {
     }
     val title = item?.name ?: show?.name ?: "Options"
     val canRecord = item != null && item.kind == MediaKind.LIVE
-    FocusDialog(onDismiss = { viewModel.closeItemMenu() }) { requester ->
+    OverlayHost(onDismiss = { viewModel.closeItemMenu() }) { requester ->
         Column(
             Modifier
                 .widthIn(max = 480.dp)
@@ -545,6 +551,42 @@ fun ItemMenuOverlay(viewModel: PortalViewModel) {
                 }
             }
             GhostBtn("Cancel") { viewModel.closeItemMenu() }
+        }
+    }
+}
+
+@Composable
+fun GroupMenuOverlay(viewModel: PortalViewModel) {
+    val menu = viewModel.groupMenu ?: return
+    val cat = menu.category
+    OverlayHost(onDismiss = { viewModel.closeGroupMenu() }) { requester ->
+        Column(
+            Modifier
+                .widthIn(max = 480.dp)
+                .fillMaxWidth()
+                .background(WatchPalette.Panel)
+                .border(1.dp, WatchPalette.Line)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            BrandMark(size = 14.sp)
+            Text(cat.name, color = WatchPalette.Text, style = MaterialTheme.typography.headlineSmall)
+            SwitchBtn(
+                "Move up",
+                modifier = Modifier.focusRequester(requester),
+            ) {
+                viewModel.moveGroup(cat.id, -1)
+            }
+            SwitchBtn("Move down") {
+                viewModel.moveGroup(cat.id, 1)
+            }
+            SwitchBtn("Rename") {
+                viewModel.closeGroupMenu()
+                viewModel.openTextPrompt("Rename group", cat.name, "Group name") { name ->
+                    viewModel.renameGroup(cat.id, name)
+                }
+            }
+            GhostBtn("Cancel") { viewModel.closeGroupMenu() }
         }
     }
 }

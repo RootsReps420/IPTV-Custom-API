@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,11 +74,12 @@ fun ChannelPane(viewModel: PortalViewModel, modifier: Modifier) {
             .background(WatchPalette.Stage)
             .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
     ) {
+        val shellFocus = LocalShellFocusable.current
         if (viewModel.tab == BrowseTab.SEARCH) {
             OutlinedTextField(
                 value = viewModel.query,
                 onValueChange = { viewModel.query = it },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().focusProperties { canFocus = shellFocus },
                 singleLine = true,
                 placeholder = { Text("Search live, movies, shows…") },
                 colors = fieldColors,
@@ -295,7 +298,12 @@ private fun EpisodePane(viewModel: PortalViewModel, show: SeriesShow) {
 }
 
 @Composable
-fun PreviewPane(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifier) {
+fun PreviewPane(
+    viewModel: PortalViewModel,
+    showPlayer: Boolean,
+    modifier: Modifier,
+    banner: Boolean = false,
+) {
     val target = viewModel.playing
     val ui = viewModel.liveUi
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -308,62 +316,122 @@ fun PreviewPane(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modif
     val clock = remember(nowMs) {
         SimpleDateFormat("EEE d MMM HH:mm", Locale.getDefault()).format(Date(nowMs))
     }
-    Column(modifier.background(WatchPalette.Preview).padding(12.dp)) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .border(1.dp, WatchPalette.Line)
-                .background(WatchPalette.Bg)
-                .clickable(enabled = target != null) {
-                    if (target != null) viewModel.playItem(
-                        viewModel.catalog.live.firstOrNull { it.id == target.channelId }
-                            ?: viewModel.catalog.movies.firstOrNull { it.id == target.channelId }
-                            ?: return@clickable,
-                    )
-                },
-        ) {
-            if (showPlayer && target != null) {
-                androidx.compose.runtime.key(viewModel.playerGen) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                player = viewModel.session.player
-                                useController = false
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                                setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                            }
-                        },
-                        update = { playerView -> playerView.player = viewModel.session.player },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            } else if (target != null) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Playing full screen", color = WatchPalette.Muted)
-                }
-            }
-            if (target?.live == true && ui.badge.isNotBlank()) {
-                val badgeBg = if (ui.buffering || ui.reconnecting || ui.gaveUp) WatchPalette.Line else WatchPalette.LiveRed
-                Text(
-                    ui.badge,
-                    color = WatchPalette.Text,
-                    fontSize = 11.sp,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(10.dp)
-                        .background(badgeBg)
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
+    Column(modifier.background(WatchPalette.Preview).padding(if (banner) 8.dp else 12.dp)) {
+        if (banner) {
+            Row(
+                Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                PreviewPlayerBox(
+                    viewModel,
+                    showPlayer,
+                    target,
+                    ui,
+                    Modifier
+                        .fillMaxHeight()
+                        .aspectRatio(16f / 9f)
+                        .focusProperties { canFocus = false },
+                )
+                PreviewMeta(
+                    viewModel,
+                    target,
+                    ui,
+                    clock,
+                    nowMs,
+                    compact = true,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
                 )
             }
-            if (ui.buffering && target != null) {
-                CircularProgressIndicator(
-                    color = WatchPalette.Text,
-                    modifier = Modifier.align(Alignment.Center).size(42.dp),
-                    strokeWidth = 3.dp,
+        } else {
+            PreviewPlayerBox(
+                viewModel,
+                showPlayer,
+                target,
+                ui,
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f),
+            )
+            PreviewMeta(viewModel, target, ui, clock, nowMs, compact = false, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun PreviewPlayerBox(
+    viewModel: PortalViewModel,
+    showPlayer: Boolean,
+    target: PlayTarget?,
+    ui: LiveSession.LiveUiState,
+    modifier: Modifier,
+) {
+    Box(
+        modifier
+            .border(1.dp, WatchPalette.Line)
+            .background(WatchPalette.Bg)
+            .clickable(enabled = target != null) {
+                if (target != null) viewModel.playItem(
+                    viewModel.catalog.live.firstOrNull { it.id == target.channelId }
+                        ?: viewModel.catalog.movies.firstOrNull { it.id == target.channelId }
+                        ?: return@clickable,
                 )
+            }
+            .focusProperties { canFocus = false },
+    ) {
+        if (showPlayer && target != null) {
+            androidx.compose.runtime.key(viewModel.playerGen) {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            player = viewModel.session.player
+                            useController = false
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                        }
+                    },
+                    update = { playerView -> playerView.player = viewModel.session.player },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        } else if (target != null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Playing full screen", color = WatchPalette.Muted)
             }
         }
+        if (target?.live == true && ui.badge.isNotBlank()) {
+            val badgeBg = if (ui.buffering || ui.reconnecting || ui.gaveUp) WatchPalette.Line else WatchPalette.LiveRed
+            Text(
+                ui.badge,
+                color = WatchPalette.Text,
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .background(badgeBg)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
+        if (ui.buffering && target != null) {
+            CircularProgressIndicator(
+                color = WatchPalette.Text,
+                modifier = Modifier.align(Alignment.Center).size(42.dp),
+                strokeWidth = 3.dp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PreviewMeta(
+    viewModel: PortalViewModel,
+    target: PlayTarget?,
+    ui: LiveSession.LiveUiState,
+    clock: String,
+    nowMs: Long,
+    compact: Boolean,
+    modifier: Modifier,
+) {
+    Column(modifier) {
         val stat = streamStatLine(ui)
         if (stat.isNotBlank()) {
             val uhd = ui.width >= 3800 || ui.height >= 2100
@@ -371,10 +439,11 @@ fun PreviewPane(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modif
                 stat,
                 color = if (uhd) WatchPalette.Up else WatchPalette.Muted,
                 fontSize = 11.sp,
-                modifier = Modifier.padding(top = 8.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        if (target?.live == true) {
+        if (!compact && target?.live == true) {
             Row(
                 Modifier.padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -382,14 +451,25 @@ fun PreviewPane(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modif
             ) {
                 Text("Live buffer", color = WatchPalette.Muted, fontSize = 11.sp)
                 BufferProfile.entries.forEach { profile ->
-                    BoxChip(profile.label, viewModel.bufferProfile == profile) {
+                    BoxChip(profile.label, viewModel.bufferProfile == profile, allowFocus = false) {
                         viewModel.applyBufferProfile(profile)
                     }
                 }
             }
         }
-        Text(clock, color = WatchPalette.Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
-        Text(target?.title ?: "Select a channel", color = WatchPalette.Text, style = MaterialTheme.typography.titleMedium)
+        Text(
+            clock,
+            color = WatchPalette.Muted,
+            fontSize = if (compact) 11.sp else 12.sp,
+            modifier = Modifier.padding(top = if (compact) 2.dp else 10.dp),
+        )
+        Text(
+            target?.title ?: "Select a channel",
+            color = WatchPalette.Text,
+            style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+            maxLines = if (compact) 2 else 3,
+            overflow = TextOverflow.Ellipsis,
+        )
         val upcoming = upcomingEpg(viewModel.liveEpg)
         if (upcoming.isNotEmpty()) {
             val nowEvent = upcoming.firstOrNull { it.isNow } ?: upcoming.first()
@@ -397,11 +477,11 @@ fun PreviewPane(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modif
             val frac = ((nowMs - nowEvent.startMs).toFloat() / span).coerceIn(0f, 1f)
             LinearProgressIndicator(
                 progress = { frac },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(3.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(3.dp),
                 color = WatchPalette.Up,
                 trackColor = WatchPalette.Line,
             )
-            upcoming.take(8).forEach { event ->
+            upcoming.take(if (compact) 2 else 8).forEach { event ->
                 val tag = if (event.isNow) "NOW" else formatEpgTime(event)
                 Text(
                     "$tag  ${event.title}",
@@ -414,14 +494,16 @@ fun PreviewPane(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modif
             }
         }
         if (ui.message.isNotBlank()) {
-            Text(ui.message, color = WatchPalette.Down, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+            Text(ui.message, color = WatchPalette.Down, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp), maxLines = 2)
         }
-        Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (target != null) {
-                BoxChip("Full screen", selected = false) { viewModel.showCinema(true) }
-            }
-            if (ui.gaveUp) {
-                BoxChip("Retry", selected = false) { viewModel.session.retry() }
+        if (!compact) {
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (target != null) {
+                    BoxChip("Full screen", selected = false, allowFocus = false) { viewModel.showCinema(true) }
+                }
+                if (ui.gaveUp) {
+                    BoxChip("Retry", selected = false, allowFocus = false) { viewModel.session.retry() }
+                }
             }
         }
     }

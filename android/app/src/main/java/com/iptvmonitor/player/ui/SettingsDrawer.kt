@@ -3,6 +3,10 @@ package com.iptvmonitor.player.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,8 +37,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,13 +50,34 @@ import com.iptvmonitor.player.data.PlaylistKind
 import com.iptvmonitor.player.data.STREAM_USER_AGENT
 import com.iptvmonitor.player.data.SavedPlaylist
 import com.iptvmonitor.player.player.BufferProfile
+import kotlinx.coroutines.delay
 
 @Composable
 fun SettingsDrawer(viewModel: PortalViewModel) {
     val rev = viewModel.settingsRev
     val prefs = viewModel.prefs()
+    val panel = remember { FocusRequester() }
+    val focus = LocalFocusManager.current
+    val eatClicks = remember { MutableInteractionSource() }
+    val nested = viewModel.choicePrompt != null || viewModel.textPrompt != null
     BackHandler { viewModel.popSettings() }
-    Box(Modifier.fillMaxSize().background(WatchPalette.Bg.copy(alpha = 0.55f))) {
+    LaunchedEffect(viewModel.settingsPage) {
+        delay(200)
+        if (viewModel.choicePrompt != null || viewModel.textPrompt != null) return@LaunchedEffect
+        runCatching {
+            panel.requestFocus()
+            if (viewModel.settingsPage != SettingsPage.ROOT) {
+                focus.moveFocus(FocusDirection.Down)
+            }
+        }
+    }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(WatchPalette.Bg.copy(alpha = 0.55f))
+            .clickable(interactionSource = eatClicks, indication = null) {}
+            .focusProperties { canFocus = !nested },
+    ) {
         Column(
             Modifier
                 .align(Alignment.CenterEnd)
@@ -58,11 +86,19 @@ fun SettingsDrawer(viewModel: PortalViewModel) {
                 .fillMaxWidth(0.42f)
                 .background(WatchPalette.Panel)
                 .border(1.dp, WatchPalette.Line)
+                .then(
+                    if (viewModel.settingsPage == SettingsPage.ROOT) {
+                        Modifier
+                    } else {
+                        Modifier.focusRequester(panel).focusable()
+                    },
+                )
+                .focusGroup()
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 28.dp),
         ) {
                 when (viewModel.settingsPage) {
-                    SettingsPage.ROOT -> RootPage(viewModel)
+                    SettingsPage.ROOT -> RootPage(viewModel, panel)
                     SettingsPage.GENERAL -> GeneralPage(viewModel, prefs)
                     SettingsPage.PLAYLISTS -> PlaylistsPage(viewModel)
                     SettingsPage.PLAYLIST -> PlaylistDetailPage(viewModel, prefs)
@@ -118,12 +154,13 @@ private fun DrawerRow(
     subtitle: String? = null,
     toggle: Boolean? = null,
     danger: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     WatchHotBox(
         selected = false,
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
         chrome = WatchChrome.Drawer,
     ) { hot ->
         Row(
@@ -172,9 +209,11 @@ private fun DrawerSwitch(on: Boolean, hot: Boolean) {
 }
 
 @Composable
-private fun RootPage(viewModel: PortalViewModel) {
+private fun RootPage(viewModel: PortalViewModel, first: FocusRequester) {
     DrawerTitle("Settings")
-    DrawerRow("General") { viewModel.openSettingsPage(SettingsPage.GENERAL) }
+    DrawerRow("General", modifier = Modifier.focusRequester(first)) {
+        viewModel.openSettingsPage(SettingsPage.GENERAL)
+    }
     DrawerRow("Playlists") { viewModel.openSettingsPage(SettingsPage.PLAYLISTS) }
     DrawerRow("EPG") { viewModel.openSettingsPage(SettingsPage.EPG) }
     DrawerRow("Appearance") { viewModel.openSettingsPage(SettingsPage.APPEARANCE) }
@@ -589,7 +628,7 @@ fun SettingsTextPrompt(viewModel: PortalViewModel) {
         unfocusedContainerColor = WatchPalette.Panel2,
     )
     val pin = prompt.title.contains("PIN", ignoreCase = true)
-    FocusDialog(onDismiss = { viewModel.closeTextPrompt() }) { requester ->
+    OverlayHost(onDismiss = { viewModel.closeTextPrompt() }, dismissOnScrim = false) { requester ->
         Column(
             Modifier
                 .widthIn(max = 480.dp)
@@ -623,13 +662,7 @@ fun SettingsTextPrompt(viewModel: PortalViewModel) {
 @Composable
 fun SettingsChoicePrompt(viewModel: PortalViewModel) {
     val prompt = viewModel.choicePrompt ?: return
-    BackHandler { viewModel.closeChoice() }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(WatchPalette.Bg.copy(alpha = 0.72f)),
-        contentAlignment = Alignment.Center,
-    ) {
+    OverlayHost(onDismiss = { viewModel.closeChoice() }) { requester ->
         Column(
             Modifier
                 .widthIn(max = 480.dp)
@@ -645,10 +678,11 @@ fun SettingsChoicePrompt(viewModel: PortalViewModel) {
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
-            prompt.options.forEach { (key, label) ->
+            prompt.options.forEachIndexed { index, (key, label) ->
                 DrawerRow(
                     title = label,
                     toggle = key == prompt.selectedKey,
+                    modifier = if (index == 0) Modifier.focusRequester(requester) else Modifier,
                     onClick = {
                         prompt.onPick(key)
                         viewModel.closeChoice()

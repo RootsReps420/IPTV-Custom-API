@@ -37,6 +37,12 @@ data class SavedPlaylist(
     val favouriteLiveIds: List<String> = emptyList(),
     val favouriteMovieIds: List<String> = emptyList(),
     val favouriteShowIds: List<String> = emptyList(),
+    val liveGroupOrder: List<String> = emptyList(),
+    val movieGroupOrder: List<String> = emptyList(),
+    val showGroupOrder: List<String> = emptyList(),
+    val liveGroupNames: Map<String, String> = emptyMap(),
+    val movieGroupNames: Map<String, String> = emptyMap(),
+    val showGroupNames: Map<String, String> = emptyMap(),
 )
 
 data class Category(

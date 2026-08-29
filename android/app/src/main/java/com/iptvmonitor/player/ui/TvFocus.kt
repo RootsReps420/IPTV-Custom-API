@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -42,6 +43,12 @@ import android.view.KeyEvent as AndroidKeyEvent
 import kotlin.math.max
 
 val LocalWatchHot = compositionLocalOf { false }
+
+/** True while an overlay has just opened so leftover OK/KeyUp does not click the first row. */
+val LocalInputGated = compositionLocalOf { false }
+
+/** False on the library/home tree while a modal is open so D-pad cannot land behind it. */
+val LocalShellFocusable = compositionLocalOf { true }
 
 @Composable
 fun watchHot(): Boolean = LocalWatchHot.current
@@ -144,12 +151,16 @@ fun WatchHotBox(
     contentPadding: PaddingValues? = null,
     contentAlignment: Alignment = Alignment.CenterStart,
     onLongClick: (() -> Unit)? = null,
+    allowFocus: Boolean = true,
+    onFocused: (() -> Unit)? = null,
     content: @Composable BoxScope.(hot: Boolean) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val sourceFocused by interaction.collectIsFocusedAsState()
     var focused by remember { mutableStateOf(false) }
     var longPress by remember { mutableStateOf(false) }
+    val gated = LocalInputGated.current
+    val shellFocus = LocalShellFocusable.current
     val hot = selected || focused || sourceFocused
     val shape = chrome.shape()
     val fill = chromeFill(chrome, hot, isNow)
@@ -161,7 +172,10 @@ fun WatchHotBox(
     }
     Box(
         modifier
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused?.invoke()
+            }
             .clip(shape)
             .drawBehind {
                 if (fill.alpha > 0f) drawRect(fill)
@@ -192,6 +206,7 @@ fun WatchHotBox(
                     )
                 },
             )
+            .then(if (allowFocus && shellFocus) Modifier else Modifier.focusProperties { canFocus = false })
             .onPreviewKeyEvent { ev ->
                 val code = ev.nativeKeyEvent.keyCode
                 val ok = code == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
@@ -208,9 +223,19 @@ fun WatchHotBox(
                         onLongClick != null &&
                         !longPress -> {
                         longPress = true
-                        onLongClick()
                     }
-                    ev.type == KeyEventType.KeyUp && !longPress -> onClick()
+                    ev.type == KeyEventType.KeyUp -> {
+                        if (gated) {
+                            longPress = false
+                            return@onPreviewKeyEvent true
+                        }
+                        if (longPress && onLongClick != null) {
+                            onLongClick()
+                        } else if (!longPress) {
+                            onClick()
+                        }
+                        longPress = false
+                    }
                 }
                 true
             }
@@ -230,12 +255,14 @@ fun WatchListRow(
     modifier: Modifier = Modifier,
     chrome: WatchChrome = WatchChrome.Item,
     onLongClick: (() -> Unit)? = null,
+    onFocused: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     WatchHotBox(
         selected = selected,
         onClick = onClick,
         onLongClick = onLongClick,
+        onFocused = onFocused,
         modifier = modifier,
         chrome = chrome,
     ) {
@@ -281,11 +308,22 @@ fun Modifier.laneBack(viewModel: PortalViewModel, whenLane: ShellLane): Modifier
     val focus = LocalFocusManager.current
     return this.onPreviewKeyEvent { ev ->
         if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-        if (ev.nativeKeyEvent.keyCode != AndroidKeyEvent.KEYCODE_DPAD_LEFT) return@onPreviewKeyEvent false
+        val code = ev.nativeKeyEvent.keyCode
         if (viewModel.shellLane != whenLane) return@onPreviewKeyEvent false
-        if (!focus.moveFocus(FocusDirection.Left)) {
-            viewModel.popLane()
+        when (code) {
+            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                if (!focus.moveFocus(FocusDirection.Left)) {
+                    viewModel.popLane()
+                }
+                true
+            }
+            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                if (!focus.moveFocus(FocusDirection.Right)) {
+                    viewModel.pushLane()
+                }
+                true
+            }
+            else -> false
         }
-        true
     }
 }

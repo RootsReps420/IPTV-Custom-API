@@ -39,6 +39,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,6 +55,10 @@ data class ItemMenu(
     val item: CatalogItem? = null,
     val show: SeriesShow? = null,
     val event: EpgEvent? = null,
+)
+
+data class GroupMenu(
+    val category: Category,
 )
 
 enum class AppScreen { HOME, LIBRARY, SETTINGS }
@@ -183,6 +188,11 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var recordingMessage by mutableStateOf<String?>(null)
     var itemMenu by mutableStateOf<ItemMenu?>(null)
+    var groupMenu by mutableStateOf<GroupMenu?>(null)
+    var inputGated by mutableStateOf(false)
+        private set
+    var laneFocusGen by mutableStateOf(0)
+        private set
 
     val isTelevision: Boolean
         get() {
@@ -190,6 +200,46 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
             return ui and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
         }
 
+    val blocksBackgroundFocus: Boolean
+        get() = screen == AppScreen.SETTINGS ||
+            itemMenu != null ||
+            groupMenu != null ||
+            choicePrompt != null ||
+            textPrompt != null ||
+            showPlaylistEditor ||
+            groupEditor != null
+
+    fun armInputGate(ms: Long = 450L) {
+        inputGated = true
+        gateJob?.cancel()
+        gateJob = viewModelScope.launch {
+            delay(ms)
+            inputGated = false
+        }
+    }
+
+    fun requestLaneFocus() {
+        laneFocusGen += 1
+    }
+
+    fun activateLane(lane: ShellLane) {
+        if (shellLane != lane) shellLane = lane
+    }
+
+    fun peekTab(tab: BrowseTab) {
+        if (this.tab == tab) return
+        this.tab = tab
+        seriesDetail = null
+        categoryId = null
+    }
+
+    fun peekCategory(id: String?) {
+        if (categoryId == id) return
+        categoryId = id
+        seriesDetail = null
+    }
+
+    private var gateJob: Job? = null
     private var xmltvJob: Job? = null
     private var channelEpgJob: Job? = null
     private var saveJob: Job? = null
@@ -255,38 +305,57 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectTab(tab: BrowseTab) {
-        this.tab = tab
-        seriesDetail = null
-        categoryId = null
+        peekTab(tab)
         shellLane = if (tab == BrowseTab.SEARCH) ShellLane.CHANNELS else ShellLane.GROUPS
+        requestLaneFocus()
     }
 
     fun selectCategory(id: String?) {
-        categoryId = id
-        seriesDetail = null
+        peekCategory(id)
         shellLane = ShellLane.CHANNELS
+        requestLaneFocus()
     }
 
     fun popLane(): Boolean {
         return when (shellLane) {
             ShellLane.CHANNELS -> {
                 shellLane = ShellLane.GROUPS
+                requestLaneFocus()
                 true
             }
             ShellLane.GROUPS -> {
                 shellLane = ShellLane.RAIL
+                requestLaneFocus()
                 true
             }
             ShellLane.RAIL -> false
         }
     }
 
+    fun pushLane(): Boolean {
+        return when (shellLane) {
+            ShellLane.RAIL -> {
+                shellLane = if (tab == BrowseTab.SEARCH) ShellLane.CHANNELS else ShellLane.GROUPS
+                requestLaneFocus()
+                true
+            }
+            ShellLane.GROUPS -> {
+                shellLane = ShellLane.CHANNELS
+                requestLaneFocus()
+                true
+            }
+            ShellLane.CHANNELS -> false
+        }
+    }
+
     fun openSettingsPage(page: SettingsPage) {
+        armInputGate()
         settingsPage = page
         settingsRev += 1
     }
 
     fun openPlaylistSettings(playlist: SavedPlaylist) {
+        armInputGate()
         settingsPlaylist = playlist
         settingsPage = SettingsPage.PLAYLIST
         settingsRev += 1
@@ -311,11 +380,13 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun startAddPlaylist() {
+        armInputGate()
         playlistEditorInitial = null
         showPlaylistEditor = true
     }
 
     fun startEditPlaylist(playlist: SavedPlaylist) {
+        armInputGate()
         playlistEditorInitial = playlist
         showPlaylistEditor = true
     }
@@ -326,6 +397,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openTextPrompt(title: String, value: String, hint: String, onSave: (String) -> Unit) {
+        armInputGate()
         textPrompt = TextPrompt(title, value, hint, onSave)
     }
 
@@ -339,6 +411,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         selectedKey: String,
         onPick: (String) -> Unit,
     ) {
+        armInputGate()
         choicePrompt = ChoicePrompt(title, options, selectedKey, onPick)
     }
 
@@ -664,6 +737,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openGroupEditor(playlist: SavedPlaylist) {
+        armInputGate()
         val latest = store.get(playlist.id) ?: playlist
         groupEditor = latest
         settingsPlaylist = latest
@@ -900,6 +974,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     fun openSettings() {
         cinema = false
         settingsPage = SettingsPage.ROOT
+        armInputGate()
         if (settingsStore.parentalEnabled && settingsStore.parentalPin.isNotBlank()) {
             openTextPrompt("PIN", "", "Enter PIN") { pin ->
                 if (pin == settingsStore.parentalPin) {
@@ -926,8 +1001,28 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
             BrowseTab.LIVE, BrowseTab.SEARCH -> catalog.liveCategories
             BrowseTab.MOVIES -> catalog.movieCategories
             BrowseTab.SHOWS -> catalog.seriesCategories
+        }.filter { it.id !in hidden }
+        val pl = groupOwner()
+        val order = when (tab) {
+            BrowseTab.LIVE, BrowseTab.SEARCH -> pl?.liveGroupOrder.orEmpty()
+            BrowseTab.MOVIES -> pl?.movieGroupOrder.orEmpty()
+            BrowseTab.SHOWS -> pl?.showGroupOrder.orEmpty()
         }
-        return all.filter { it.id !in hidden }
+        val names = groupNames(pl)
+        if (order.isEmpty() && names.isEmpty()) return all
+        val byId = all.associateBy { it.id }
+        val out = ArrayList<Category>(all.size)
+        val seen = HashSet<String>()
+        for (id in order) {
+            val cat = byId[id] ?: continue
+            out += cat.copy(name = names[id] ?: cat.name)
+            seen += id
+        }
+        for (cat in all) {
+            if (cat.id in seen) continue
+            out += cat.copy(name = names[cat.id] ?: cat.name)
+        }
+        return out
     }
 
     fun visibleItems(): List<CatalogItem> {
@@ -1031,11 +1126,85 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openItemMenu(item: CatalogItem? = null, show: SeriesShow? = null, event: EpgEvent? = null) {
+        armInputGate()
         itemMenu = ItemMenu(item = item, show = show, event = event)
     }
 
     fun closeItemMenu() {
         itemMenu = null
+    }
+
+    fun openGroupMenu(category: Category) {
+        armInputGate()
+        groupMenu = GroupMenu(category)
+    }
+
+    fun closeGroupMenu() {
+        groupMenu = null
+    }
+
+    fun moveGroup(id: String, delta: Int) {
+        val pl = groupOwner() ?: return
+        val ids = currentCategories().map { it.id }.toMutableList()
+        val index = ids.indexOf(id)
+        if (index < 0) return
+        val dest = (index + delta).coerceIn(0, ids.lastIndex)
+        if (dest == index) return
+        val moved = ids.removeAt(index)
+        ids.add(dest, moved)
+        store.upsert(withGroupOrder(pl, ids))
+        reloadPlaylists()
+        refreshSourceRefs()
+    }
+
+    fun renameGroup(id: String, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        val pl = groupOwner() ?: return
+        store.upsert(withGroupName(pl, id, trimmed))
+        reloadPlaylists()
+        refreshSourceRefs()
+        closeGroupMenu()
+    }
+
+    fun canMoveGroup(id: String, delta: Int): Boolean {
+        val ids = currentCategories().map { it.id }
+        val index = ids.indexOf(id)
+        if (index < 0) return false
+        val dest = index + delta
+        return dest in ids.indices
+    }
+
+    private fun groupOwner(): SavedPlaylist? {
+        val id = when (tab) {
+            BrowseTab.LIVE, BrowseTab.SEARCH -> liveSource?.id ?: selectedPlaylist?.id
+            BrowseTab.MOVIES, BrowseTab.SHOWS -> vodSource?.id ?: selectedPlaylist?.id
+        } ?: return null
+        return playlists.firstOrNull { it.id == id }
+    }
+
+    private fun groupNames(pl: SavedPlaylist?): Map<String, String> {
+        return when (tab) {
+            BrowseTab.LIVE, BrowseTab.SEARCH -> pl?.liveGroupNames.orEmpty()
+            BrowseTab.MOVIES -> pl?.movieGroupNames.orEmpty()
+            BrowseTab.SHOWS -> pl?.showGroupNames.orEmpty()
+        }
+    }
+
+    private fun withGroupOrder(pl: SavedPlaylist, ids: List<String>): SavedPlaylist {
+        return when (tab) {
+            BrowseTab.LIVE, BrowseTab.SEARCH -> pl.copy(liveGroupOrder = ids)
+            BrowseTab.MOVIES -> pl.copy(movieGroupOrder = ids)
+            BrowseTab.SHOWS -> pl.copy(showGroupOrder = ids)
+        }
+    }
+
+    private fun withGroupName(pl: SavedPlaylist, id: String, name: String): SavedPlaylist {
+        return when (tab) {
+            BrowseTab.LIVE, BrowseTab.SEARCH -> pl.copy(liveGroupNames = pl.liveGroupNames + (id to name))
+            BrowseTab.MOVIES -> pl.copy(movieGroupNames = pl.movieGroupNames + (id to name))
+            BrowseTab.SHOWS -> pl.copy(showGroupNames = pl.showGroupNames + (id to name))
+        }
     }
 
     fun isFavourite(item: CatalogItem): Boolean {

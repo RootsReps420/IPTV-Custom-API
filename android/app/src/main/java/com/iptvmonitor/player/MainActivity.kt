@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,13 +25,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalContext
 import com.iptvmonitor.player.player.AfrController
 import com.iptvmonitor.player.player.RecordService
 import com.iptvmonitor.player.ui.AppScreen
 import com.iptvmonitor.player.ui.GroupEditorOverlay
+import com.iptvmonitor.player.ui.GroupMenuOverlay
 import com.iptvmonitor.player.ui.HomeScreen
 import com.iptvmonitor.player.ui.ItemMenuOverlay
+import com.iptvmonitor.player.ui.LocalInputGated
+import com.iptvmonitor.player.ui.LocalShellFocusable
 import com.iptvmonitor.player.ui.PlayerScreen
 import com.iptvmonitor.player.ui.PlaylistEditorOverlay
 import com.iptvmonitor.player.ui.PortalTheme
@@ -141,7 +146,8 @@ private fun PortalRoot(viewModel: PortalViewModel) {
             viewModel.groupEditor == null &&
             viewModel.textPrompt == null &&
             viewModel.choicePrompt == null &&
-            viewModel.itemMenu == null,
+            viewModel.itemMenu == null &&
+            viewModel.groupMenu == null,
     ) {
         if (!viewModel.popLane()) {
             AfrController.clear(activity)
@@ -164,20 +170,37 @@ private fun PortalRoot(viewModel: PortalViewModel) {
         }
     }
 
+    val blockBg = viewModel.blocksBackgroundFocus
+    CompositionLocalProvider(LocalInputGated provides viewModel.inputGated) {
+    CompositionLocalProvider(LocalShellFocusable provides !blockBg) {
     Box(Modifier.fillMaxSize()) {
         when {
-            viewModel.selectedPlaylist == null -> HomeScreen(viewModel)
+            viewModel.selectedPlaylist == null -> HomeScreen(
+                viewModel,
+                Modifier.focusProperties { canFocus = !blockBg },
+            )
             else -> {
-                WatchShell(viewModel, showPlayer = !viewModel.cinema)
+                WatchShell(
+                    viewModel,
+                    showPlayer = !viewModel.cinema,
+                    modifier = Modifier.focusProperties { canFocus = !blockBg },
+                )
                 if (viewModel.cinema && viewModel.playing != null) {
                     PlayerScreen(viewModel)
                 }
             }
         }
     }
+    }
 
     if (viewModel.screen == AppScreen.SETTINGS) {
-        SettingsDrawer(viewModel)
+        val settingsFront = viewModel.choicePrompt == null &&
+            viewModel.textPrompt == null &&
+            viewModel.itemMenu == null &&
+            viewModel.groupMenu == null
+        CompositionLocalProvider(LocalShellFocusable provides settingsFront) {
+            SettingsDrawer(viewModel)
+        }
     }
     if (viewModel.showPlaylistEditor) {
         PlaylistEditorOverlay(
@@ -208,5 +231,9 @@ private fun PortalRoot(viewModel: PortalViewModel) {
     }
     if (viewModel.itemMenu != null) {
         ItemMenuOverlay(viewModel)
+    }
+    if (viewModel.groupMenu != null) {
+        GroupMenuOverlay(viewModel)
+    }
     }
 }
