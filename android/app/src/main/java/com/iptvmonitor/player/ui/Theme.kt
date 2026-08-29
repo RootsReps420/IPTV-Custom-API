@@ -2,14 +2,19 @@ package com.iptvmonitor.player.ui
 
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
+import com.iptvmonitor.player.R
 
 /** Watch (styles.css :root) + TiviMate-like Roboto (platform SansSerif). */
 object WatchPalette {
@@ -49,6 +54,7 @@ val PortalDarkColors: ColorScheme = darkColorScheme(
 )
 
 private val TvSans = FontFamily.SansSerif
+val BrandFont = FontFamily(Font(R.font.syne_extrabold, FontWeight.ExtraBold))
 
 private val WatchTypography = Typography(
     headlineLarge = TextStyle(
@@ -115,5 +121,21 @@ fun PortalTheme(content: @Composable () -> Unit) {
         colorScheme = PortalDarkColors,
         typography = WatchTypography,
         content = content,
+    )
+}
+
+@Composable
+fun BrandMark(
+    modifier: Modifier = Modifier,
+    size: TextUnit = 15.sp,
+) {
+    Text(
+        "RootsIPTV",
+        color = WatchPalette.Up,
+        fontFamily = BrandFont,
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = size,
+        letterSpacing = 0.3.sp,
+        modifier = modifier,
     )
 }

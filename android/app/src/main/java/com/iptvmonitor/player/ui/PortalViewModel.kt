@@ -24,6 +24,7 @@ import com.iptvmonitor.player.data.SeriesShow
 import android.os.Build
 import android.os.Environment
 import com.iptvmonitor.player.data.ByteProgress
+import com.iptvmonitor.player.data.XmltvParser
 import com.iptvmonitor.player.data.XtreamClient
 import com.iptvmonitor.player.player.BufferProfile
 import com.iptvmonitor.player.player.LiveSession
@@ -38,11 +39,22 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.io.InterruptedIOException
+import android.os.SystemClock
 
 enum class BrowseTab { LIVE, MOVIES, SHOWS, SEARCH }
+
+const val FAVOURITES_ID = "__favourites__"
+
+data class ItemMenu(
+    val item: CatalogItem? = null,
+    val show: SeriesShow? = null,
+    val event: EpgEvent? = null,
+)
 
 enum class AppScreen { HOME, LIBRARY, SETTINGS }
 
@@ -56,17 +68,22 @@ data class GuideSync(
     val done: Long = 0,
     val total: Long = 0,
     val startedAt: Long = 0,
+    val holdFraction: Float = 0f,
 ) {
+    val rawFraction: Float
+        get() = if (total > 0L) (done.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
+
     val etaSeconds: Int?
         get() {
             if (!running || done <= 0L || total <= done) return null
+            if (holdFraction > rawFraction + 0.04f) return null
             val elapsed = (System.currentTimeMillis() - startedAt).coerceAtLeast(1L)
             val remain = total - done
             return ((elapsed.toDouble() / done) * remain / 1000.0).toInt().coerceAtLeast(1)
         }
 
     val fraction: Float
-        get() = if (total > 0L) (done.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
+        get() = maxOf(rawFraction, holdFraction)
 }
 
 enum class SettingsPage {
@@ -79,6 +96,13 @@ data class TextPrompt(
     val value: String,
     val hint: String,
     val onSave: (String) -> Unit,
+)
+
+data class ChoicePrompt(
+    val title: String,
+    val options: List<Pair<String, String>>,
+    val selectedKey: String,
+    val onPick: (String) -> Unit,
 )
 
 class PortalViewModel(application: Application) : AndroidViewModel(application) {
@@ -134,6 +158,8 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var textPrompt by mutableStateOf<TextPrompt?>(null)
         private set
+    var choicePrompt by mutableStateOf<ChoicePrompt?>(null)
+        private set
     var showPlaylistEditor by mutableStateOf(false)
         private set
     var playlistEditorInitial by mutableStateOf<SavedPlaylist?>(null)
@@ -156,6 +182,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     var recordingTitle by mutableStateOf<String?>(null)
         private set
     var recordingMessage by mutableStateOf<String?>(null)
+    var itemMenu by mutableStateOf<ItemMenu?>(null)
 
     val isTelevision: Boolean
         get() {
@@ -167,6 +194,11 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     private var channelEpgJob: Job? = null
     private var saveJob: Job? = null
     private var syncJob: Job? = null
+    private var epgGen = 0
+    private var epgSessionDone = false
+    private var epgSessionPlaylistId: String? = null
+    private var groupsDirty = false
+    private var lastEpgProgressAt = 0L
 
     init {
         HttpClients.userAgent = settingsStore.userAgent.ifBlank { STREAM_USER_AGENT }
@@ -225,7 +257,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     fun selectTab(tab: BrowseTab) {
         this.tab = tab
         seriesDetail = null
-        categoryId = currentCategories().firstOrNull()?.id
+        categoryId = null
         shellLane = if (tab == BrowseTab.SEARCH) ShellLane.CHANNELS else ShellLane.GROUPS
     }
 
@@ -301,6 +333,30 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         textPrompt = null
     }
 
+    fun openChoice(
+        title: String,
+        options: List<Pair<String, String>>,
+        selectedKey: String,
+        onPick: (String) -> Unit,
+    ) {
+        choicePrompt = ChoicePrompt(title, options, selectedKey, onPick)
+    }
+
+    fun closeChoice() {
+        choicePrompt = null
+    }
+
+    suspend fun peekM3uEpg(url: String): String {
+        val trimmed = url.trim()
+        if (!trimmed.startsWith("http", ignoreCase = true)) return ""
+        return withContext(Dispatchers.IO) { repo.peekM3uEpg(trimmed) }
+    }
+
+    fun formatSyncStamp(ms: Long): String {
+        if (ms <= 0L) return "Never"
+        return SimpleDateFormat("dd MMM yyyy  HH:mm", Locale.UK).format(Date(ms))
+    }
+
     fun cycleLiveSource() {
         val ids = listOf<String?>(null) + playlists.map { it.id }
         val idx = ids.indexOf(settingsStore.liveSourceId).let { if (it < 0) 0 else it }
@@ -322,23 +378,56 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearEpg() {
+        cancelEpg(clear = true)
+    }
+
+    fun cancelEpg(clear: Boolean = false) {
+        val wasRunning = xmltvJob?.isActive == true || guideSync.running
+        epgGen += 1
         xmltvJob?.cancel()
-        catalog = catalog.copy(epgByChannel = emptyMap())
-        liveEpg = emptyList()
-        settingsStore.lastEpgStatus = "EPG cleared"
+        xmltvJob = null
+        repo.cancelEpgDownload()
+        epgLoading = false
+        loadingLabel = ""
         guideSync = GuideSync()
+        if (clear) {
+            catalog = catalog.copy(epgByChannel = emptyMap())
+            liveEpg = emptyList()
+            settingsStore.lastEpgStatus = "EPG cleared"
+            val pl = liveSource ?: selectedPlaylist
+            if (pl != null) {
+                store.upsert(pl.copy(lastEpgCount = 0, lastEpgSyncAt = 0L))
+                reloadPlaylists()
+                refreshSourceRefs()
+            }
+            epgSessionDone = false
+        } else if (wasRunning) {
+            settingsStore.lastEpgStatus = "EPG cancelled"
+        }
         settingsRev += 1
         error = null
+    }
+
+    fun restartEpg() {
+        val live = liveSource ?: selectedPlaylist ?: playlists.firstOrNull()
+        if (live == null) {
+            settingsStore.lastEpgStatus = "No playlist"
+            settingsRev += 1
+            return
+        }
+        cancelEpg(clear = false)
+        epgSessionDone = false
+        fetchEpgFor(live, vodSource, force = true)
     }
 
     fun requestEpgUpdate() {
         val live = liveSource ?: selectedPlaylist ?: playlists.firstOrNull()
         if (live == null) {
-            error = "Add a playlist before updating EPG"
             settingsStore.lastEpgStatus = "No playlist"
             settingsRev += 1
             return
         }
+        epgSessionDone = false
         fetchEpgFor(live, vodSource, force = true)
     }
 
@@ -395,19 +484,22 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
             loadingLabel = "Checking playlist…"
             error = null
             try {
-                withTimeout(28_000) {
+                val discovered = withTimeout(28_000) {
                     withContext(Dispatchers.IO) {
                         repo.probe(playlist)
                     }
                 }
-                store.upsert(playlist)
+                val ready = playlist.copy(epgUrl = playlist.epgUrl.ifBlank { discovered })
+                store.upsert(ready)
                 reloadPlaylists()
-                if (settingsStore.liveSourceId == null && playlist.kind == PlaylistKind.M3U) {
-                    settingsStore.liveSourceId = playlist.id
+                if (settingsStore.liveSourceId == null && ready.kind == PlaylistKind.M3U) {
+                    settingsStore.liveSourceId = ready.id
                 }
-                if (settingsStore.vodSourceId == null && playlist.kind == PlaylistKind.XTREAM) {
-                    settingsStore.vodSourceId = playlist.id
+                if (settingsStore.vodSourceId == null && ready.kind == PlaylistKind.XTREAM) {
+                    settingsStore.vodSourceId = ready.id
                 }
+                loadingLabel = "Syncing playlist…"
+                runSyncPlaylist(store.get(ready.id) ?: ready)
             } catch (exc: TimeoutCancellationException) {
                 error = "Portal did not answer in time. Check the URL and try again."
             } catch (exc: CancellationException) {
@@ -443,6 +535,10 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         seriesDetail = null
         screen = AppScreen.LIBRARY
         shellLane = ShellLane.RAIL
+        if (playlist.id != epgSessionPlaylistId) {
+            epgSessionDone = false
+            epgSessionPlaylistId = playlist.id
+        }
         loadCatalog(playlist)
         maybeAutoSync(fromStart = false)
     }
@@ -483,8 +579,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
                 loadingLabel = ""
             }
             if (fetchEpg) {
-                val livePl = liveSource ?: return@launch
-                fetchEpgFor(livePl, vodSource, force = false)
+                maybeStartEpg(force = false)
             }
         }
     }
@@ -519,6 +614,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
                 playlist.copy(
                     epgUrl = playlist.epgUrl.ifBlank { headerEpg },
                     lastPlaylistSyncAt = System.currentTimeMillis(),
+                    lastLiveCount = streams.live.size,
                 ),
             )
             reloadPlaylists()
@@ -551,9 +647,15 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
             loadingLabel = ""
             guideSync = GuideSync()
         }
-        if (settingsStore.epgUpdateOnPlaylistChange && selectedPlaylist != null) {
+        if (
+            settingsStore.epgUpdateOnPlaylistChange &&
+            selectedPlaylist != null &&
+            catalog.epgByChannel.isEmpty() &&
+            xmltvJob?.isActive != true &&
+            !epgSessionDone
+        ) {
             val live = liveSource ?: selectedPlaylist ?: return
-            fetchEpgFor(live, vodSource, force = true)
+            maybeStartEpg(force = false)
         }
     }
 
@@ -612,19 +714,37 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         if (categoryId != null && currentCategories().none { it.id == categoryId }) {
             categoryId = null
         }
+        groupsDirty = true
         settingsRev += 1
     }
 
     fun closeGroupEditor() {
+        val restart = groupsDirty && (xmltvJob?.isActive == true || guideSync.running)
+        groupsDirty = false
         groupEditor = null
+        if (restart) {
+            restartEpg()
+        }
+    }
+
+    private fun maybeStartEpg(force: Boolean) {
+        val live = liveSource ?: selectedPlaylist ?: return
+        if (xmltvJob?.isActive == true && !force) return
+        if (!force) {
+            if (epgSessionDone) return
+            if (!settingsStore.epgUpdateOnStart) return
+        }
+        fetchEpgFor(live, vodSource, force = force)
     }
 
     private fun fetchEpgFor(livePl: SavedPlaylist, vodPl: SavedPlaylist?, @Suppress("UNUSED_PARAMETER") force: Boolean) {
         xmltvJob?.cancel()
+        repo.cancelEpgDownload()
+        val gen = ++epgGen
         val started = System.currentTimeMillis()
+        lastEpgProgressAt = 0L
         xmltvJob = viewModelScope.launch {
             epgLoading = true
-            loadingLabel = "Syncing EPG…"
             error = null
             guideSync = GuideSync(
                 running = true,
@@ -639,15 +759,29 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
                 val epg = withContext(Dispatchers.IO) {
                     val extra = listOf(settingsStore.extraEpgUrl)
                     val progress = ByteProgress { read, total, label ->
+                        val now = SystemClock.uptimeMillis()
+                        if (now - lastEpgProgressAt < 400L && (total <= 0L || read < total)) return@ByteProgress
+                        lastEpgProgressAt = now
+                        if (gen != epgGen) return@ByteProgress
                         viewModelScope.launch(Dispatchers.Main.immediate) {
-                            guideSync = GuideSync(
+                            if (gen != epgGen) return@launch
+                            val prev = guideSync
+                            val done = maxOf(prev.done, read)
+                            val tot = when {
+                                total <= 0L -> prev.total
+                                prev.total <= 0L -> total
+                                else -> maxOf(prev.total, total)
+                            }
+                            val raw = if (tot > 0L) (done.toFloat() / tot.toFloat()).coerceIn(0f, 1f) else 0f
+                            guideSync = prev.copy(
                                 running = true,
                                 kind = "epg",
                                 label = "Updating EPG",
                                 detail = label,
-                                done = read,
-                                total = total,
+                                done = done,
+                                total = tot,
                                 startedAt = started,
+                                holdFraction = maxOf(prev.fraction, raw),
                             )
                         }
                     }
@@ -675,37 +809,61 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
                 }
-                if (epg.isNotEmpty()) {
-                    catalog = catalog.copy(epgByChannel = epg)
-                }
-                val channels = epg.size
+                ensureActive()
+                if (gen != epgGen) return@launch
+                catalog = catalog.copy(epgByChannel = epg)
+                val channels = epg.values.distinctBy { System.identityHashCode(it) }.size
                 val status = if (channels > 0) {
                     "EPG updated · $channels channels"
                 } else {
                     "EPG download finished but no programmes matched"
                 }
                 settingsStore.lastEpgStatus = status
-                store.upsert(livePl.copy(lastEpgSyncAt = System.currentTimeMillis()))
+                store.upsert(
+                    livePl.copy(
+                        lastEpgSyncAt = System.currentTimeMillis(),
+                        lastEpgCount = channels,
+                    ),
+                )
                 if (vodPl != null && vodPl.id != livePl.id) {
-                    store.upsert(vodPl.copy(lastEpgSyncAt = System.currentTimeMillis()))
+                    store.upsert(
+                        vodPl.copy(
+                            lastEpgSyncAt = System.currentTimeMillis(),
+                            lastEpgCount = channels,
+                        ),
+                    )
                 }
                 reloadPlaylists()
                 refreshSourceRefs()
                 playing?.let { target ->
                     catalog.live.firstOrNull { it.id == target.channelId }?.let { refreshLiveEpg(it) }
                 }
+                epgSessionDone = true
                 settingsRev += 1
             } catch (exc: CancellationException) {
+                if (gen == epgGen) {
+                    settingsStore.lastEpgStatus = "EPG cancelled"
+                    settingsRev += 1
+                }
                 throw exc
             } catch (exc: Exception) {
-                val msg = exc.message ?: "EPG sync failed"
-                error = msg
-                settingsStore.lastEpgStatus = msg
+                if (gen != epgGen) return@launch
+                val cancelled = exc is InterruptedIOException ||
+                    exc.message?.contains("Canceled", ignoreCase = true) == true ||
+                    exc.message?.contains("Socket closed", ignoreCase = true) == true
+                settingsStore.lastEpgStatus = if (cancelled) {
+                    "EPG cancelled"
+                } else {
+                    exc.message ?: "EPG sync failed"
+                }
+                epgSessionDone = true
                 settingsRev += 1
             } finally {
-                epgLoading = false
-                loadingLabel = ""
-                guideSync = GuideSync()
+                if (gen == epgGen) {
+                    epgLoading = false
+                    loadingLabel = ""
+                    guideSync = GuideSync()
+                }
             }
         }
     }
@@ -721,6 +879,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun closeLibrary() {
+        cancelEpg(clear = false)
         session.stop()
         selectedPlaylist = null
         catalog = Catalog()
@@ -729,6 +888,9 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         seriesDetail = null
         liveEpg = emptyList()
         screen = AppScreen.HOME
+        epgSessionDone = false
+        epgSessionPlaylistId = null
+        error = null
     }
 
     fun openHome() {
@@ -783,6 +945,13 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
             BrowseTab.SHOWS -> catalog.seriesFiles
             BrowseTab.SEARCH -> emptyList()
         }
+        if (categoryId == FAVOURITES_ID) {
+            val favs = favouriteIds(tab)
+            return items.filter { item ->
+                item.id in favs && item.categoryId !in hidden &&
+                    (q.isEmpty() || item.name.lowercase().contains(q))
+            }
+        }
         return items.filter { item ->
             item.categoryId !in hidden &&
                 (categoryId == null || item.categoryId == categoryId) &&
@@ -796,6 +965,13 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         if (tab == BrowseTab.SEARCH) {
             return catalog.series.filter { show ->
                 show.categoryId !in hidden && (q.isEmpty() || show.name.lowercase().contains(q))
+            }
+        }
+        if (categoryId == FAVOURITES_ID) {
+            val favs = favouriteIds(BrowseTab.SHOWS)
+            return catalog.series.filter { show ->
+                show.id in favs && show.categoryId !in hidden &&
+                    (q.isEmpty() || show.name.lowercase().contains(q))
             }
         }
         return catalog.series.filter { show ->
@@ -838,17 +1014,92 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun epgFor(item: CatalogItem): List<EpgEvent> {
-        val keys = buildList {
-            add(item.tvgId)
-            add(item.id)
-            add(item.name)
-            add(item.tvgId.lowercase(Locale.US))
-            add(item.name.lowercase(Locale.US))
-            add(item.id.lowercase(Locale.US))
-        }.filter { it.isNotBlank() }.distinct()
-        return keys.flatMap { catalog.epgByChannel[it].orEmpty() }
-            .distinctBy { it.startMs to it.title }
-            .sortedBy { it.startMs }
+        val map = catalog.epgByChannel
+        if (map.isEmpty()) return emptyList()
+        val keys = listOf(item.tvgId, item.tvgName, item.name, item.id)
+        for (raw in keys) {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) continue
+            map[trimmed]?.takeIf { it.isNotEmpty() }?.let { return it }
+            map[trimmed.lowercase(Locale.US)]?.takeIf { it.isNotEmpty() }?.let { return it }
+            val compact = XmltvParser.epgKey(trimmed)
+            if (compact.isNotEmpty()) {
+                map[compact]?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
+        }
+        return emptyList()
+    }
+
+    fun openItemMenu(item: CatalogItem? = null, show: SeriesShow? = null, event: EpgEvent? = null) {
+        itemMenu = ItemMenu(item = item, show = show, event = event)
+    }
+
+    fun closeItemMenu() {
+        itemMenu = null
+    }
+
+    fun isFavourite(item: CatalogItem): Boolean {
+        return item.id in favouriteIdsForKind(item.kind)
+    }
+
+    fun isFavouriteShow(show: SeriesShow): Boolean {
+        return show.id in favouriteIds(BrowseTab.SHOWS)
+    }
+
+    fun toggleFavourite(item: CatalogItem) {
+        val playlist = playlists.firstOrNull { it.id == item.sourcePlaylistId }
+            ?: favouritePlaylist()
+            ?: return
+        val next = when (item.kind) {
+            MediaKind.LIVE -> playlist.copy(favouriteLiveIds = playlist.favouriteLiveIds.toggleId(item.id))
+            MediaKind.MOVIE -> playlist.copy(favouriteMovieIds = playlist.favouriteMovieIds.toggleId(item.id))
+            MediaKind.SERIES -> playlist.copy(favouriteShowIds = playlist.favouriteShowIds.toggleId(item.id))
+        }
+        store.upsert(next)
+        reloadPlaylists()
+        refreshSourceRefs()
+        closeItemMenu()
+    }
+
+    fun toggleFavouriteShow(show: SeriesShow) {
+        val playlist = playlists.firstOrNull { it.id == show.sourcePlaylistId }
+            ?: favouritePlaylist()
+            ?: return
+        store.upsert(playlist.copy(favouriteShowIds = playlist.favouriteShowIds.toggleId(show.id)))
+        reloadPlaylists()
+        refreshSourceRefs()
+        closeItemMenu()
+    }
+
+    private fun favouritePlaylist(): SavedPlaylist? {
+        val id = when (tab) {
+            BrowseTab.LIVE, BrowseTab.SEARCH -> liveSource?.id ?: selectedPlaylist?.id
+            BrowseTab.MOVIES, BrowseTab.SHOWS -> vodSource?.id ?: selectedPlaylist?.id
+        } ?: return null
+        return playlists.firstOrNull { it.id == id }
+    }
+
+    private fun favouriteIds(tab: BrowseTab): Set<String> {
+        val pl = favouritePlaylist() ?: return emptySet()
+        return when (tab) {
+            BrowseTab.LIVE -> pl.favouriteLiveIds
+            BrowseTab.MOVIES -> pl.favouriteMovieIds
+            BrowseTab.SHOWS -> pl.favouriteShowIds
+            BrowseTab.SEARCH -> pl.favouriteLiveIds + pl.favouriteMovieIds + pl.favouriteShowIds
+        }.toSet()
+    }
+
+    private fun favouriteIdsForKind(kind: MediaKind): Set<String> {
+        val pl = favouritePlaylist() ?: return emptySet()
+        return when (kind) {
+            MediaKind.LIVE -> pl.favouriteLiveIds
+            MediaKind.MOVIE -> pl.favouriteMovieIds
+            MediaKind.SERIES -> pl.favouriteShowIds
+        }.toSet()
+    }
+
+    private fun List<String>.toggleId(id: String): List<String> {
+        return if (id in this) filter { it != id } else this + id
     }
 
     fun playItem(item: CatalogItem, event: EpgEvent? = null) {
@@ -1045,7 +1296,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
         val title = if (event != null) "${item.name} · ${event.title}" else item.name
         RecordService.start(ctx, item.playbackUrl, title, duration)
         recordingTitle = title
-        recordingMessage = "Recording to Movies/PortalPlayer"
+        recordingMessage = "Recording to Movies/ROOTSIPTV"
     }
 
     fun stopRecording() {
@@ -1061,7 +1312,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
     fun exportBackup(): String {
         val ctx = getApplication<Application>()
         val raw = Json { encodeDefaults = true; prettyPrint = true }.encodeToString(playlists)
-        val name = "PortalPlayer-backup-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.json"
+        val name = "ROOTSIPTV-backup-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.json"
         val dir = if (Build.VERSION.SDK_INT >= 19) {
             ctx.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: ctx.filesDir
         } else {

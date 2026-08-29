@@ -59,7 +59,7 @@ class RecordService : Service() {
     private fun copyStream(url: String, title: String, durationMs: Long) {
         val safe = title.replace(Regex("[^A-Za-z0-9._-]+"), "_").take(40)
         val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
-        val fileName = "PortalPlayer_${safe}_$stamp.ts"
+        val fileName = "ROOTSIPTV_${safe}_$stamp.ts"
         var bytes = 0L
         val started = SystemClock.elapsedRealtime()
         try {
@@ -111,12 +111,12 @@ class RecordService : Service() {
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
                 put(MediaStore.Video.Media.MIME_TYPE, "video/mp2t")
-                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/PortalPlayer")
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ROOTSIPTV")
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
             val resolver = contentResolver
             val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                ?: throw IllegalStateException("Could not create Movies/PortalPlayer file")
+                ?: throw IllegalStateException("Could not create Movies/ROOTSIPTV file")
             val stream = resolver.openOutputStream(uri) ?: throw IllegalStateException("Could not write recording")
             return object : OutputStream() {
                 override fun write(b: Int) = stream.write(b)
@@ -130,7 +130,7 @@ class RecordService : Service() {
                 }
             }
         }
-        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "PortalPlayer")
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "ROOTSIPTV")
         if (!dir.exists()) dir.mkdirs()
         return File(dir, fileName).outputStream()
     }

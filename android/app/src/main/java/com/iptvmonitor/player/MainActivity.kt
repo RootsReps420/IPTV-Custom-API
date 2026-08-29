@@ -30,10 +30,12 @@ import com.iptvmonitor.player.player.RecordService
 import com.iptvmonitor.player.ui.AppScreen
 import com.iptvmonitor.player.ui.GroupEditorOverlay
 import com.iptvmonitor.player.ui.HomeScreen
+import com.iptvmonitor.player.ui.ItemMenuOverlay
 import com.iptvmonitor.player.ui.PlayerScreen
 import com.iptvmonitor.player.ui.PlaylistEditorOverlay
 import com.iptvmonitor.player.ui.PortalTheme
 import com.iptvmonitor.player.ui.PortalViewModel
+import com.iptvmonitor.player.ui.SettingsChoicePrompt
 import com.iptvmonitor.player.ui.SettingsDrawer
 import com.iptvmonitor.player.ui.SettingsTextPrompt
 import com.iptvmonitor.player.ui.WatchShell
@@ -137,7 +139,9 @@ private fun PortalRoot(viewModel: PortalViewModel) {
             viewModel.screen == AppScreen.LIBRARY &&
             viewModel.showPlaylistEditor.not() &&
             viewModel.groupEditor == null &&
-            viewModel.textPrompt == null,
+            viewModel.textPrompt == null &&
+            viewModel.choicePrompt == null &&
+            viewModel.itemMenu == null,
     ) {
         if (!viewModel.popLane()) {
             AfrController.clear(activity)
@@ -149,6 +153,7 @@ private fun PortalRoot(viewModel: PortalViewModel) {
             viewModel.prefs().confirmExit &&
             !viewModel.showPlaylistEditor &&
             viewModel.textPrompt == null &&
+            viewModel.choicePrompt == null &&
             viewModel.screen != AppScreen.SETTINGS,
     ) {
         if (!exitArmed) {
@@ -176,6 +181,7 @@ private fun PortalRoot(viewModel: PortalViewModel) {
     }
     if (viewModel.showPlaylistEditor) {
         PlaylistEditorOverlay(
+            viewModel = viewModel,
             initial = viewModel.playlistEditorInitial,
             onDismiss = { viewModel.closePlaylistEditor() },
             onSave = {
@@ -196,5 +202,11 @@ private fun PortalRoot(viewModel: PortalViewModel) {
     }
     if (viewModel.textPrompt != null) {
         SettingsTextPrompt(viewModel)
+    }
+    if (viewModel.choicePrompt != null) {
+        SettingsChoicePrompt(viewModel)
+    }
+    if (viewModel.itemMenu != null) {
+        ItemMenuOverlay(viewModel)
     }
 }

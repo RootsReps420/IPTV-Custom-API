@@ -68,26 +68,21 @@ fun ChannelPane(viewModel: PortalViewModel, modifier: Modifier) {
     )
     Column(
         modifier
+            .laneBack(viewModel, ShellLane.CHANNELS)
             .background(WatchPalette.Stage)
             .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
     ) {
-        OutlinedTextField(
-            value = viewModel.query,
-            onValueChange = { viewModel.query = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            placeholder = {
-                Text(
-                    if (viewModel.tab == BrowseTab.SEARCH) {
-                        "Search live, movies, shows…"
-                    } else {
-                        "Filter this group…"
-                    },
-                )
-            },
-            colors = fieldColors,
-        )
-        Spacer(Modifier.height(8.dp))
+        if (viewModel.tab == BrowseTab.SEARCH) {
+            OutlinedTextField(
+                value = viewModel.query,
+                onValueChange = { viewModel.query = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("Search live, movies, shows…") },
+                colors = fieldColors,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         val show = viewModel.seriesDetail
         if (show != null) {
             EpisodePane(viewModel, show)
@@ -138,7 +133,7 @@ private fun LiveList(viewModel: PortalViewModel, items: List<CatalogItem>, modif
             WatchListRow(
                 selected = here,
                 onClick = { viewModel.playItem(item) },
-                onLongClick = { viewModel.startRecording(item) },
+                onLongClick = { viewModel.openItemMenu(item = item) },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 val hot = watchHot()
@@ -198,6 +193,7 @@ private fun PosterGrid(
             WatchListRow(
                 selected = viewModel.playing?.channelId == item.id,
                 onClick = { viewModel.playItem(item) },
+                onLongClick = { viewModel.openItemMenu(item = item) },
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AsyncImage(
@@ -237,6 +233,7 @@ private fun ShowGrid(
             WatchListRow(
                 selected = viewModel.seriesDetail?.id == show.id,
                 onClick = { viewModel.openSeries(show) },
+                onLongClick = { viewModel.openItemMenu(show = show) },
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AsyncImage(

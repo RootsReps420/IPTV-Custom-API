@@ -27,6 +27,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,12 +77,19 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean) {
                     Row(Modifier.fillMaxSize()) {
                         WatchRail(
                             viewModel,
-                            Modifier.width(railW).fillMaxHeight(),
+                            Modifier
+                                .width(railW)
+                                .fillMaxHeight()
+                                .focusProperties { canFocus = lane == ShellLane.RAIL },
                             compact = lane != ShellLane.RAIL,
                         )
                         CategoryPane(
                             viewModel,
-                            Modifier.width(catW).fillMaxHeight(),
+                            Modifier
+                                .width(catW)
+                                .fillMaxHeight()
+                                .laneBack(viewModel, ShellLane.GROUPS)
+                                .focusProperties { canFocus = lane != ShellLane.CHANNELS },
                             compact = lane == ShellLane.CHANNELS,
                         )
                         ChannelPane(viewModel, Modifier.weight(1.2f).fillMaxHeight())
@@ -176,14 +184,31 @@ fun SyncStatusBar(viewModel: PortalViewModel) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 12.dp).weight(1f, fill = false),
             )
+            if (sync.running && sync.kind == "epg") {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = 12.dp),
+                ) {
+                    GhostBtn("Cancel") { viewModel.cancelEpg() }
+                    GhostBtn("Restart") { viewModel.restartEpg() }
+                }
+            }
         }
         if (sync.running) {
-            LinearProgressIndicator(
-                progress = { if (sync.total > 0) sync.fraction else 0.35f },
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(3.dp),
-                color = WatchPalette.Up,
-                trackColor = WatchPalette.Line,
-            )
+            if (sync.total > 0L) {
+                LinearProgressIndicator(
+                    progress = { sync.fraction },
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(3.dp),
+                    color = WatchPalette.Up,
+                    trackColor = WatchPalette.Line,
+                )
+            } else {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(3.dp),
+                    color = WatchPalette.Up,
+                    trackColor = WatchPalette.Line,
+                )
+            }
         }
     }
 }
@@ -208,44 +233,62 @@ fun WatchRail(viewModel: PortalViewModel, modifier: Modifier, compact: Boolean) 
                 }
             }
             Spacer(Modifier.weight(1f))
-            RailBtn("PL", selected = false) { viewModel.openHome() }
-            RailBtn("EPG", selected = false) { viewModel.requestEpgUpdate() }
             RailBtn("SET", selected = false) { viewModel.openSettings() }
         }
         return
     }
+    val live = viewModel.liveSource ?: viewModel.selectedPlaylist
+    val listAt = live?.lastPlaylistSyncAt ?: 0L
+    val epgAt = live?.lastEpgSyncAt ?: 0L
+    val channels = if (viewModel.catalog.live.isNotEmpty()) viewModel.catalog.live.size else live?.lastLiveCount ?: 0
+    val epgCount = if (viewModel.catalog.epgByChannel.isNotEmpty()) viewModel.catalog.epgByChannel.size else live?.lastEpgCount ?: 0
     Column(
         modifier.background(WatchPalette.Rail).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            "RootsIPTV",
-            color = WatchPalette.Up,
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(start = 6.dp, bottom = 8.dp),
-        )
+        BrandMark(modifier = Modifier.padding(start = 6.dp, bottom = 8.dp), size = 15.sp)
         tabs.forEach { (tab, label) ->
             RailBtn(label, viewModel.tab == tab) {
                 viewModel.selectTab(tab)
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            viewModel.libraryCaption(),
-            color = WatchPalette.Muted,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 10.dp),
-        )
         Spacer(Modifier.weight(1f))
-        RailBtn("Playlists", selected = false) { viewModel.openHome() }
-        RailBtn("Sync list", selected = false) {
-            viewModel.selectedPlaylist?.let { viewModel.syncPlaylist(it) }
-        }
-        RailBtn("Sync EPG", selected = false) { viewModel.requestEpgUpdate() }
+        RailSyncBlock(
+            title = "Last playlist sync",
+            stamp = viewModel.formatSyncStamp(listAt),
+            count = if (channels > 0) "$channels channels" else "No channels yet",
+        )
+        RailSyncBlock(
+            title = "Last EPG sync",
+            stamp = viewModel.formatSyncStamp(epgAt),
+            count = when {
+                viewModel.guideSync.running && viewModel.guideSync.kind == "epg" ->
+                    viewModel.guideSync.detail.ifBlank { "Updating…" }
+                epgCount > 0 -> "$epgCount EPG"
+                else -> "No EPG yet"
+            },
+        )
         RailBtn("Settings", selected = false) { viewModel.openSettings() }
-        viewModel.error?.let {
-            Text(it, color = WatchPalette.Down, fontSize = 12.sp, modifier = Modifier.padding(10.dp))
-        }
+    }
+}
+
+@Composable
+private fun RailSyncBlock(title: String, stamp: String, count: String) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            title.uppercase(Locale.US),
+            color = WatchPalette.Muted,
+            fontSize = 10.sp,
+            letterSpacing = 1.1.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(stamp, color = WatchPalette.Text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(count, color = WatchPalette.Up, fontSize = 12.sp)
     }
 }
 
@@ -279,7 +322,17 @@ fun CategoryPane(viewModel: PortalViewModel, modifier: Modifier, compact: Boolea
             if (!compact) Text("Search", color = WatchPalette.Muted, modifier = Modifier.padding(8.dp))
             return
         }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxHeight()
+                .laneBack(viewModel, ShellLane.GROUPS),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            item {
+                CatRow("Favourites", "★", viewModel.categoryId == FAVOURITES_ID, compact) {
+                    viewModel.selectCategory(FAVOURITES_ID)
+                }
+            }
             item {
                 CatRow("All", "ALL", viewModel.categoryId == null, compact) {
                     viewModel.selectCategory(null)

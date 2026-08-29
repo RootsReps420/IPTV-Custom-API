@@ -1,5 +1,6 @@
 package com.iptvmonitor.player.data
 
+import okhttp3.Call
 import okhttp3.Request
 import okio.Buffer
 import java.io.BufferedInputStream
@@ -14,6 +15,13 @@ fun interface ByteProgress {
 }
 
 class CatalogRepository {
+    @Volatile
+    private var epgCall: Call? = null
+
+    fun cancelEpgDownload() {
+        epgCall?.cancel()
+    }
+
     fun load(playlist: SavedPlaylist): Catalog {
         val catalog = loadPlaylist(playlist)
         val epg = runCatching { loadEpg(playlist) }.getOrDefault(emptyMap())
@@ -27,16 +35,27 @@ class CatalogRepository {
         }
     }
 
-    /** Cheap login / M3U sanity check. Must not download EPG or the full catalogue. */
-    fun probe(playlist: SavedPlaylist) {
-        when (playlist.kind) {
-            PlaylistKind.XTREAM -> XtreamClient(
-                playlist.server,
-                playlist.username,
-                playlist.password,
-            ).authenticate()
+    /**
+     * Cheap login / M3U sanity check. Must not download EPG or the full catalogue.
+     * For M3U, returns `url-tvg` / `x-tvg-url` from the playlist header when present.
+     */
+    fun probe(playlist: SavedPlaylist): String {
+        return when (playlist.kind) {
+            PlaylistKind.XTREAM -> {
+                XtreamClient(
+                    playlist.server,
+                    playlist.username,
+                    playlist.password,
+                ).authenticate()
+                ""
+            }
             PlaylistKind.M3U -> probeM3u(playlist.m3uUrl)
         }
+    }
+
+    fun peekM3uEpg(m3uUrl: String): String {
+        return runCatching { readM3uHead(m3uUrl, 16_384L).let { M3uParser.parse(it).epgUrl } }
+            .getOrDefault("")
     }
 
     fun loadEpg(
@@ -54,14 +73,25 @@ class CatalogRepository {
         var merged = emptyMap<String, List<EpgEvent>>()
         var lastError: Exception? = null
         var loaded = false
+        var bytesBase = 0L
         urls.forEachIndexed { index, url ->
             try {
-                onProgress?.onBytes(0, 0, "EPG ${index + 1}/${urls.size}")
+                val label = if (urls.size == 1) "Downloading EPG" else "EPG ${index + 1}/${urls.size}"
+                var urlRead = 0L
+                var urlTotal = 0L
+                val wrapped = ByteProgress { read, total, detail ->
+                    urlRead = read
+                    urlTotal = total
+                    val done = bytesBase + read
+                    val tot = if (total > 0L) bytesBase + total else 0L
+                    onProgress?.onBytes(done, tot, detail.ifBlank { label })
+                }
                 merged = mergeEpg(
                     merged,
-                    loadXmltv(url, pastDays, horizonDays, storeDescriptions, onProgress),
+                    loadXmltv(url, pastDays, horizonDays, storeDescriptions, wrapped),
                 )
                 loaded = true
+                bytesBase += if (urlTotal > 0L) urlTotal else urlRead
             } catch (exc: Exception) {
                 lastError = exc
             }
@@ -144,7 +174,15 @@ class CatalogRepository {
         )
     }
 
-    private fun probeM3u(url: String) {
+    private fun probeM3u(url: String): String {
+        val head = readM3uHead(url, 65_536L)
+        if (!head.contains("#EXTM3U", ignoreCase = true) && !head.contains("#EXTINF", ignoreCase = true)) {
+            throw XtreamException("URL did not look like an M3U playlist")
+        }
+        return M3uParser.parse(head).epgUrl
+    }
+
+    private fun readM3uHead(url: String, cap: Long): String {
         val trimmed = url.trim()
         if (trimmed.isEmpty()) throw XtreamException("M3U URL is empty")
         val request = Request.Builder().url(trimmed).get().build()
@@ -155,15 +193,11 @@ class CatalogRepository {
             val body = response.body ?: throw XtreamException("M3U was empty")
             val buf = Buffer()
             val source = body.source()
-            val cap = 65_536L
             while (buf.size < cap && !source.exhausted()) {
                 val want = minOf(8_192L, cap - buf.size)
                 if (source.read(buf, want) == -1L) break
             }
-            val head = buf.readUtf8()
-            if (!head.contains("#EXTM3U", ignoreCase = true) && !head.contains("#EXTINF", ignoreCase = true)) {
-                throw XtreamException("URL did not look like an M3U playlist")
-            }
+            return buf.readUtf8()
         }
     }
 
@@ -199,14 +233,7 @@ class CatalogRepository {
     }
 
     private fun m3uHeaderEpg(m3uUrl: String): String {
-        return runCatching {
-            val request = Request.Builder().url(m3uUrl.trim()).get().build()
-            HttpClients.shared.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return ""
-                val text = response.body?.string().orEmpty()
-                M3uParser.parse(text.take(8_000)).epgUrl
-            }
-        }.getOrDefault("")
+        return peekM3uEpg(m3uUrl)
     }
 
     private fun loadXmltv(
@@ -217,24 +244,30 @@ class CatalogRepository {
         onProgress: ByteProgress?,
     ): Map<String, List<EpgEvent>> {
         val request = Request.Builder().url(url).get().build()
-        HttpClients.epg.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw XtreamException("EPG HTTP ${response.code} from $url")
+        val call = HttpClients.epg.newCall(request)
+        epgCall = call
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw XtreamException("EPG HTTP ${response.code} from $url")
+                }
+                val body = response.body ?: throw XtreamException("EPG was empty")
+                val length = body.contentLength()
+                if (length > XMLTV_MAX_BYTES) {
+                    throw XtreamException("EPG is larger than 80 MB")
+                }
+                val counted = CountingInputStream(body.byteStream(), length, "Downloading EPG", onProgress)
+                xmltvStream(url, counted).use { stream ->
+                    return XmltvParser.parse(
+                        stream,
+                        horizonDays = horizonDays,
+                        pastDays = pastDays,
+                        storeDescriptions = storeDescriptions,
+                    )
+                }
             }
-            val body = response.body ?: throw XtreamException("EPG was empty")
-            val length = body.contentLength()
-            if (length > XMLTV_MAX_BYTES) {
-                throw XtreamException("EPG is larger than 80 MB")
-            }
-            val counted = CountingInputStream(body.byteStream(), length, "Downloading EPG", onProgress)
-            xmltvStream(url, counted).use { stream ->
-                return XmltvParser.parse(
-                    stream,
-                    horizonDays = horizonDays,
-                    pastDays = pastDays,
-                    storeDescriptions = storeDescriptions,
-                )
-            }
+        } finally {
+            if (epgCall === call) epgCall = null
         }
     }
 
@@ -257,8 +290,10 @@ private class CountingInputStream(
     private val label: String,
     private val onProgress: ByteProgress?,
 ) : FilterInputStream(raw) {
-    private var readBytes = 0L
+    var readBytes = 0L
+        private set
     private var lastEmit = 0L
+    private var lastEmitAt = 0L
 
     override fun read(): Int {
         val n = super.read()
@@ -274,11 +309,14 @@ private class CountingInputStream(
 
     private fun tick(n: Long) {
         readBytes += n
-        if (readBytes - lastEmit < 256_000L && (total <= 0L || readBytes < total)) return
+        val now = System.currentTimeMillis()
+        val complete = total > 0L && readBytes >= total
+        if (!complete && readBytes - lastEmit < 512_000L && now - lastEmitAt < 400L) return
         lastEmit = readBytes
+        lastEmitAt = now
         if (readBytes > XMLTV_MAX_BYTES) {
             throw XtreamException("EPG is larger than 80 MB")
         }
-        onProgress?.onBytes(readBytes, total, label)
+        onProgress?.onBytes(readBytes, total.coerceAtLeast(0L), label)
     }
 }

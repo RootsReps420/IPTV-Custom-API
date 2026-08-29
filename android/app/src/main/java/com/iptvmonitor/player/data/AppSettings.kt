@@ -112,7 +112,7 @@ private class BooleanPref(
         prefs.getBoolean(key, default)
 
     operator fun setValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>, value: Boolean) {
-        prefs.edit().putBoolean(key, value).apply()
+        prefs.edit().putBoolean(key, value).commit()
     }
 }
 
@@ -125,6 +125,6 @@ private class IntPref(
         prefs.getInt(key, default)
 
     operator fun setValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>, value: Int) {
-        prefs.edit().putInt(key, value).apply()
+        prefs.edit().putInt(key, value).commit()
     }
 }

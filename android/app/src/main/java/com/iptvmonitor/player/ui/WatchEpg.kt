@@ -138,7 +138,7 @@ fun LiveEpgGuide(viewModel: PortalViewModel, items: List<CatalogItem>, modifier:
                     showNeedle = showNeedle,
                     needleX = needleX.dp,
                     onPlay = { event -> viewModel.playItem(item, event) },
-                    onRecord = { event -> viewModel.startRecording(item, event) },
+                    onRecord = { event -> viewModel.openItemMenu(item = item, event = event) },
                 )
             }
         }

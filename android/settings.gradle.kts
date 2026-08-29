@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PortalPlayer"
+rootProject.name = "ROOTSIPTV"
 include(":app")

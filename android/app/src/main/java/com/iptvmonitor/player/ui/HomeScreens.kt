@@ -24,6 +24,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,53 +32,69 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptvmonitor.player.data.Category
+import com.iptvmonitor.player.data.MediaKind
 import com.iptvmonitor.player.data.PlaylistKind
 import com.iptvmonitor.player.data.SavedPlaylist
+import com.iptvmonitor.player.data.SeriesShow
+import kotlinx.coroutines.delay
 
 @Composable
 fun HomeScreen(viewModel: PortalViewModel) {
-    WatchBackdrop {
-        HubScaffold {
-            WatchPanel {
-                Text("ROOTSIPTV", color = WatchPalette.Up, style = MaterialTheme.typography.labelLarge)
-                Text("Playlists", style = MaterialTheme.typography.headlineLarge)
-                Text(
-                    "Add an Xtream login and/or an M3U URL. Settings is the panel on the right — Playlists, EPG, and Playback live there.",
-                    color = WatchPalette.Muted,
-                    style = MaterialTheme.typography.bodyMedium,
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(WatchPalette.Bg)
+            .padding(horizontal = 36.dp, vertical = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BrandMark(size = 22.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SwitchBtn("Add playlist") { viewModel.startAddPlaylist() }
+                GhostBtn("Settings") { viewModel.openSettings() }
+            }
+        }
+        Text("Playlists", style = MaterialTheme.typography.headlineLarge)
+        Text(
+            "Add an Xtream login or an M3U URL. Saving a source checks it and syncs the channel list.",
+            color = WatchPalette.Muted,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (viewModel.loading) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CircularProgressIndicator(color = WatchPalette.Up)
+                Text(viewModel.loadingLabel.ifBlank { "Working…" }, color = WatchPalette.Muted)
+            }
+        }
+        viewModel.error?.let { Text(it, color = WatchPalette.Down, style = MaterialTheme.typography.bodyMedium) }
+        if (viewModel.playlists.isEmpty() && !viewModel.loading) {
+            Text("No playlists yet.", color = WatchPalette.Muted)
+        }
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(viewModel.playlists, key = { it.id }) { item ->
+                PlaylistCard(
+                    item = item,
+                    stamp = viewModel::formatSyncStamp,
+                    onOpen = { viewModel.openLibrary(item) },
+                    onGroups = { viewModel.openGroupEditor(item) },
+                    onEdit = { viewModel.startEditPlaylist(item) },
+                    onDelete = { viewModel.deletePlaylist(item.id) },
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SwitchBtn("Add playlist") { viewModel.startAddPlaylist() }
-                    SwitchBtn("Settings") { viewModel.openSettings() }
-                }
-                if (viewModel.loading) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        CircularProgressIndicator(color = WatchPalette.Up)
-                        Text(viewModel.loadingLabel.ifBlank { "Working…" }, color = WatchPalette.Muted)
-                    }
-                }
-                viewModel.error?.let { Text(it, color = WatchPalette.Down, style = MaterialTheme.typography.bodyMedium) }
-                if (viewModel.playlists.isEmpty() && !viewModel.loading) {
-                    Text("No playlists yet.", color = WatchPalette.Muted)
-                }
-                viewModel.playlists.forEach { item ->
-                    PlaylistCard(
-                        item = item,
-                        onOpen = { viewModel.openLibrary(item) },
-                        onSyncList = { viewModel.syncPlaylist(item) },
-                        onSyncEpg = { viewModel.syncEpg(item) },
-                        onGroups = { viewModel.openGroupEditor(item) },
-                        onEdit = { viewModel.startEditPlaylist(item) },
-                        onDelete = { viewModel.deletePlaylist(item.id) },
-                    )
-                }
             }
         }
     }
@@ -144,9 +161,8 @@ private fun HubRule() {
 @Composable
 private fun PlaylistCard(
     item: SavedPlaylist,
+    stamp: (Long) -> String,
     onOpen: () -> Unit,
-    onSyncList: () -> Unit,
-    onSyncEpg: () -> Unit,
     onGroups: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -156,29 +172,42 @@ private fun PlaylistCard(
             .fillMaxWidth()
             .background(WatchPalette.Panel2)
             .border(1.dp, WatchPalette.Line)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(item.name, color = WatchPalette.Text, style = MaterialTheme.typography.titleMedium)
         Text(
-            if (item.kind == PlaylistKind.XTREAM) "Xtream · ${item.username}" else "M3U",
+            buildString {
+                append(if (item.kind == PlaylistKind.XTREAM) "Xtream" else "M3U")
+                if (item.kind == PlaylistKind.XTREAM && item.username.isNotBlank()) {
+                    append(" · ")
+                    append(item.username)
+                }
+                if (item.lastLiveCount > 0) {
+                    append(" · ")
+                    append(item.lastLiveCount)
+                    append(" channels")
+                }
+            },
             color = WatchPalette.Muted,
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "List ${syncAge(item.lastPlaylistSyncAt)} · EPG ${syncAge(item.lastEpgSyncAt)}",
+            "Playlist ${stamp(item.lastPlaylistSyncAt)}" +
+                if (item.lastEpgSyncAt > 0L) {
+                    "  ·  EPG ${stamp(item.lastEpgSyncAt)}" +
+                        if (item.lastEpgCount > 0) " (${item.lastEpgCount})" else ""
+                } else {
+                    ""
+                },
             color = WatchPalette.Muted,
             style = MaterialTheme.typography.bodySmall,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SwitchBtn("Open") { onOpen() }
-            GhostBtn("Sync list") { onSyncList() }
-            GhostBtn("Sync EPG") { onSyncEpg() }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GhostBtn("Groups") { onGroups() }
-            GhostBtn("Edit") { onEdit() }
-            SwitchBtn("Delete", danger = true) { onDelete() }
+            GhostBtn("Open", tint = WatchPalette.Up, onClick = onOpen)
+            GhostBtn("Groups", onClick = onGroups)
+            GhostBtn("Edit", onClick = onEdit)
+            GhostBtn("Delete", tint = WatchPalette.Down, onClick = onDelete)
         }
     }
 }
@@ -217,6 +246,7 @@ private fun SourcePicker(
 
 @Composable
 fun PlaylistEditorOverlay(
+    viewModel: PortalViewModel,
     initial: SavedPlaylist?,
     onDismiss: () -> Unit,
     onSave: (SavedPlaylist) -> Unit,
@@ -228,6 +258,7 @@ fun PlaylistEditorOverlay(
     var password by remember { mutableStateOf(initial?.password ?: "") }
     var m3u by remember { mutableStateOf(initial?.m3uUrl ?: "") }
     var epg by remember { mutableStateOf(initial?.epgUrl ?: "") }
+    var autoEpg by remember { mutableStateOf(initial?.epgUrl.orEmpty()) }
     val colors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = WatchPalette.Up,
         unfocusedBorderColor = WatchPalette.Line,
@@ -239,6 +270,15 @@ fun PlaylistEditorOverlay(
         focusedContainerColor = WatchPalette.Panel2,
         unfocusedContainerColor = WatchPalette.Panel2,
     )
+    LaunchedEffect(m3u, kind) {
+        if (kind != PlaylistKind.M3U) return@LaunchedEffect
+        delay(700)
+        val found = viewModel.peekM3uEpg(m3u)
+        if (found.isNotBlank() && (epg.isBlank() || epg == autoEpg)) {
+            epg = found
+            autoEpg = found
+        }
+    }
     FocusDialog(onDismiss = onDismiss) { requester ->
         Column(
             Modifier
@@ -251,7 +291,7 @@ fun PlaylistEditorOverlay(
                 .padding(28.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("ROOTSIPTV", color = WatchPalette.Up, style = MaterialTheme.typography.labelLarge)
+            BrandMark(size = 14.sp)
             Text(
                 if (initial == null) "Add playlist" else "Edit playlist",
                 style = MaterialTheme.typography.headlineMedium,
@@ -279,7 +319,7 @@ fun PlaylistEditorOverlay(
                 )
             } else {
                 OutlinedTextField(m3u, { m3u = it }, label = { Text("M3U URL") }, singleLine = true, colors = colors, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(epg, { epg = it }, label = { Text("EPG URL (optional)") }, singleLine = true, colors = colors, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(epg, { epg = it }, label = { Text("EPG URL · filled from the M3U header") }, singleLine = true, colors = colors, modifier = Modifier.fillMaxWidth())
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SwitchBtn("Save") {
@@ -298,8 +338,13 @@ fun PlaylistEditorOverlay(
                             hiddenSeriesCategories = initial?.hiddenSeriesCategories.orEmpty(),
                             lastPlaylistSyncAt = initial?.lastPlaylistSyncAt ?: 0L,
                             lastEpgSyncAt = initial?.lastEpgSyncAt ?: 0L,
+                            lastLiveCount = initial?.lastLiveCount ?: 0,
+                            lastEpgCount = initial?.lastEpgCount ?: 0,
                             updateIntervalHours = initial?.updateIntervalHours ?: 4,
                             updateOnStart = initial?.updateOnStart ?: true,
+                            favouriteLiveIds = initial?.favouriteLiveIds.orEmpty(),
+                            favouriteMovieIds = initial?.favouriteMovieIds.orEmpty(),
+                            favouriteShowIds = initial?.favouriteShowIds.orEmpty(),
                         ),
                     )
                 }
@@ -326,13 +371,17 @@ fun GroupEditorOverlay(
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("ROOTSIPTV", color = WatchPalette.Up, style = MaterialTheme.typography.labelLarge)
+            BrandMark(size = 14.sp)
             Text("Channel groups", style = MaterialTheme.typography.headlineMedium)
             Text(
                 "Changes save as you click. Green groups are shown.",
                 color = WatchPalette.Muted,
                 style = MaterialTheme.typography.bodySmall,
             )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GhostBtn("Deselect all") { viewModel.setAllGroupsHidden(true) }
+                GhostBtn("Select all") { viewModel.setAllGroupsHidden(false) }
+            }
             if (viewModel.groupEditorLoading) {
                 CircularProgressIndicator(color = WatchPalette.Up, modifier = Modifier.align(Alignment.CenterHorizontally))
             } else {
@@ -402,17 +451,6 @@ private fun androidx.compose.foundation.lazy.LazyListScope.groupSection(
     }
 }
 
-private fun syncAge(ms: Long): String {
-    if (ms <= 0L) return "never"
-    val min = (System.currentTimeMillis() - ms) / 60_000L
-    return when {
-        min < 1L -> "just now"
-        min < 60L -> "${min}m ago"
-        min < 1_440L -> "${min / 60L}h ago"
-        else -> "${min / 1_440L}d ago"
-    }
-}
-
 @Composable
 fun SwitchBtn(
     label: String,
@@ -437,11 +475,16 @@ fun SwitchBtn(
 }
 
 @Composable
-fun GhostBtn(label: String, onClick: () -> Unit) {
+fun GhostBtn(
+    label: String,
+    tint: Color? = null,
+    onClick: () -> Unit,
+) {
     WatchHotBox(selected = false, onClick = onClick, chrome = WatchChrome.Ghost) { hot ->
+        val color = tint ?: if (hot) WatchPalette.Text else WatchPalette.Muted
         Text(
             label.uppercase(),
-            color = if (hot) WatchPalette.Text else WatchPalette.Muted,
+            color = color,
             letterSpacing = 1.sp,
             fontSize = 11.sp,
         )
@@ -450,12 +493,58 @@ fun GhostBtn(label: String, onClick: () -> Unit) {
 
 @Composable
 fun WatchAction(label: String, onClick: () -> Unit) {
-    GhostBtn(label, onClick)
+    GhostBtn(label, onClick = onClick)
 }
 
 @Composable
 fun BoxChip(label: String, selected: Boolean, onClick: () -> Unit) {
     WatchHotBox(selected = selected, onClick = onClick, chrome = WatchChrome.Chip) { hot ->
         Text(label, color = if (hot) WatchPalette.Text else WatchPalette.Muted, fontSize = 11.sp)
+    }
+}
+
+@Composable
+fun ItemMenuOverlay(viewModel: PortalViewModel) {
+    val menu = viewModel.itemMenu ?: return
+    val item = menu.item
+    val show = menu.show
+    val favourite = when {
+        item != null -> viewModel.isFavourite(item)
+        show != null -> viewModel.isFavouriteShow(show)
+        else -> false
+    }
+    val title = item?.name ?: show?.name ?: "Options"
+    val canRecord = item != null && item.kind == MediaKind.LIVE
+    FocusDialog(onDismiss = { viewModel.closeItemMenu() }) { requester ->
+        Column(
+            Modifier
+                .widthIn(max = 480.dp)
+                .fillMaxWidth()
+                .background(WatchPalette.Panel)
+                .border(1.dp, WatchPalette.Line)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            BrandMark(size = 14.sp)
+            Text(title, color = WatchPalette.Text, style = MaterialTheme.typography.headlineSmall)
+            if (item != null) {
+                SwitchBtn(
+                    if (favourite) "Remove from favourites" else "Add to favourites",
+                    modifier = Modifier.focusRequester(requester),
+                ) { viewModel.toggleFavourite(item) }
+            } else if (show != null) {
+                SwitchBtn(
+                    if (favourite) "Remove from favourites" else "Add to favourites",
+                    modifier = Modifier.focusRequester(requester),
+                ) { viewModel.toggleFavouriteShow(show) }
+            }
+            if (canRecord && item != null) {
+                GhostBtn(if (menu.event != null) "Record programme" else "Record channel") {
+                    viewModel.startRecording(item, menu.event)
+                    viewModel.closeItemMenu()
+                }
+            }
+            GhostBtn("Cancel") { viewModel.closeItemMenu() }
+        }
     }
 }

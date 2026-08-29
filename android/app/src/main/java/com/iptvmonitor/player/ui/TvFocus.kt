@@ -2,6 +2,7 @@ package com.iptvmonitor.player.ui
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -23,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -30,8 +32,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.view.KeyEvent as AndroidKeyEvent
 import kotlin.math.max
 
 val LocalWatchHot = compositionLocalOf { false }
@@ -142,6 +149,7 @@ fun WatchHotBox(
     val interaction = remember { MutableInteractionSource() }
     val sourceFocused by interaction.collectIsFocusedAsState()
     var focused by remember { mutableStateOf(false) }
+    var longPress by remember { mutableStateOf(false) }
     val hot = selected || focused || sourceFocused
     val shape = chrome.shape()
     val fill = chromeFill(chrome, hot, isNow)
@@ -168,12 +176,44 @@ fun WatchHotBox(
                     Modifier
                 },
             )
-            .combinedClickable(
-                interactionSource = interaction,
-                indication = ripple(color = WatchPalette.Up.copy(alpha = 0.22f)),
-                onClick = onClick,
-                onLongClick = onLongClick,
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        interactionSource = interaction,
+                        indication = ripple(color = WatchPalette.Up.copy(alpha = 0.22f)),
+                        onClick = onClick,
+                        onLongClick = onLongClick,
+                    )
+                } else {
+                    Modifier.clickable(
+                        interactionSource = interaction,
+                        indication = ripple(color = WatchPalette.Up.copy(alpha = 0.22f)),
+                        onClick = onClick,
+                    )
+                },
             )
+            .onPreviewKeyEvent { ev ->
+                val code = ev.nativeKeyEvent.keyCode
+                val ok = code == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+                    code == AndroidKeyEvent.KEYCODE_ENTER ||
+                    code == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
+                    code == AndroidKeyEvent.KEYCODE_BUTTON_A
+                if (!ok) return@onPreviewKeyEvent false
+                when {
+                    ev.type == KeyEventType.KeyDown && ev.nativeKeyEvent.repeatCount == 0 -> {
+                        longPress = false
+                    }
+                    ev.type == KeyEventType.KeyDown &&
+                        ev.nativeKeyEvent.repeatCount > 0 &&
+                        onLongClick != null &&
+                        !longPress -> {
+                        longPress = true
+                        onLongClick()
+                    }
+                    ev.type == KeyEventType.KeyUp && !longPress -> onClick()
+                }
+                true
+            }
             .padding(contentPadding ?: chrome.pad()),
         contentAlignment = contentAlignment,
     ) {
@@ -235,3 +275,17 @@ private fun chromeStroke(chrome: WatchChrome, hot: Boolean, selected: Boolean, i
             else -> WatchPalette.Line
         }
     }
+
+@Composable
+fun Modifier.laneBack(viewModel: PortalViewModel, whenLane: ShellLane): Modifier {
+    val focus = LocalFocusManager.current
+    return this.onPreviewKeyEvent { ev ->
+        if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        if (ev.nativeKeyEvent.keyCode != AndroidKeyEvent.KEYCODE_DPAD_LEFT) return@onPreviewKeyEvent false
+        if (viewModel.shellLane != whenLane) return@onPreviewKeyEvent false
+        if (!focus.moveFocus(FocusDirection.Left)) {
+            viewModel.popLane()
+        }
+        true
+    }
+}

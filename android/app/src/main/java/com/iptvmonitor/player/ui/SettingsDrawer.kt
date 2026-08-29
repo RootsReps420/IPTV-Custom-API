@@ -3,7 +3,6 @@ package com.iptvmonitor.player.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,8 +38,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.iptvmonitor.player.BuildConfig
 import com.iptvmonitor.player.data.PlaylistKind
 import com.iptvmonitor.player.data.STREAM_USER_AGENT
@@ -51,28 +48,19 @@ import com.iptvmonitor.player.player.BufferProfile
 fun SettingsDrawer(viewModel: PortalViewModel) {
     val rev = viewModel.settingsRev
     val prefs = viewModel.prefs()
-    Dialog(
-        onDismissRequest = { viewModel.popSettings() },
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            dismissOnClickOutside = false,
-            dismissOnBackPress = false,
-        ),
-    ) {
-        BackHandler { viewModel.popSettings() }
-        Box(Modifier.fillMaxSize().background(WatchPalette.Bg.copy(alpha = 0.45f))) {
-            Column(
-                Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight()
-                    .widthIn(min = 380.dp, max = 520.dp)
-                    .fillMaxWidth(0.42f)
-                    .background(WatchPalette.Panel.copy(alpha = 0.97f))
-                    .border(1.dp, WatchPalette.Line)
-                    .focusGroup()
-                    .verticalScroll(rememberScrollState())
-                    .padding(bottom = 28.dp),
-            ) {
+    BackHandler { viewModel.popSettings() }
+    Box(Modifier.fillMaxSize().background(WatchPalette.Bg.copy(alpha = 0.55f))) {
+        Column(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .widthIn(min = 380.dp, max = 520.dp)
+                .fillMaxWidth(0.42f)
+                .background(WatchPalette.Panel)
+                .border(1.dp, WatchPalette.Line)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 28.dp),
+        ) {
                 when (viewModel.settingsPage) {
                     SettingsPage.ROOT -> RootPage(viewModel)
                     SettingsPage.GENERAL -> GeneralPage(viewModel, prefs)
@@ -90,7 +78,6 @@ fun SettingsDrawer(viewModel: PortalViewModel) {
                     SettingsPage.OTHER -> OtherPage(viewModel, prefs)
                     SettingsPage.ABOUT -> AboutPage()
                 }
-            }
         }
     }
 }
@@ -289,8 +276,14 @@ private fun PlaylistDetailPage(viewModel: PortalViewModel, prefs: com.iptvmonito
         viewModel.openSettingsPage(SettingsPage.GROUPS)
     }
     DrawerHeader("Update options")
-    DrawerRow("Update interval, hours", subtitle = prefs.playlistUpdateHours.toString()) {
-        viewModel.setPref { it.playlistUpdateHours = cycleHours(it.playlistUpdateHours) }
+    DrawerRow("Update interval, hours", subtitle = hourLabel(prefs.playlistUpdateHours)) {
+        viewModel.openChoice(
+            "Update interval, hours",
+            HOUR_CHOICES,
+            prefs.playlistUpdateHours.toString(),
+        ) { key ->
+            viewModel.setPref { it.playlistUpdateHours = key.toInt() }
+        }
     }
     DrawerRow("Update on app start", toggle = prefs.playlistUpdateOnStart) {
         viewModel.setPref { it.playlistUpdateOnStart = !it.playlistUpdateOnStart }
@@ -306,8 +299,8 @@ private fun PlaylistDetailPage(viewModel: PortalViewModel, prefs: com.iptvmonito
 @Composable
 private fun GroupsPage(viewModel: PortalViewModel) {
     DrawerTitle("Manage groups")
-    DrawerRow("Show all groups") { viewModel.setAllGroupsHidden(false) }
-    DrawerRow("Hide all groups") { viewModel.setAllGroupsHidden(true) }
+    DrawerRow("Deselect all") { viewModel.setAllGroupsHidden(true) }
+    DrawerRow("Select all") { viewModel.setAllGroupsHidden(false) }
     DrawerRow(
         "Show newly added groups",
         subtitle = "Hidden groups stay hidden after a sync.",
@@ -353,15 +346,27 @@ private fun groupToggles(
 private fun EpgPage(viewModel: PortalViewModel, prefs: com.iptvmonitor.player.data.AppSettings) {
     DrawerTitle("EPG")
     DrawerRow("EPG sources") { viewModel.openSettingsPage(SettingsPage.EPG_SOURCES) }
-    DrawerRow("Past days to keep EPG", subtitle = prefs.epgPastDays.toString()) {
-        viewModel.setPref { it.epgPastDays = cycleDays(it.epgPastDays) }
+    DrawerRow("Past days to keep EPG", subtitle = "${prefs.epgPastDays} day${if (prefs.epgPastDays == 1) "" else "s"}") {
+        viewModel.openChoice(
+            "Past days to keep EPG",
+            DAY_CHOICES,
+            prefs.epgPastDays.toString(),
+        ) { key ->
+            viewModel.setPref { it.epgPastDays = key.toInt() }
+        }
     }
     DrawerRow("Store program descriptions", toggle = prefs.storeEpgDescriptions) {
         viewModel.setPref { it.storeEpgDescriptions = !it.storeEpgDescriptions }
     }
     DrawerHeader("Update options")
-    DrawerRow("Update interval, hours", subtitle = prefs.epgUpdateHours.toString()) {
-        viewModel.setPref { it.epgUpdateHours = cycleHours(it.epgUpdateHours) }
+    DrawerRow("Update interval, hours", subtitle = hourLabel(prefs.epgUpdateHours)) {
+        viewModel.openChoice(
+            "Update interval, hours",
+            HOUR_CHOICES,
+            prefs.epgUpdateHours.toString(),
+        ) { key ->
+            viewModel.setPref { it.epgUpdateHours = key.toInt() }
+        }
     }
     DrawerRow("Update on app start", toggle = prefs.epgUpdateOnStart) {
         viewModel.setPref { it.epgUpdateOnStart = !it.epgUpdateOnStart }
@@ -370,9 +375,15 @@ private fun EpgPage(viewModel: PortalViewModel, prefs: com.iptvmonitor.player.da
         viewModel.setPref { it.epgUpdateOnPlaylistChange = !it.epgUpdateOnPlaylistChange }
     }
     DrawerRow("Update EPG") { viewModel.requestEpgUpdate() }
+    if (viewModel.guideSync.running && viewModel.guideSync.kind == "epg") {
+        DrawerRow("Cancel EPG sync") { viewModel.cancelEpg() }
+        DrawerRow("Restart EPG sync") { viewModel.restartEpg() }
+    } else {
+        DrawerRow("Restart EPG sync") { viewModel.restartEpg() }
+    }
     DrawerRow("Clear EPG") { viewModel.clearEpg() }
     DrawerHeader("Latest update status")
-    DrawerHint(prefs.lastEpgStatus.ifBlank { "EPG has not been updated yet." } + if (viewModel.settingsRev >= 0) "" else "")
+    DrawerHint(prefs.lastEpgStatus.ifBlank { "EPG has not been updated yet." })
 }
 
 @Composable
@@ -415,31 +426,43 @@ private fun AppearancePage(viewModel: PortalViewModel, prefs: com.iptvmonitor.pl
 private fun PlaybackPage(viewModel: PortalViewModel, prefs: com.iptvmonitor.player.data.AppSettings) {
     DrawerTitle("Playback")
     DrawerRow("Buffer size", subtitle = viewModel.bufferProfile.label) {
-        val next = BufferProfile.entries.let { it[(it.indexOf(viewModel.bufferProfile) + 1) % it.size] }
-        viewModel.applyBufferProfile(next)
+        viewModel.openChoice(
+            "Buffer size",
+            BufferProfile.entries.map { it.key to it.label },
+            viewModel.bufferProfile.key,
+        ) { key ->
+            viewModel.applyBufferProfile(BufferProfile.fromKey(key))
+        }
     }
     DrawerRow("Audio decoder", subtitle = if (prefs.hardwareAudio) "Hardware" else "Software") {
-        viewModel.setPref { it.hardwareAudio = !it.hardwareAudio }
-        viewModel.applyPlaybackPrefs()
+        viewModel.openChoice(
+            "Audio decoder",
+            listOf("hw" to "Hardware", "sw" to "Software"),
+            if (prefs.hardwareAudio) "hw" else "sw",
+        ) { key ->
+            viewModel.setPref { it.hardwareAudio = key == "hw" }
+        }
     }
     DrawerRow("Video decoder", subtitle = if (prefs.hardwareVideo) "Hardware" else "Software") {
-        viewModel.setPref { it.hardwareVideo = !it.hardwareVideo }
-        viewModel.applyPlaybackPrefs()
+        viewModel.openChoice(
+            "Video decoder",
+            listOf("hw" to "Hardware", "sw" to "Software"),
+            if (prefs.hardwareVideo) "hw" else "sw",
+        ) { key ->
+            viewModel.setPref { it.hardwareVideo = key == "hw" }
+        }
     }
     DrawerRow("Auto frame rate (AFR)", subtitle = if (prefs.afrEnabled) "On" else "Off") {
         viewModel.openSettingsPage(SettingsPage.AFR)
     }
     DrawerRow("Select surround audio track by default", toggle = prefs.surroundDefault) {
         viewModel.setPref { it.surroundDefault = !it.surroundDefault }
-        viewModel.applyPlaybackPrefs()
     }
     DrawerRow("Audio passthrough", toggle = prefs.audioPassthrough) {
         viewModel.setPref { it.audioPassthrough = !it.audioPassthrough }
-        viewModel.applyPlaybackPrefs()
     }
     DrawerRow("Tunneled playback", toggle = prefs.tunneledPlayback) {
         viewModel.setPref { it.tunneledPlayback = !it.tunneledPlayback }
-        viewModel.applyPlaybackPrefs()
     }
     DrawerRow("VOD") { viewModel.openSettingsPage(SettingsPage.VOD) }
 }
@@ -452,7 +475,6 @@ private fun AfrPage(viewModel: PortalViewModel, prefs: com.iptvmonitor.player.da
             it.afrEnabled = !it.afrEnabled
             if (it.afrEnabled && !it.afrForTv && !it.afrForVod) it.afrForTv = true
         }
-        viewModel.applyPlaybackPrefs()
     }
     DrawerRow("Enable for TV", toggle = prefs.afrForTv) {
         viewModel.setPref {
@@ -475,8 +497,14 @@ private fun AfrPage(viewModel: PortalViewModel, prefs: com.iptvmonitor.player.da
     DrawerRow("Switch screen resolution", toggle = prefs.afrSwitchResolution) {
         viewModel.setPref { it.afrSwitchResolution = !it.afrSwitchResolution }
     }
-    DrawerRow("Delay before switching, sec", subtitle = prefs.afrDelaySec.toString()) {
-        viewModel.setPref { it.afrDelaySec = (it.afrDelaySec + 1) % 6 }
+    DrawerRow("Delay before switching, sec", subtitle = "${prefs.afrDelaySec}s") {
+        viewModel.openChoice(
+            "Delay before switching",
+            (0..5).map { it.toString() to if (it == 0) "0 sec" else "$it sec" },
+            prefs.afrDelaySec.toString(),
+        ) { key ->
+            viewModel.setPref { it.afrDelaySec = key.toInt() }
+        }
     }
     DrawerHint("Turn on this setting to switch TV refresh rate to match the video frame rate. This can make playback more smooth. Note that not all devices support auto frame rate.")
 }
@@ -529,7 +557,6 @@ private fun OtherPage(viewModel: PortalViewModel, prefs: com.iptvmonitor.player.
     DrawerRow("UDP proxy (address:port)", subtitle = prefs.udpProxy.ifBlank { "Not set" }) {
         viewModel.openTextPrompt("UDP proxy", prefs.udpProxy, "192.168.1.10:4022") { value ->
             viewModel.setPref { it.udpProxy = value }
-            viewModel.applyPlaybackPrefs()
         }
     }
     DrawerRow("Back up data") {
@@ -542,8 +569,8 @@ private fun OtherPage(viewModel: PortalViewModel, prefs: com.iptvmonitor.player.
 @Composable
 private fun AboutPage() {
     DrawerTitle("About")
-    DrawerRow("Portal Player", subtitle = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})") {}
-    DrawerHint("RootsIPTV Watch layout on Shield / Android TV. Streams go straight to your portal.")
+    DrawerRow("ROOTSIPTV", subtitle = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})") {}
+    DrawerHint("RootsIPTV layout on Shield / Android TV. Streams go straight to your portal.")
 }
 
 @Composable
@@ -593,6 +620,46 @@ fun SettingsTextPrompt(viewModel: PortalViewModel) {
     }
 }
 
+@Composable
+fun SettingsChoicePrompt(viewModel: PortalViewModel) {
+    val prompt = viewModel.choicePrompt ?: return
+    BackHandler { viewModel.closeChoice() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(WatchPalette.Bg.copy(alpha = 0.72f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .widthIn(max = 480.dp)
+                .fillMaxWidth()
+                .background(WatchPalette.Panel)
+                .border(1.dp, WatchPalette.Line)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                prompt.title,
+                color = WatchPalette.Text,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            prompt.options.forEach { (key, label) ->
+                DrawerRow(
+                    title = label,
+                    toggle = key == prompt.selectedKey,
+                    onClick = {
+                        prompt.onPick(key)
+                        viewModel.closeChoice()
+                    },
+                )
+            }
+            GhostBtn("Cancel") { viewModel.closeChoice() }
+        }
+    }
+}
+
 private fun persistGroups(viewModel: PortalViewModel) {
     val playlist = viewModel.settingsPlaylist ?: viewModel.groupEditor ?: return
     viewModel.saveHiddenGroups(
@@ -618,13 +685,15 @@ private fun playlistCounts(viewModel: PortalViewModel, item: SavedPlaylist): Str
     return if (item.kind == PlaylistKind.XTREAM) "Xtream" else "M3U"
 }
 
-private fun cycleHours(value: Int): Int = when (value) {
-    1 -> 2
-    2 -> 4
-    4 -> 6
-    6 -> 12
-    12 -> 24
-    else -> 1
+private val HOUR_CHOICES = listOf(1, 2, 4, 6, 8, 12, 24).map { key ->
+    key.toString() to hourLabel(key)
 }
 
-private fun cycleDays(value: Int): Int = if (value >= 7) 1 else value + 1
+private val DAY_CHOICES = (1..7).map { key ->
+    key.toString() to if (key == 1) "1 day" else "$key days"
+}
+
+private fun hourLabel(hours: Int): String = when (hours) {
+    1 -> "1 hour"
+    else -> "$hours hours"
+}

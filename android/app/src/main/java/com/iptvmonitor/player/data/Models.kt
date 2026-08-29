@@ -30,8 +30,13 @@ data class SavedPlaylist(
     val hiddenSeriesCategories: List<String> = emptyList(),
     val lastPlaylistSyncAt: Long = 0L,
     val lastEpgSyncAt: Long = 0L,
+    val lastLiveCount: Int = 0,
+    val lastEpgCount: Int = 0,
     val updateIntervalHours: Int = 4,
     val updateOnStart: Boolean = true,
+    val favouriteLiveIds: List<String> = emptyList(),
+    val favouriteMovieIds: List<String> = emptyList(),
+    val favouriteShowIds: List<String> = emptyList(),
 )
 
 data class Category(
@@ -47,6 +52,7 @@ data class CatalogItem(
     val playbackUrl: String,
     val kind: MediaKind,
     val tvgId: String = "",
+    val tvgName: String = "",
     val plot: String = "",
     val extension: String = "ts",
     val sourcePlaylistId: String = "",

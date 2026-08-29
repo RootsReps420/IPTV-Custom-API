@@ -92,6 +92,7 @@ class LiveSession(
     private var audioCodec = ""
     private var audioChannels = 0
     private var frameRate = 0f
+    private var applySeq = 0
 
     private val tick = object : Runnable {
         override fun run() {
@@ -210,18 +211,20 @@ class LiveSession(
         val rebuild = next.profile != config.profile ||
             next.hardwareVideo != config.hardwareVideo ||
             next.hardwareAudio != config.hardwareAudio ||
-            next.passthrough != config.passthrough ||
-            next.tunneled != config.tunneled ||
             next.userAgent != config.userAgent ||
             next.udpProxy != config.udpProxy
         val url = currentUrl
         val live = isLive
         config = next
-        if (rebuild) {
+        if (!rebuild) {
+            applyTrackPrefs(next)
+            return
+        }
+        val seq = ++applySeq
+        main.post {
+            if (released || seq != applySeq) return@post
             replacePlayer()
             if (url.isNotBlank()) play(url, live)
-        } else {
-            applyTrackPrefs(next)
         }
     }
 
@@ -316,20 +319,30 @@ class LiveSession(
         val builder = trackSelector.buildUponParameters()
             .setTunnelingEnabled(cfg.tunneled)
         when {
-            cfg.passthrough || cfg.surroundDefault -> builder.setPreferredAudioMimeTypes(
-                MimeTypes.AUDIO_E_AC3,
-                MimeTypes.AUDIO_AC3,
-                MimeTypes.AUDIO_DTS,
-                MimeTypes.AUDIO_TRUEHD,
-                MimeTypes.AUDIO_AAC,
-            )
+            cfg.passthrough -> {
+                builder.setPreferredAudioMimeTypes(
+                    MimeTypes.AUDIO_E_AC3,
+                    MimeTypes.AUDIO_AC3,
+                    MimeTypes.AUDIO_DTS,
+                    MimeTypes.AUDIO_TRUEHD,
+                    MimeTypes.AUDIO_AAC,
+                )
+                builder.setMaxAudioChannelCount(Int.MAX_VALUE)
+            }
+            cfg.surroundDefault -> {
+                builder.setPreferredAudioMimeTypes(
+                    MimeTypes.AUDIO_E_AC3,
+                    MimeTypes.AUDIO_AC3,
+                    MimeTypes.AUDIO_DTS,
+                    MimeTypes.AUDIO_TRUEHD,
+                    MimeTypes.AUDIO_AAC,
+                )
+                builder.setMaxAudioChannelCount(8)
+            }
             else -> {
                 builder.setPreferredAudioMimeTypes(MimeTypes.AUDIO_AAC, MimeTypes.AUDIO_MPEG)
                 builder.setMaxAudioChannelCount(2)
             }
-        }
-        if (cfg.surroundDefault && !cfg.passthrough) {
-            builder.setMaxAudioChannelCount(8)
         }
         trackSelector.parameters = builder.build()
     }

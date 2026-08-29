@@ -77,6 +77,7 @@ object M3uParser {
                 playbackUrl = line,
                 kind = kind,
                 tvgId = meta["tvg-id"].orEmpty(),
+                tvgName = meta["tvg-name"].orEmpty(),
             )
             when (kind) {
                 MediaKind.LIVE -> live += item
