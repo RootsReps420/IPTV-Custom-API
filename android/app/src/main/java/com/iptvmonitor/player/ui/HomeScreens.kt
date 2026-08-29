@@ -1,6 +1,5 @@
 package com.iptvmonitor.player.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -31,31 +30,28 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptvmonitor.player.data.Category
 import com.iptvmonitor.player.data.PlaylistKind
 import com.iptvmonitor.player.data.SavedPlaylist
-import com.iptvmonitor.player.player.BufferProfile
 
 @Composable
 fun HomeScreen(viewModel: PortalViewModel) {
-    var editor by remember { mutableStateOf<SavedPlaylist?>(null) }
-    var creating by remember { mutableStateOf(false) }
-
     WatchBackdrop {
         HubScaffold {
             WatchPanel {
                 Text("ROOTSIPTV", color = WatchPalette.Up, style = MaterialTheme.typography.labelLarge)
                 Text("Playlists", style = MaterialTheme.typography.headlineLarge)
                 Text(
-                    "Add an Xtream login and/or an M3U URL. In Settings you can point Live at the M3U and Movies at Xtream.",
+                    "Add an Xtream login and/or an M3U URL. Settings is the panel on the right — Playlists, EPG, and Playback live there.",
                     color = WatchPalette.Muted,
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SwitchBtn("Add playlist") { creating = true }
+                    SwitchBtn("Add playlist") { viewModel.startAddPlaylist() }
                     SwitchBtn("Settings") { viewModel.openSettings() }
                 }
                 if (viewModel.loading) {
@@ -78,97 +74,18 @@ fun HomeScreen(viewModel: PortalViewModel) {
                         onSyncList = { viewModel.syncPlaylist(item) },
                         onSyncEpg = { viewModel.syncEpg(item) },
                         onGroups = { viewModel.openGroupEditor(item) },
-                        onEdit = { editor = item },
+                        onEdit = { viewModel.startEditPlaylist(item) },
                         onDelete = { viewModel.deletePlaylist(item.id) },
                     )
                 }
             }
         }
     }
-
-    if (creating || editor != null) {
-        PlaylistEditorOverlay(
-            initial = editor,
-            onDismiss = {
-                creating = false
-                editor = null
-            },
-            onSave = {
-                viewModel.savePlaylist(it)
-                creating = false
-                editor = null
-            },
-        )
-    }
-
-    viewModel.groupEditor?.let { playlist ->
-        GroupEditorOverlay(
-            viewModel = viewModel,
-            playlist = playlist,
-            onDismiss = { viewModel.closeGroupEditor() },
-        )
-    }
 }
 
 @Composable
 fun SettingsScreen(viewModel: PortalViewModel) {
-    WatchBackdrop {
-        HubScaffold {
-            WatchPanel {
-                Text("ROOTSIPTV", color = WatchPalette.Up, style = MaterialTheme.typography.labelLarge)
-                Text("Settings", style = MaterialTheme.typography.headlineLarge)
-                Text(
-                    "Buffer and which playlist supplies Live vs Movies. Same tokens as Watch.",
-                    color = WatchPalette.Muted,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-
-                HubRule()
-                WatchSection(
-                    title = "Live buffer",
-                    note = "Same Small / Medium / Large cushion as Watch. Change it before a channel; 0.97× still eases in if the buffer thins.",
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        BufferProfile.entries.forEach { profile ->
-                            val here = viewModel.bufferProfile == profile
-                            BoxChip(profile.label, here) { viewModel.applyBufferProfile(profile) }
-                        }
-                    }
-                    Text(viewModel.bufferProfile.hint, color = WatchPalette.Muted, style = MaterialTheme.typography.bodySmall)
-                }
-
-                HubRule()
-                WatchSection(
-                    title = "Library sources",
-                    note = "Live can come from an M3U while Movies and Shows come from Xtream.",
-                ) {
-                    SourcePicker("Live source", viewModel.playlists, viewModel.liveSourceId(), viewModel.selectedPlaylist?.id) {
-                        viewModel.setLiveSourceId(it)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    SourcePicker("Movies & shows", viewModel.playlists, viewModel.vodSourceId(), viewModel.selectedPlaylist?.id) {
-                        viewModel.setVodSourceId(it)
-                    }
-                }
-
-                HubRule()
-                WatchSection(title = "Launch") {
-                    WatchListRow(
-                        selected = viewModel.autoOpenLast,
-                        onClick = { viewModel.applyAutoOpenLast(!viewModel.autoOpenLast) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            if (viewModel.autoOpenLast) "Open last library on launch" else "Start on the playlist list",
-                            color = watchInk(WatchPalette.Text),
-                        )
-                    }
-                }
-
-                SwitchBtn("Back") { viewModel.backFromSettings() }
-            }
-        }
-    }
+    SettingsDrawer(viewModel)
 }
 
 @Composable
@@ -299,7 +216,7 @@ private fun SourcePicker(
 }
 
 @Composable
-private fun PlaylistEditorOverlay(
+fun PlaylistEditorOverlay(
     initial: SavedPlaylist?,
     onDismiss: () -> Unit,
     onSave: (SavedPlaylist) -> Unit,
@@ -322,14 +239,7 @@ private fun PlaylistEditorOverlay(
         focusedContainerColor = WatchPalette.Panel2,
         unfocusedContainerColor = WatchPalette.Panel2,
     )
-    BackHandler(onBack = onDismiss)
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(WatchPalette.Bg.copy(alpha = 0.82f))
-            .padding(24.dp),
-        contentAlignment = Alignment.Center,
-    ) {
+    FocusDialog(onDismiss = onDismiss) { requester ->
         Column(
             Modifier
                 .widthIn(max = 560.dp)
@@ -347,7 +257,11 @@ private fun PlaylistEditorOverlay(
                 style = MaterialTheme.typography.headlineMedium,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SwitchBtn("Xtream", selected = kind == PlaylistKind.XTREAM) { kind = PlaylistKind.XTREAM }
+                SwitchBtn(
+                    "Xtream",
+                    selected = kind == PlaylistKind.XTREAM,
+                    modifier = Modifier.focusRequester(requester),
+                ) { kind = PlaylistKind.XTREAM }
                 SwitchBtn("M3U", selected = kind == PlaylistKind.M3U) { kind = PlaylistKind.M3U }
             }
             OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true, colors = colors, modifier = Modifier.fillMaxWidth())
@@ -384,6 +298,8 @@ private fun PlaylistEditorOverlay(
                             hiddenSeriesCategories = initial?.hiddenSeriesCategories.orEmpty(),
                             lastPlaylistSyncAt = initial?.lastPlaylistSyncAt ?: 0L,
                             lastEpgSyncAt = initial?.lastEpgSyncAt ?: 0L,
+                            updateIntervalHours = initial?.updateIntervalHours ?: 4,
+                            updateOnStart = initial?.updateOnStart ?: true,
                         ),
                     )
                 }
@@ -394,28 +310,12 @@ private fun PlaylistEditorOverlay(
 }
 
 @Composable
-private fun GroupEditorOverlay(
+fun GroupEditorOverlay(
     viewModel: PortalViewModel,
     playlist: SavedPlaylist,
     onDismiss: () -> Unit,
 ) {
-    var hiddenLive by remember(playlist.id, viewModel.groupEditorLive) {
-        mutableStateOf(playlist.hiddenLiveCategories.toSet())
-    }
-    var hiddenMovies by remember(playlist.id, viewModel.groupEditorMovies) {
-        mutableStateOf(playlist.hiddenMovieCategories.toSet())
-    }
-    var hiddenShows by remember(playlist.id, viewModel.groupEditorShows) {
-        mutableStateOf(playlist.hiddenSeriesCategories.toSet())
-    }
-    BackHandler(onBack = onDismiss)
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(WatchPalette.Bg.copy(alpha = 0.82f))
-            .padding(24.dp),
-        contentAlignment = Alignment.Center,
-    ) {
+    FocusDialog(onDismiss = onDismiss) { requester ->
         Column(
             Modifier
                 .widthIn(max = 640.dp)
@@ -429,7 +329,7 @@ private fun GroupEditorOverlay(
             Text("ROOTSIPTV", color = WatchPalette.Up, style = MaterialTheme.typography.labelLarge)
             Text("Channel groups", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "Green groups are shown. Select one to hide it (US packs, etc.).",
+                "Changes save as you click. Green groups are shown.",
                 color = WatchPalette.Muted,
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -437,25 +337,42 @@ private fun GroupEditorOverlay(
                 CircularProgressIndicator(color = WatchPalette.Up, modifier = Modifier.align(Alignment.CenterHorizontally))
             } else {
                 LazyColumn(
-                    Modifier.heightIn(max = 480.dp).fillMaxWidth(),
+                    Modifier.heightIn(max = 480.dp).fillMaxWidth().focusRequester(requester),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    groupSection("Live", viewModel.groupEditorLive, hiddenLive) { hiddenLive = it }
-                    groupSection("Movies", viewModel.groupEditorMovies, hiddenMovies) { hiddenMovies = it }
-                    groupSection("Shows", viewModel.groupEditorShows, hiddenShows) { hiddenShows = it }
+                    groupSection("Live", viewModel.groupEditorLive, viewModel.hiddenLiveDraft) {
+                        viewModel.hiddenLiveDraft = it
+                        viewModel.saveHiddenGroups(
+                            playlist,
+                            it.toList(),
+                            viewModel.hiddenMovieDraft.toList(),
+                            viewModel.hiddenShowDraft.toList(),
+                            close = false,
+                        )
+                    }
+                    groupSection("Movies", viewModel.groupEditorMovies, viewModel.hiddenMovieDraft) {
+                        viewModel.hiddenMovieDraft = it
+                        viewModel.saveHiddenGroups(
+                            playlist,
+                            viewModel.hiddenLiveDraft.toList(),
+                            it.toList(),
+                            viewModel.hiddenShowDraft.toList(),
+                            close = false,
+                        )
+                    }
+                    groupSection("Shows", viewModel.groupEditorShows, viewModel.hiddenShowDraft) {
+                        viewModel.hiddenShowDraft = it
+                        viewModel.saveHiddenGroups(
+                            playlist,
+                            viewModel.hiddenLiveDraft.toList(),
+                            viewModel.hiddenMovieDraft.toList(),
+                            it.toList(),
+                            close = false,
+                        )
+                    }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SwitchBtn("Save") {
-                    viewModel.saveHiddenGroups(
-                        playlist,
-                        hiddenLive.toList(),
-                        hiddenMovies.toList(),
-                        hiddenShows.toList(),
-                    )
-                }
-                GhostBtn("Cancel") { onDismiss() }
-            }
+            GhostBtn("Done") { onDismiss() }
         }
     }
 }
@@ -497,10 +414,17 @@ private fun syncAge(ms: Long): String {
 }
 
 @Composable
-fun SwitchBtn(label: String, selected: Boolean = false, danger: Boolean = false, onClick: () -> Unit) {
+fun SwitchBtn(
+    label: String,
+    selected: Boolean = false,
+    danger: Boolean = false,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     WatchHotBox(
         selected = selected,
         onClick = onClick,
+        modifier = modifier,
         chrome = if (danger) WatchChrome.Danger else WatchChrome.Accent,
     ) {
         Text(

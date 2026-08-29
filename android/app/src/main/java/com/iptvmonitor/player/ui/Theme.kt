@@ -11,7 +11,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-/** Watch (styles.css :root) */
+/** Watch (styles.css :root) + TiviMate-like Roboto (platform SansSerif). */
 object WatchPalette {
     val Bg = Color(0xFF07090D)
     val Panel = Color(0xFF10141C)
@@ -27,15 +27,10 @@ object WatchPalette {
     val Stage = Color(0xFF080A0F)
     val LiveRed = Color(0xFFC81E1E)
     val NowLine = Color(0xFF3D5368)
-    /** rgba(125, 255, 195, 0.10) — switch-btn hover */
     val Hover10 = Color(0x1A7DFFC3)
-    /** rgba(125, 255, 195, 0.12) — item/rail hover */
     val Hover12 = Color(0x1F7DFFC3)
-    /** rgba(125, 255, 195, 0.16) — category hover */
     val Hover16 = Color(0x297DFFC3)
-    /** rgba(125, 255, 195, 0.22) — category mark on hover */
     val Hover22 = Color(0x387DFFC3)
-    /** rgba(125, 255, 195, 0.04) — EPG row is-here */
     val Hover04 = Color(0x0A7DFFC3)
     val Selected = Hover12
 }
@@ -53,61 +48,63 @@ val PortalDarkColors: ColorScheme = darkColorScheme(
     error = WatchPalette.Down,
 )
 
+private val TvSans = FontFamily.SansSerif
+
 private val WatchTypography = Typography(
     headlineLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.ExtraBold,
+        fontFamily = TvSans,
+        fontWeight = FontWeight.Bold,
         fontSize = 28.sp,
         color = WatchPalette.Text,
     ),
     headlineMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.ExtraBold,
+        fontFamily = TvSans,
+        fontWeight = FontWeight.Bold,
         fontSize = 22.sp,
         color = WatchPalette.Text,
     ),
     headlineSmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.ExtraBold,
+        fontFamily = TvSans,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 18.sp,
         color = WatchPalette.Text,
     ),
     titleMedium = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        fontFamily = TvSans,
         fontWeight = FontWeight.Medium,
-        fontSize = 15.sp,
+        fontSize = 16.sp,
         color = WatchPalette.Text,
     ),
     bodyLarge = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        fontFamily = TvSans,
+        fontWeight = FontWeight.Normal,
+        fontSize = 15.sp,
+        color = WatchPalette.Text,
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = TvSans,
         fontWeight = FontWeight.Normal,
         fontSize = 14.sp,
         color = WatchPalette.Text,
     ),
-    bodyMedium = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.Normal,
-        fontSize = 13.sp,
-        color = WatchPalette.Text,
-    ),
     bodySmall = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        fontFamily = TvSans,
         fontWeight = FontWeight.Normal,
-        fontSize = 11.sp,
+        fontSize = 12.sp,
         color = WatchPalette.Muted,
     ),
     labelLarge = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        fontFamily = TvSans,
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
-        letterSpacing = 1.2.sp,
+        letterSpacing = 0.8.sp,
         color = WatchPalette.Muted,
     ),
     labelSmall = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        fontFamily = TvSans,
         fontWeight = FontWeight.Normal,
-        fontSize = 10.sp,
-        letterSpacing = 1.sp,
+        fontSize = 11.sp,
+        letterSpacing = 0.4.sp,
         color = WatchPalette.Muted,
     ),
 )

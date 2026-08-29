@@ -2,6 +2,7 @@ package com.iptvmonitor.player.ui
 
 import android.app.Activity
 import android.view.WindowManager
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,10 +19,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
@@ -43,33 +46,145 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean) {
         onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
     WatchBackdrop {
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide = maxWidth >= 840.dp || viewModel.isTelevision
-        if (wide) {
-            Row(Modifier.fillMaxSize()) {
-                WatchRail(viewModel, Modifier.width(210.dp).fillMaxHeight(), compact = false)
-                CategoryPane(viewModel, Modifier.width(248.dp).fillMaxHeight())
-                ChannelPane(viewModel, Modifier.weight(1.15f).fillMaxHeight())
-                PreviewPane(viewModel, showPlayer, Modifier.weight(0.92f).fillMaxHeight())
+        Column(Modifier.fillMaxSize()) {
+            if (viewModel.prefs().showSyncBar || viewModel.settingsRev >= 0) {
+                if (viewModel.prefs().showSyncBar) {
+                    SyncStatusBar(viewModel)
+                }
             }
-        } else {
-            Column(Modifier.fillMaxSize()) {
-                WatchRail(viewModel, Modifier.fillMaxWidth(), compact = true)
-                ChannelPane(viewModel, Modifier.weight(1f).fillMaxWidth())
-            }
-        }
-        if (viewModel.loading) {
-            Box(
-                Modifier.fillMaxSize().background(WatchPalette.Bg.copy(alpha = 0.72f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = WatchPalette.Up)
-                    Text(viewModel.loadingLabel, color = WatchPalette.Muted, modifier = Modifier.padding(top = 12.dp))
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val wide = maxWidth >= 840.dp || viewModel.isTelevision
+                val lane = viewModel.shellLane
+                val railW by animateDpAsState(
+                    targetValue = when {
+                        !wide -> 0.dp
+                        lane == ShellLane.RAIL -> 210.dp
+                        else -> 72.dp
+                    },
+                    label = "rail",
+                )
+                val catW by animateDpAsState(
+                    targetValue = when {
+                        !wide -> 0.dp
+                        lane == ShellLane.RAIL -> 248.dp
+                        lane == ShellLane.GROUPS -> 300.dp
+                        else -> 64.dp
+                    },
+                    label = "cats",
+                )
+                if (wide) {
+                    Row(Modifier.fillMaxSize()) {
+                        WatchRail(
+                            viewModel,
+                            Modifier.width(railW).fillMaxHeight(),
+                            compact = lane != ShellLane.RAIL,
+                        )
+                        CategoryPane(
+                            viewModel,
+                            Modifier.width(catW).fillMaxHeight(),
+                            compact = lane == ShellLane.CHANNELS,
+                        )
+                        ChannelPane(viewModel, Modifier.weight(1.2f).fillMaxHeight())
+                        PreviewPane(
+                            viewModel,
+                            showPlayer,
+                            Modifier.weight(if (lane == ShellLane.CHANNELS) 0.62f else 0.92f).fillMaxHeight(),
+                        )
+                    }
+                } else {
+                    Column(Modifier.fillMaxSize()) {
+                        WatchRail(viewModel, Modifier.fillMaxWidth(), compact = true)
+                        ChannelPane(viewModel, Modifier.weight(1f).fillMaxWidth())
+                    }
+                }
+                if (viewModel.loading) {
+                    Box(
+                        Modifier.fillMaxSize().background(WatchPalette.Bg.copy(alpha = 0.72f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = WatchPalette.Up)
+                            Text(
+                                viewModel.loadingLabel,
+                                color = WatchPalette.Muted,
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+fun SyncStatusBar(viewModel: PortalViewModel) {
+    val sync = viewModel.guideSync
+    val live = viewModel.liveSource ?: viewModel.selectedPlaylist
+    val listAge = live?.lastPlaylistSyncAt ?: 0L
+    val epgAge = live?.lastEpgSyncAt ?: 0L
+    val idle = buildString {
+        append(viewModel.catalog.live.size)
+        append(" channels")
+        val epgCh = viewModel.catalog.epgByChannel.size
+        if (epgCh > 0) {
+            append(" · ")
+            append(epgCh)
+            append(" EPG")
+        }
+        if (listAge > 0L) {
+            append(" · list ")
+            append(ageLabel(listAge))
+        }
+        if (epgAge > 0L) {
+            append(" · EPG ")
+            append(ageLabel(epgAge))
+        }
+        viewModel.recordingTitle?.let {
+            append(" · REC ")
+            append(it)
+        }
+    }
+    val line = if (sync.running) {
+        val eta = sync.etaSeconds?.let { formatEta(it) }
+        listOf(sync.label, sync.detail, eta).filter { !it.isNullOrBlank() }.joinToString(" · ")
+    } else {
+        viewModel.prefs().lastEpgStatus.ifBlank { idle }
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(WatchPalette.Rail)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (sync.running) sync.label else "Guide",
+                color = WatchPalette.Up,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                line,
+                color = WatchPalette.Text,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp).weight(1f, fill = false),
+            )
+        }
+        if (sync.running) {
+            LinearProgressIndicator(
+                progress = { if (sync.total > 0) sync.fraction else 0.35f },
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(3.dp),
+                color = WatchPalette.Up,
+                trackColor = WatchPalette.Line,
+            )
+        }
     }
 }
 
@@ -82,20 +197,20 @@ fun WatchRail(viewModel: PortalViewModel, modifier: Modifier, compact: Boolean) 
         BrowseTab.SEARCH to "Search",
     )
     if (compact) {
-        Row(
-            modifier.background(WatchPalette.Rail).padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier.background(WatchPalette.Rail).padding(vertical = 10.dp, horizontal = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             tabs.forEach { (tab, label) ->
-                RailBtn(label, viewModel.tab == tab, fill = false) {
-                    viewModel.tab = tab
-                    viewModel.seriesDetail = null
+                RailBtn(label.take(2), viewModel.tab == tab) {
+                    viewModel.selectTab(tab)
                 }
             }
             Spacer(Modifier.weight(1f))
-            RailBtn("Playlists", selected = false, fill = false) { viewModel.openHome() }
-            RailBtn("Settings", selected = false, fill = false) { viewModel.openSettings() }
+            RailBtn("PL", selected = false) { viewModel.openHome() }
+            RailBtn("EPG", selected = false) { viewModel.requestEpgUpdate() }
+            RailBtn("SET", selected = false) { viewModel.openSettings() }
         }
         return
     }
@@ -111,43 +226,25 @@ fun WatchRail(viewModel: PortalViewModel, modifier: Modifier, compact: Boolean) 
         )
         tabs.forEach { (tab, label) ->
             RailBtn(label, viewModel.tab == tab) {
-                viewModel.tab = tab
-                viewModel.categoryId = viewModel.currentCategories().firstOrNull()?.id
-                viewModel.seriesDetail = null
+                viewModel.selectTab(tab)
             }
         }
         Spacer(Modifier.height(8.dp))
         Text(
             viewModel.libraryCaption(),
             color = WatchPalette.Muted,
-            fontSize = 10.sp,
+            fontSize = 12.sp,
             modifier = Modifier.padding(horizontal = 10.dp),
         )
-        Text(
-            buildString {
-                append(viewModel.catalog.live.size)
-                append(" live")
-                if (viewModel.epgLoading) append(" · EPG…")
-                else if (viewModel.catalog.epgByChannel.isNotEmpty()) {
-                    append(" · ")
-                    append(viewModel.epgHorizonDays())
-                    append("d EPG")
-                }
-            },
-            color = WatchPalette.Text,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-        )
+        Spacer(Modifier.weight(1f))
         RailBtn("Playlists", selected = false) { viewModel.openHome() }
         RailBtn("Sync list", selected = false) {
             viewModel.selectedPlaylist?.let { viewModel.syncPlaylist(it) }
         }
-        RailBtn("Sync EPG", selected = false) {
-            (viewModel.liveSource ?: viewModel.selectedPlaylist)?.let { viewModel.syncEpg(it) }
-        }
+        RailBtn("Sync EPG", selected = false) { viewModel.requestEpgUpdate() }
         RailBtn("Settings", selected = false) { viewModel.openSettings() }
         viewModel.error?.let {
-            Text(it, color = WatchPalette.Down, fontSize = 11.sp, modifier = Modifier.padding(10.dp))
+            Text(it, color = WatchPalette.Down, fontSize = 12.sp, modifier = Modifier.padding(10.dp))
         }
     }
 }
@@ -161,34 +258,36 @@ fun RailBtn(label: String, selected: Boolean, fill: Boolean = true, onClick: () 
         chrome = WatchChrome.Rail,
     ) { hot ->
         Text(
-            label.uppercase(),
+            label.uppercase(Locale.US),
             color = if (hot) WatchPalette.Up else WatchPalette.Muted,
-            fontSize = if (fill) 16.sp else 13.sp,
-            letterSpacing = 1.sp,
+            fontSize = if (fill) 15.sp else 13.sp,
+            letterSpacing = 0.6.sp,
             fontWeight = if (hot) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
         )
     }
 }
 
 @Composable
-fun CategoryPane(viewModel: PortalViewModel, modifier: Modifier) {
+fun CategoryPane(viewModel: PortalViewModel, modifier: Modifier, compact: Boolean = false) {
     val cats = viewModel.currentCategories()
     Column(
-        modifier.background(WatchPalette.Panel).padding(8.dp),
+        modifier.background(WatchPalette.Panel).padding(if (compact) 4.dp else 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (viewModel.tab == BrowseTab.SEARCH) {
-            Text("Search", color = WatchPalette.Muted, modifier = Modifier.padding(8.dp))
+            if (!compact) Text("Search", color = WatchPalette.Muted, modifier = Modifier.padding(8.dp))
             return
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             item {
-                CatRow("All", "ALL", viewModel.categoryId == null) { viewModel.categoryId = null }
+                CatRow("All", "ALL", viewModel.categoryId == null, compact) {
+                    viewModel.selectCategory(null)
+                }
             }
             items(cats, key = { it.id }) { cat: Category ->
-                CatRow(cat.name, catMark(cat.name), viewModel.categoryId == cat.id) {
-                    viewModel.categoryId = cat.id
-                    viewModel.seriesDetail = null
+                CatRow(cat.name, catMark(cat.name), viewModel.categoryId == cat.id, compact) {
+                    viewModel.selectCategory(cat.id)
                 }
             }
         }
@@ -196,7 +295,7 @@ fun CategoryPane(viewModel: PortalViewModel, modifier: Modifier) {
 }
 
 @Composable
-private fun CatRow(name: String, mark: String, selected: Boolean, onClick: () -> Unit) {
+private fun CatRow(name: String, mark: String, selected: Boolean, compact: Boolean, onClick: () -> Unit) {
     WatchListRow(
         selected = selected,
         onClick = onClick,
@@ -214,14 +313,16 @@ private fun CatRow(name: String, mark: String, selected: Boolean, onClick: () ->
             ) {
                 Text(mark, color = if (hot) WatchPalette.Up else WatchPalette.Text, fontSize = 9.sp)
             }
-            Text(
-                name,
-                color = if (hot) WatchPalette.Up else WatchPalette.Muted,
-                fontWeight = if (hot) FontWeight.Bold else FontWeight.Normal,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 14.sp,
-            )
+            if (!compact) {
+                Text(
+                    name,
+                    color = if (hot) WatchPalette.Up else WatchPalette.Muted,
+                    fontWeight = if (hot) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 14.sp,
+                )
+            }
         }
     }
 }
@@ -229,4 +330,20 @@ private fun CatRow(name: String, mark: String, selected: Boolean, onClick: () ->
 fun catMark(name: String): String {
     val letters = name.filter { it.isLetterOrDigit() }.uppercase(Locale.US)
     return letters.take(2).ifBlank { "·" }
+}
+
+private fun ageLabel(ms: Long): String {
+    val min = (System.currentTimeMillis() - ms) / 60_000L
+    return when {
+        min < 1L -> "just now"
+        min < 60L -> "${min}m ago"
+        min < 1_440L -> "${min / 60L}h ago"
+        else -> "${min / 1_440L}d ago"
+    }
+}
+
+private fun formatEta(seconds: Int): String {
+    val m = seconds / 60
+    val s = seconds % 60
+    return if (m <= 0) "ETA ${s}s" else "ETA $m:${s.toString().padStart(2, '0')}"
 }

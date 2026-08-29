@@ -30,6 +30,8 @@ data class SavedPlaylist(
     val hiddenSeriesCategories: List<String> = emptyList(),
     val lastPlaylistSyncAt: Long = 0L,
     val lastEpgSyncAt: Long = 0L,
+    val updateIntervalHours: Int = 4,
+    val updateOnStart: Boolean = true,
 )
 
 data class Category(
@@ -73,6 +75,7 @@ data class EpgEvent(
     val startMs: Long,
     val endMs: Long,
     val channelId: String = "",
+    val plot: String = "",
 ) {
     val isNow: Boolean
         get() {

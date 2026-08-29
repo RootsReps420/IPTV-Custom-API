@@ -4,7 +4,7 @@ Sideloadable IPTV app for Shield, Google TV Streamer, Fire TV, phones, and table
 
 The browse UI matches Watch: left rail (TV / Movies / Shows / Search), groups, channel list, preview player with now/next EPG. Live MPEG-TS uses ExoPlayer with Watch’s reconnect policy and Small / Medium / Large buffer profiles (0.97× if the cushion thins). Video goes **straight to the portal**, not through the VPS.
 
-Current sideload build: **0.5.0** (`versionCode` 5).
+Current sideload build: **0.6.0** (`versionCode` 6).
 
 ## Build
 

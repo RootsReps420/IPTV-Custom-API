@@ -4,43 +4,55 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.UdpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import com.iptvmonitor.player.data.HttpClients
 import com.iptvmonitor.player.data.STREAM_USER_AGENT
 
-/**
- * Watch live policy on ExoPlayer (see watch.js).
- *
- * Reconnect on network/EOF/ended, frozen clock (~4s), stall buffering (4.5s).
- * Never pause to wait for buffer. 0.97× when the cushion thins (thresholds
- * follow the Small/Medium/Large target). Max 6 retries, 700ms delay, reset
- * after 30s of healthy play.
- */
 @UnstableApi
 class LiveSession(
     context: Context,
-    bufferProfile: BufferProfile = BufferProfile.MEDIUM,
+    private var config: PlaybackConfig = PlaybackConfig(),
     private val listener: Listener = Listener {},
 ) {
     fun interface Listener {
         fun onState(state: LiveUiState)
     }
+
+    data class PlaybackConfig(
+        val profile: BufferProfile = BufferProfile.MEDIUM,
+        val hardwareVideo: Boolean = true,
+        val hardwareAudio: Boolean = true,
+        val surroundDefault: Boolean = false,
+        val passthrough: Boolean = false,
+        val tunneled: Boolean = false,
+        val userAgent: String = STREAM_USER_AGENT,
+        val udpProxy: String = "",
+    )
 
     data class LiveUiState(
         val badge: String = "",
@@ -54,42 +66,38 @@ class LiveSession(
         val audioCodec: String = "",
         val audioChannels: Int = 0,
         val aheadSec: Float = 0f,
+        val frameRate: Float = 0f,
     )
 
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
-    private val dataSourceFactory = OkHttpDataSource.Factory(HttpClients.shared)
-        .setUserAgent(STREAM_USER_AGENT)
+    var onVodEnded: (() -> Unit)? = null
+    var onPlayerReplaced: (() -> Unit)? = null
 
-    val player: ExoPlayer = ExoPlayer.Builder(appContext)
-        .setLoadControl(liveLoadControl())
-        .setHandleAudioBecomingNoisy(true)
-        .setWakeMode(C.WAKE_MODE_NETWORK)
-        .build()
-        .also { it.playWhenReady = true }
+    private var trackSelector = DefaultTrackSelector(appContext)
+    var player: ExoPlayer = buildPlayer(config)
+        private set
 
     private var currentUrl: String = ""
     private var isLive: Boolean = false
     private var reconnectTries = 0
     private var reconnectPosted = false
-    private var lastPosition = C.TIME_UNSET
-    private var lastPositionAt = 0L
     private var bufferingSince = 0L
     private var lastHealthyAt = 0L
     private var startedAt = 0L
     private var released = false
-    private var profile: BufferProfile = bufferProfile
     private var videoWidth = 0
     private var videoHeight = 0
     private var videoCodec = ""
     private var audioCodec = ""
     private var audioChannels = 0
+    private var frameRate = 0f
 
     private val tick = object : Runnable {
         override fun run() {
             if (released || !isLive) return
             tickLive()
-            main.postDelayed(this, 200)
+            main.postDelayed(this, 250)
         }
     }
 
@@ -105,6 +113,11 @@ class LiveSession(
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (!isLive && playbackState == Player.STATE_ENDED) {
+                main.post { onVodEnded?.invoke() }
+                publish()
+                return
+            }
             if (!isLive) {
                 publish()
                 return
@@ -121,10 +134,7 @@ class LiveSession(
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (isPlaying) {
-                lastPositionAt = now()
-                lastPosition = player.currentPosition
-            }
+            if (isPlaying) lastHealthyAt = now()
             publish()
         }
 
@@ -143,7 +153,10 @@ class LiveSession(
                     if (!group.isTrackSelected(i)) continue
                     val format = group.getTrackFormat(i)
                     when (group.type) {
-                        C.TRACK_TYPE_VIDEO -> video = prettyCodec(format)
+                        C.TRACK_TYPE_VIDEO -> {
+                            video = prettyCodec(format)
+                            if (format.frameRate > 0f) frameRate = format.frameRate
+                        }
                         C.TRACK_TYPE_AUDIO -> {
                             audio = prettyCodec(format)
                             channels = format.channelCount
@@ -160,15 +173,15 @@ class LiveSession(
 
     init {
         player.addListener(playerListener)
+        applyTrackPrefs(config)
     }
 
     fun play(url: String, live: Boolean) {
-        currentUrl = url
+        val resolved = resolveUrl(url)
+        currentUrl = resolved
         isLive = live
         reconnectTries = 0
         reconnectPosted = false
-        lastPosition = C.TIME_UNSET
-        lastPositionAt = now()
         bufferingSince = 0L
         lastHealthyAt = 0L
         startedAt = now()
@@ -177,11 +190,13 @@ class LiveSession(
         videoCodec = ""
         audioCodec = ""
         audioChannels = 0
+        frameRate = 0f
+        main.removeCallbacks(tick)
+        player.stop()
         player.playWhenReady = true
-        player.setMediaSource(mediaSource(url, live))
+        player.setMediaSource(mediaSource(resolved, live))
         player.prepare()
         player.play()
-        main.removeCallbacks(tick)
         if (live) {
             listener.onState(LiveUiState(badge = "BUFFERING", buffering = true))
             main.post(tick)
@@ -191,8 +206,37 @@ class LiveSession(
         }
     }
 
+    fun applyConfig(next: PlaybackConfig) {
+        val rebuild = next.profile != config.profile ||
+            next.hardwareVideo != config.hardwareVideo ||
+            next.hardwareAudio != config.hardwareAudio ||
+            next.passthrough != config.passthrough ||
+            next.tunneled != config.tunneled ||
+            next.userAgent != config.userAgent ||
+            next.udpProxy != config.udpProxy
+        val url = currentUrl
+        val live = isLive
+        config = next
+        if (rebuild) {
+            replacePlayer()
+            if (url.isNotBlank()) play(url, live)
+        } else {
+            applyTrackPrefs(next)
+        }
+    }
+
     fun applyProfile(next: BufferProfile) {
-        profile = next
+        applyConfig(config.copy(profile = next))
+    }
+
+    fun applyTrackPrefs(surroundDefault: Boolean, passthrough: Boolean, tunneled: Boolean) {
+        applyConfig(
+            config.copy(
+                surroundDefault = surroundDefault,
+                passthrough = passthrough,
+                tunneled = tunneled,
+            ),
+        )
     }
 
     fun retry() {
@@ -202,18 +246,15 @@ class LiveSession(
     }
 
     fun userPause(paused: Boolean) {
-        if (isLive && paused) {
-            // Live: do not pause the HTTP pipe the way Watch avoids video.pause() on stall.
-            return
-        }
+        if (isLive && paused) return
         player.playWhenReady = !paused
     }
 
     fun stop() {
         isLive = false
         main.removeCallbacks(tick)
-        main.removeCallbacksAndMessages(null)
         reconnectPosted = false
+        currentUrl = ""
         player.stop()
         player.clearMediaItems()
         listener.onState(LiveUiState())
@@ -226,74 +267,91 @@ class LiveSession(
         player.release()
     }
 
-    private fun tickLive() {
-        if (released || !isLive) return
-        if (reconnectPosted) return
-
-        if (isLive) {
-            player.playWhenReady = true
-        }
-        if (player.playWhenReady && player.isPlaying &&
-            player.playbackState == Player.STATE_READY
-        ) {
-            val healthyFor = now() - lastHealthyAt
-            if (lastHealthyAt == 0L) lastHealthyAt = now()
-            if (now() - startedAt > 30_000L || healthyFor > 30_000L) {
-                reconnectTries = 0
-            }
-        }
-
-        val aheadMs = bufferedAheadMs()
-        pace(aheadMs)
-
-        if (player.playbackState == Player.STATE_BUFFERING &&
-            !player.playWhenReady
-        ) {
-            player.playWhenReady = true
-        }
-
-        if (bufferingSince > 0L && now() - bufferingSince >= STALL_MS && aheadMs < 1_500) {
-            if (now() - startedAt > 2_500L) {
-                scheduleReconnect()
-                return
-            }
-        }
-
-        val pos = player.currentPosition
-        if (player.playWhenReady && player.playbackState != Player.STATE_IDLE) {
-            if (lastPosition == C.TIME_UNSET || kotlin.math.abs(pos - lastPosition) > 50) {
-                lastPosition = pos
-                lastPositionAt = now()
-            } else if (now() - lastPositionAt >= FROZEN_MS) {
-                if (aheadMs > 1_500 && !player.playWhenReady) {
-                    lastPositionAt = now()
-                } else if (now() - startedAt > 2_000L) {
-                    lastPositionAt = now()
-                    scheduleReconnect()
-                    return
-                }
-            }
-        }
-        publish()
+    private fun replacePlayer() {
+        val old = player
+        old.removeListener(playerListener)
+        old.stop()
+        old.release()
+        trackSelector = DefaultTrackSelector(appContext)
+        player = buildPlayer(config)
+        player.addListener(playerListener)
+        applyTrackPrefs(config)
+        onPlayerReplaced?.invoke()
     }
 
-    private fun pace(aheadMs: Long) {
-        if (!player.playWhenReady || player.playbackState != Player.STATE_READY) return
-        val ahead = aheadMs / 1000f
-        val target = profile.targetSec
-        val low = kotlin.math.min(2.5f, kotlin.math.max(1.2f, target * 0.28f))
-        val recover = kotlin.math.min(target * 0.55f, kotlin.math.max(low + 1.5f, 4f))
-        val rate = player.playbackParameters.speed
-        when {
-            ahead > 0.2f && ahead < low -> {
-                if (kotlin.math.abs(rate - 0.97f) > 0.001f) {
-                    player.playbackParameters = PlaybackParameters(0.97f)
+    private fun buildPlayer(cfg: PlaybackConfig): ExoPlayer {
+        val renderers = DefaultRenderersFactory(appContext)
+            .setEnableDecoderFallback(true)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            .setMediaCodecSelector { mimeType, secure, tunneling ->
+                val all = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, secure, tunneling)
+                val hw = all.filter { !it.softwareOnly }
+                val sw = all.filter { it.softwareOnly }
+                when {
+                    mimeType.startsWith("video") ->
+                        if (cfg.hardwareVideo) hw.ifEmpty { all } else sw.ifEmpty { all }
+                    mimeType.startsWith("audio") ->
+                        if (cfg.hardwareAudio) hw.ifEmpty { all } else sw.ifEmpty { all }
+                    else -> all
                 }
             }
-            ahead >= recover && kotlin.math.abs(rate - 1f) > 0.001f -> {
-                player.playbackParameters = PlaybackParameters(1f)
+        return ExoPlayer.Builder(appContext)
+            .setRenderersFactory(renderers)
+            .setTrackSelector(trackSelector)
+            .setLoadControl(loadControlFor(cfg.profile))
+            .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                true,
+            )
+            .build()
+            .also { it.playWhenReady = true }
+    }
+
+    private fun applyTrackPrefs(cfg: PlaybackConfig) {
+        val builder = trackSelector.buildUponParameters()
+            .setTunnelingEnabled(cfg.tunneled)
+        when {
+            cfg.passthrough || cfg.surroundDefault -> builder.setPreferredAudioMimeTypes(
+                MimeTypes.AUDIO_E_AC3,
+                MimeTypes.AUDIO_AC3,
+                MimeTypes.AUDIO_DTS,
+                MimeTypes.AUDIO_TRUEHD,
+                MimeTypes.AUDIO_AAC,
+            )
+            else -> {
+                builder.setPreferredAudioMimeTypes(MimeTypes.AUDIO_AAC, MimeTypes.AUDIO_MPEG)
+                builder.setMaxAudioChannelCount(2)
             }
         }
+        if (cfg.surroundDefault && !cfg.passthrough) {
+            builder.setMaxAudioChannelCount(8)
+        }
+        trackSelector.parameters = builder.build()
+    }
+
+    private fun tickLive() {
+        if (released || !isLive || reconnectPosted) return
+        player.playWhenReady = true
+        if (player.isPlaying && player.playbackState == Player.STATE_READY) {
+            lastHealthyAt = now()
+            if (now() - startedAt > 30_000L) reconnectTries = 0
+        }
+        val aheadMs = bufferedAheadMs()
+        val stalling = player.playbackState == Player.STATE_BUFFERING &&
+            bufferingSince > 0L &&
+            now() - bufferingSince >= STALL_MS &&
+            aheadMs < 800 &&
+            now() - startedAt > 4_000L
+        if (stalling) {
+            scheduleReconnect()
+            return
+        }
+        publish()
     }
 
     private fun scheduleReconnect() {
@@ -322,8 +380,6 @@ class LiveSession(
             if (released || !isLive || currentUrl.isBlank()) return@postDelayed
             startedAt = now()
             lastHealthyAt = 0L
-            lastPosition = C.TIME_UNSET
-            lastPositionAt = now()
             bufferingSince = 0L
             player.playbackParameters = PlaybackParameters(1f)
             player.setMediaSource(mediaSource(currentUrl, live = true))
@@ -333,15 +389,41 @@ class LiveSession(
         }, RECONNECT_DELAY_MS)
     }
 
-    private fun mediaSource(url: String, @Suppress("UNUSED_PARAMETER") live: Boolean): MediaSource {
+    private fun resolveUrl(url: String): String {
+        val trimmed = url.trim()
+        val proxy = config.udpProxy.trim()
+        if (trimmed.startsWith("udp://", ignoreCase = true) && proxy.isNotBlank()) {
+            val rest = trimmed.removePrefix("udp://").removePrefix("UDP://")
+            val host = if (proxy.contains("://")) proxy.trimEnd('/') else "http://$proxy"
+            return "$host/udp/$rest"
+        }
+        return trimmed
+    }
+
+    private fun mediaSource(url: String, live: Boolean): MediaSource {
         val item = MediaItem.fromUri(url)
         val lower = url.lowercase()
-        return if (lower.contains(".m3u8") || lower.contains("application/vnd.apple")) {
-            HlsMediaSource.Factory(dataSourceFactory)
-                .setAllowChunklessPreparation(true)
-                .createMediaSource(item)
-        } else {
-            ProgressiveMediaSource.Factory(dataSourceFactory, mpegTsExtractors())
+        val okHttp = OkHttpDataSource.Factory(HttpClients.stream)
+            .setUserAgent(config.userAgent.ifBlank { STREAM_USER_AGENT })
+        val http = DefaultDataSource.Factory(appContext, okHttp)
+        val policy = object : DefaultLoadErrorHandlingPolicy() {
+            override fun getMinimumLoadableRetryCount(dataType: Int): Int = 2
+        }
+        return when {
+            lower.startsWith("udp://") -> {
+                val udp = DefaultDataSource.Factory(appContext, DataSource.Factory { UdpDataSource() })
+                ProgressiveMediaSource.Factory(udp, mpegTsExtractors())
+                    .setLoadErrorHandlingPolicy(policy)
+                    .createMediaSource(item)
+            }
+            lower.contains(".m3u8") || lower.contains("application/vnd.apple") -> {
+                HlsMediaSource.Factory(http)
+                    .setAllowChunklessPreparation(true)
+                    .setLoadErrorHandlingPolicy(policy)
+                    .createMediaSource(item)
+            }
+            else -> ProgressiveMediaSource.Factory(http, mpegTsExtractors())
+                .setLoadErrorHandlingPolicy(policy)
                 .createMediaSource(item)
         }
     }
@@ -364,6 +446,7 @@ class LiveSession(
                     audioCodec = audioCodec,
                     audioChannels = audioChannels,
                     aheadSec = ahead,
+                    frameRate = frameRate,
                 ),
             )
             return
@@ -386,6 +469,7 @@ class LiveSession(
                 audioCodec = audioCodec,
                 audioChannels = audioChannels,
                 aheadSec = ahead,
+                frameRate = frameRate,
             ),
         )
     }
@@ -397,6 +481,7 @@ class LiveSession(
         return when {
             text.contains("ec-3") || text.contains("eac3") -> "E-AC-3"
             text.contains("ac-3") || text.contains("ac3") -> "AC-3"
+            text.contains("truehd") || text.contains("mlp") -> "TrueHD"
             text.contains("dts") -> "DTS"
             text.contains("hevc") || text.contains("h265") || text.contains("hvc1") -> "HEVC"
             text.contains("avc") || text.contains("h264") -> "H.264"
@@ -419,21 +504,25 @@ class LiveSession(
     private fun now() = SystemClock.elapsedRealtime()
 
     companion object {
-        private const val FROZEN_MS = 4_000L
-        private const val STALL_MS = 4_500L
-        private const val RECONNECT_DELAY_MS = 700L
+        private const val STALL_MS = 12_000L
+        private const val RECONNECT_DELAY_MS = 900L
         private const val MAX_TRIES = 6
 
-        fun liveLoadControl(): DefaultLoadControl {
+        fun loadControlFor(profile: BufferProfile): DefaultLoadControl {
+            val (min, max, play, rebuf) = when (profile) {
+                BufferProfile.SMALL -> listOf(1_200, 8_000, 350, 600)
+                BufferProfile.MEDIUM -> listOf(2_000, 18_000, 450, 900)
+                BufferProfile.LARGE -> listOf(3_500, 32_000, 700, 1_400)
+            }
             return DefaultLoadControl.Builder()
-                .setBufferDurationsMs(
-                    /* minBufferMs */ 1_500,
-                    /* maxBufferMs */ 12_000,
-                    /* bufferForPlaybackMs */ 400,
-                    /* bufferForPlaybackAfterRebufferMs */ 800,
-                )
+                .setBufferDurationsMs(min, max, play, rebuf)
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
         }
     }
 }
+
+private operator fun <T> List<T>.component1() = this[0]
+private operator fun <T> List<T>.component2() = this[1]
+private operator fun <T> List<T>.component3() = this[2]
+private operator fun <T> List<T>.component4() = this[3]

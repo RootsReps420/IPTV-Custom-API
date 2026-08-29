@@ -1,7 +1,8 @@
 package com.iptvmonitor.player.ui
 
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
@@ -54,6 +55,7 @@ enum class WatchChrome {
     Ghost,
     Accent,
     Danger,
+    Drawer,
     Prog,
     EpgCh,
 }
@@ -61,6 +63,7 @@ enum class WatchChrome {
 private fun WatchChrome.shape(): Shape = when (this) {
     WatchChrome.Item, WatchChrome.Cat, WatchChrome.Prog -> RoundedCornerShape(6.dp)
     WatchChrome.Ghost -> RoundedCornerShape(4.dp)
+    WatchChrome.Drawer -> RoundedCornerShape(10.dp)
     else -> RectangleShape
 }
 
@@ -70,6 +73,7 @@ private fun WatchChrome.pad(): PaddingValues = when (this) {
     WatchChrome.Chip -> PaddingValues(horizontal = 8.dp, vertical = 3.dp)
     WatchChrome.Ghost -> PaddingValues(horizontal = 10.dp, vertical = 8.dp)
     WatchChrome.Accent, WatchChrome.Danger -> PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+    WatchChrome.Drawer -> PaddingValues(horizontal = 16.dp, vertical = 14.dp)
     WatchChrome.Prog -> PaddingValues(horizontal = 8.dp, vertical = 4.dp)
     WatchChrome.EpgCh -> PaddingValues(start = 8.dp, end = 10.dp, top = 6.dp, bottom = 6.dp)
 }
@@ -122,6 +126,7 @@ fun WatchBackdrop(content: @Composable () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WatchHotBox(
     selected: Boolean,
@@ -131,6 +136,7 @@ fun WatchHotBox(
     isNow: Boolean = false,
     contentPadding: PaddingValues? = null,
     contentAlignment: Alignment = Alignment.CenterStart,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable BoxScope.(hot: Boolean) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -162,10 +168,11 @@ fun WatchHotBox(
                     Modifier
                 },
             )
-            .clickable(
+            .combinedClickable(
                 interactionSource = interaction,
                 indication = ripple(color = WatchPalette.Up.copy(alpha = 0.22f)),
                 onClick = onClick,
+                onLongClick = onLongClick,
             )
             .padding(contentPadding ?: chrome.pad()),
         contentAlignment = contentAlignment,
@@ -182,11 +189,13 @@ fun WatchListRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     chrome: WatchChrome = WatchChrome.Item,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     WatchHotBox(
         selected = selected,
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = modifier,
         chrome = chrome,
     ) {
@@ -202,6 +211,7 @@ private fun chromeFill(chrome: WatchChrome, hot: Boolean, isNow: Boolean): Color
     WatchChrome.Ghost -> if (hot) WatchPalette.Panel2 else Color.Transparent
     WatchChrome.Accent -> if (hot) WatchPalette.Hover10 else Color.Transparent
     WatchChrome.Danger -> if (hot) Color(0x1FFF6B6B) else Color.Transparent
+    WatchChrome.Drawer -> if (hot) WatchPalette.Hover12 else Color.Transparent
     WatchChrome.Prog -> when {
         hot -> WatchPalette.Hover12
         isNow -> WatchPalette.Panel2
@@ -218,6 +228,7 @@ private fun chromeStroke(chrome: WatchChrome, hot: Boolean, selected: Boolean, i
         WatchChrome.Ghost -> WatchPalette.Line
         WatchChrome.Accent -> WatchPalette.Up
         WatchChrome.Danger -> WatchPalette.Down
+        WatchChrome.Drawer -> null
         WatchChrome.Prog -> when {
             hot -> WatchPalette.Up
             isNow -> WatchPalette.NowLine

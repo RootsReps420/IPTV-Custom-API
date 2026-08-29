@@ -2,10 +2,16 @@ package com.iptvmonitor.player.data
 
 import okhttp3.Request
 import okio.Buffer
+import java.io.BufferedInputStream
+import java.io.FilterInputStream
 import java.io.InputStream
 import java.util.zip.GZIPInputStream
 
 private const val XMLTV_MAX_BYTES = 80_000_000L
+
+fun interface ByteProgress {
+    fun onBytes(read: Long, total: Long, label: String)
+}
 
 class CatalogRepository {
     fun load(playlist: SavedPlaylist): Catalog {
@@ -33,16 +39,73 @@ class CatalogRepository {
         }
     }
 
-    fun loadEpg(playlist: SavedPlaylist): Map<String, List<EpgEvent>> {
+    fun loadEpg(
+        playlist: SavedPlaylist,
+        extraUrls: List<String> = emptyList(),
+        pastDays: Int = 1,
+        horizonDays: Int = 7,
+        storeDescriptions: Boolean = true,
+        onProgress: ByteProgress? = null,
+    ): Map<String, List<EpgEvent>> {
+        val urls = epgUrls(playlist, extraUrls)
+        if (urls.isEmpty()) {
+            throw XtreamException("No EPG URL. Add one under Settings → EPG sources.")
+        }
+        var merged = emptyMap<String, List<EpgEvent>>()
+        var lastError: Exception? = null
+        var loaded = false
+        urls.forEachIndexed { index, url ->
+            try {
+                onProgress?.onBytes(0, 0, "EPG ${index + 1}/${urls.size}")
+                merged = mergeEpg(
+                    merged,
+                    loadXmltv(url, pastDays, horizonDays, storeDescriptions, onProgress),
+                )
+                loaded = true
+            } catch (exc: Exception) {
+                lastError = exc
+            }
+        }
+        if (!loaded) {
+            throw lastError ?: XtreamException("EPG download failed")
+        }
+        return merged
+    }
+
+    fun epgUrls(playlist: SavedPlaylist, extraUrls: List<String> = emptyList()): List<String> {
+        return buildList {
+            when (playlist.kind) {
+                PlaylistKind.M3U -> {
+                    val epgUrl = playlist.epgUrl.ifBlank { m3uHeaderEpg(playlist.m3uUrl) }
+                    if (epgUrl.isNotBlank()) add(epgUrl)
+                }
+                PlaylistKind.XTREAM -> add(
+                    XtreamClient(playlist.server, playlist.username, playlist.password).xmltvUrl(),
+                )
+            }
+            extraUrls.map { it.trim() }.filter { it.isNotBlank() }.forEach { add(it) }
+        }.distinct()
+    }
+
+    fun epgUrlFor(playlist: SavedPlaylist): String {
         return when (playlist.kind) {
-            PlaylistKind.M3U -> {
-                val epgUrl = playlist.epgUrl.ifBlank { m3uHeaderEpg(playlist.m3uUrl) }
-                if (epgUrl.isBlank()) emptyMap() else loadXmltv(epgUrl)
-            }
-            PlaylistKind.XTREAM -> {
-                val url = XtreamClient(playlist.server, playlist.username, playlist.password).xmltvUrl()
-                loadXmltv(url)
-            }
+            PlaylistKind.M3U -> playlist.epgUrl.ifBlank { m3uHeaderEpg(playlist.m3uUrl) }
+            PlaylistKind.XTREAM -> XtreamClient(playlist.server, playlist.username, playlist.password).xmltvUrl()
+        }
+    }
+
+    private fun mergeEpg(
+        a: Map<String, List<EpgEvent>>,
+        b: Map<String, List<EpgEvent>>,
+    ): Map<String, List<EpgEvent>> {
+        if (a.isEmpty()) return b
+        if (b.isEmpty()) return a
+        val out = a.mapValues { it.value.toMutableList() }.toMutableMap()
+        b.forEach { (key, events) ->
+            out.getOrPut(key) { mutableListOf() }.addAll(events)
+        }
+        return out.mapValues { (_, events) ->
+            events.sortedBy { it.startMs }.distinctBy { it.startMs to it.title }
         }
     }
 
@@ -118,7 +181,11 @@ class CatalogRepository {
         }
         val parsed = M3uParser.parse(body)
         val epgUrl = playlist.epgUrl.ifBlank { parsed.epgUrl }
-        val epg = if (withEpg && epgUrl.isNotBlank()) loadXmltv(epgUrl) else emptyMap()
+        val epg = if (withEpg && epgUrl.isNotBlank()) {
+            loadXmltv(epgUrl, 1, 7, storeDescriptions = true, onProgress = null)
+        } else {
+            emptyMap()
+        }
         return Catalog(
             liveCategories = parsed.liveCategories,
             live = parsed.live,
@@ -142,29 +209,76 @@ class CatalogRepository {
         }.getOrDefault("")
     }
 
-    private fun loadXmltv(url: String): Map<String, List<EpgEvent>> {
-        return runCatching {
-            val request = Request.Builder().url(url).get().build()
-            HttpClients.epg.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return emptyMap()
-                val body = response.body ?: return emptyMap()
-                val length = body.contentLength()
-                if (length > XMLTV_MAX_BYTES) {
-                    throw XtreamException("EPG is larger than 80 MB")
-                }
-                xmltvStream(url, body.byteStream()).use { stream ->
-                    XmltvParser.parse(stream)
-                }
+    private fun loadXmltv(
+        url: String,
+        pastDays: Int,
+        horizonDays: Int,
+        storeDescriptions: Boolean,
+        onProgress: ByteProgress?,
+    ): Map<String, List<EpgEvent>> {
+        val request = Request.Builder().url(url).get().build()
+        HttpClients.epg.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw XtreamException("EPG HTTP ${response.code} from $url")
             }
-        }.getOrDefault(emptyMap())
+            val body = response.body ?: throw XtreamException("EPG was empty")
+            val length = body.contentLength()
+            if (length > XMLTV_MAX_BYTES) {
+                throw XtreamException("EPG is larger than 80 MB")
+            }
+            val counted = CountingInputStream(body.byteStream(), length, "Downloading EPG", onProgress)
+            xmltvStream(url, counted).use { stream ->
+                return XmltvParser.parse(
+                    stream,
+                    horizonDays = horizonDays,
+                    pastDays = pastDays,
+                    storeDescriptions = storeDescriptions,
+                )
+            }
+        }
     }
 
     private fun xmltvStream(url: String, raw: InputStream): InputStream {
+        val buffered = BufferedInputStream(raw)
+        buffered.mark(2)
+        val b1 = buffered.read()
+        val b2 = buffered.read()
+        buffered.reset()
+        val gzip = b1 == 0x1f && b2 == 0x8b
         val lower = url.lowercase()
-        return if (lower.endsWith(".gz") || lower.contains(".xml.gz")) {
-            GZIPInputStream(raw)
-        } else {
-            raw
+        val namedGzip = lower.endsWith(".gz") || lower.contains(".xml.gz")
+        return if (gzip || namedGzip) GZIPInputStream(buffered) else buffered
+    }
+}
+
+private class CountingInputStream(
+    raw: InputStream,
+    private val total: Long,
+    private val label: String,
+    private val onProgress: ByteProgress?,
+) : FilterInputStream(raw) {
+    private var readBytes = 0L
+    private var lastEmit = 0L
+
+    override fun read(): Int {
+        val n = super.read()
+        if (n >= 0) tick(1)
+        return n
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        val n = super.read(b, off, len)
+        if (n > 0) tick(n.toLong())
+        return n
+    }
+
+    private fun tick(n: Long) {
+        readBytes += n
+        if (readBytes - lastEmit < 256_000L && (total <= 0L || readBytes < total)) return
+        lastEmit = readBytes
+        if (readBytes > XMLTV_MAX_BYTES) {
+            throw XtreamException("EPG is larger than 80 MB")
         }
+        onProgress?.onBytes(readBytes, total, label)
     }
 }

@@ -28,12 +28,12 @@ class PlaylistStore(context: Context) {
 
     fun upsert(playlist: SavedPlaylist) {
         val next = list().filterNot { it.id == playlist.id } + playlist
-        prefs.edit().putString(KEY, json.encodeToString(next)).apply()
+        prefs.edit().putString(KEY, json.encodeToString(next)).commit()
     }
 
     fun delete(id: String) {
         val next = list().filterNot { it.id == id }
-        prefs.edit().putString(KEY, json.encodeToString(next)).apply()
+        prefs.edit().putString(KEY, json.encodeToString(next)).commit()
     }
 
     private fun openPrefs(context: Context): SharedPreferences {

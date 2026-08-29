@@ -135,7 +135,12 @@ private fun LiveList(viewModel: PortalViewModel, items: List<CatalogItem>, modif
         itemsIndexed(items, key = { _, item -> item.id + item.playbackUrl }) { index, item ->
             val here = viewModel.playing?.channelId == item.id
             val epg = viewModel.epgFor(item).firstOrNull { it.isNow } ?: viewModel.epgFor(item).firstOrNull()
-            WatchListRow(selected = here, onClick = { viewModel.playItem(item) }, modifier = Modifier.fillMaxWidth()) {
+            WatchListRow(
+                selected = here,
+                onClick = { viewModel.playItem(item) },
+                onLongClick = { viewModel.startRecording(item) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 val hot = watchHot()
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -313,21 +318,29 @@ fun PreviewPane(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modif
                 .aspectRatio(16f / 9f)
                 .border(1.dp, WatchPalette.Line)
                 .background(WatchPalette.Bg)
-                .clickable(enabled = target != null) { viewModel.showCinema(true) },
+                .clickable(enabled = target != null) {
+                    if (target != null) viewModel.playItem(
+                        viewModel.catalog.live.firstOrNull { it.id == target.channelId }
+                            ?: viewModel.catalog.movies.firstOrNull { it.id == target.channelId }
+                            ?: return@clickable,
+                    )
+                },
         ) {
             if (showPlayer && target != null) {
-                AndroidView(
-                    factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            player = viewModel.session.player
-                            useController = false
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                        }
-                    },
-                    update = { playerView -> playerView.player = viewModel.session.player },
-                    modifier = Modifier.fillMaxSize(),
-                )
+                androidx.compose.runtime.key(viewModel.playerGen) {
+                    AndroidView(
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                player = viewModel.session.player
+                                useController = false
+                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                            }
+                        },
+                        update = { playerView -> playerView.player = viewModel.session.player },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             } else if (target != null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Playing full screen", color = WatchPalette.Muted)

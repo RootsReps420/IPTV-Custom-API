@@ -137,7 +137,8 @@ fun LiveEpgGuide(viewModel: PortalViewModel, items: List<CatalogItem>, modifier:
                     scroll = scroll,
                     showNeedle = showNeedle,
                     needleX = needleX.dp,
-                    onPlay = { viewModel.playItem(item) },
+                    onPlay = { event -> viewModel.playItem(item, event) },
+                    onRecord = { event -> viewModel.startRecording(item, event) },
                 )
             }
         }
@@ -155,7 +156,8 @@ private fun EpgChannelRow(
     scroll: androidx.compose.foundation.ScrollState,
     showNeedle: Boolean,
     needleX: Dp,
-    onPlay: () -> Unit,
+    onPlay: (EpgEvent?) -> Unit,
+    onRecord: (EpgEvent?) -> Unit,
 ) {
     val dayEnd = dayStart + DayMs
     val slots = events.filter { it.endMs > dayStart && it.startMs < dayEnd }
@@ -176,7 +178,8 @@ private fun EpgChannelRow(
     ) {
         WatchHotBox(
             selected = selected,
-            onClick = onPlay,
+            onClick = { onPlay(null) },
+            onLongClick = { onRecord(null) },
             chrome = WatchChrome.EpgCh,
             modifier = Modifier
                 .width(ChannelCol)
@@ -230,7 +233,8 @@ private fun EpgChannelRow(
                         val widthHours = (rightHours - leftHours).coerceAtLeast(0.25f)
                         WatchHotBox(
                             selected = selected && event.isNow,
-                            onClick = onPlay,
+                            onClick = { onPlay(event) },
+                            onLongClick = { onRecord(event) },
                             chrome = WatchChrome.Prog,
                             isNow = event.isNow,
                             modifier = Modifier

@@ -162,6 +162,16 @@ class XtreamClient(
         return events.sortedBy { it.startMs }
     }
 
+    fun timeshiftUrl(streamId: String, startMs: Long, endMs: Long): String {
+        val durationMin = ((endMs - startMs) / 60_000L).toInt().coerceIn(1, 12 * 60)
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd:HH-mm", java.util.Locale.US)
+        fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        val start = fmt.format(java.util.Date(startMs))
+        val user = enc(username)
+        val pass = enc(password)
+        return "$base/timeshift/$user/$pass/$durationMin/$start/$streamId.ts"
+    }
+
     fun mediaUrl(kind: String, id: String, ext: String): String {
         val user = enc(username)
         val pass = enc(password)
