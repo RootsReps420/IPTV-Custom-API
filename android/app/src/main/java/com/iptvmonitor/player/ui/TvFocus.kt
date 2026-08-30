@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
@@ -192,55 +191,53 @@ fun WatchHotBox(
                 if (onLongClick != null) {
                     Modifier.combinedClickable(
                         interactionSource = interaction,
-                        indication = ripple(color = WatchPalette.Up.copy(alpha = 0.22f)),
-                        onClick = onClick,
+                        indication = null,
+                        onClick = { if (!gated) onClick() },
                         onLongClick = onLongClick,
                     )
                 } else {
                     Modifier.clickable(
                         interactionSource = interaction,
-                        indication = ripple(color = WatchPalette.Up.copy(alpha = 0.22f)),
-                        onClick = onClick,
+                        indication = null,
+                        onClick = { if (!gated) onClick() },
                     )
                 },
             )
             .then(if (allowFocus && shellFocus) Modifier else Modifier.focusProperties { canFocus = false })
             .then(
                 if (allowFocus && shellFocus) {
-                    Modifier.onPreviewKeyEvent { ev ->
-                        if (!focused && !sourceFocused) return@onPreviewKeyEvent false
-                        val code = ev.nativeKeyEvent.keyCode
-                        val ok = code == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
-                            code == AndroidKeyEvent.KEYCODE_ENTER ||
-                            code == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
-                            code == AndroidKeyEvent.KEYCODE_BUTTON_A
-                        // D-pad directions must reach Compose focus search.
-                        if (!ok) return@onPreviewKeyEvent false
-                        when {
-                            ev.type == KeyEventType.KeyDown && ev.nativeKeyEvent.repeatCount == 0 -> {
+                    Modifier
+                        .onPreviewKeyEvent { ev ->
+                            if (!isOkKey(ev.nativeKeyEvent.keyCode)) return@onPreviewKeyEvent false
+                            if (gated) {
                                 longPress = false
+                                return@onPreviewKeyEvent true
                             }
-                            ev.type == KeyEventType.KeyDown &&
-                                ev.nativeKeyEvent.repeatCount > 0 &&
-                                onLongClick != null &&
-                                !longPress -> {
-                                longPress = true
-                            }
-                            ev.type == KeyEventType.KeyUp -> {
-                                if (gated) {
+                            val repeats = ev.nativeKeyEvent.repeatCount
+                            when {
+                                ev.type == KeyEventType.KeyDown && repeats == 0 -> {
                                     longPress = false
-                                    return@onPreviewKeyEvent true
+                                    false
                                 }
-                                if (longPress && onLongClick != null) {
+                                ev.type == KeyEventType.KeyDown &&
+                                    repeats > 0 &&
+                                    onLongClick != null &&
+                                    !longPress -> {
+                                    longPress = true
                                     onLongClick()
-                                } else if (!longPress) {
-                                    onClick()
+                                    true
                                 }
-                                longPress = false
+                                ev.type == KeyEventType.KeyUp -> {
+                                    if (longPress) {
+                                        longPress = false
+                                    } else {
+                                        onClick()
+                                    }
+                                    true
+                                }
+                                else -> false
                             }
                         }
-                        true
-                    }
                 } else {
                     Modifier
                 },
@@ -275,6 +272,12 @@ fun WatchListRow(
         content()
     }
 }
+
+private fun isOkKey(code: Int): Boolean =
+    code == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+        code == AndroidKeyEvent.KEYCODE_ENTER ||
+        code == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
+        code == AndroidKeyEvent.KEYCODE_BUTTON_A
 
 private fun chromeFill(chrome: WatchChrome, hot: Boolean, isNow: Boolean): Color = when (chrome) {
     WatchChrome.Rail -> if (hot) WatchPalette.Hover12 else Color.Transparent

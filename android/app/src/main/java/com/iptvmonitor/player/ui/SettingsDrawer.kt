@@ -55,7 +55,7 @@ fun SettingsDrawer(viewModel: PortalViewModel) {
     val panel = remember { FocusRequester() }
     BackHandler { viewModel.popSettings() }
     LaunchedEffect(viewModel.settingsPage) {
-        delay(200)
+        delay(80)
         if (viewModel.choicePrompt != null || viewModel.textPrompt != null) return@LaunchedEffect
         runCatching { panel.requestFocus() }
     }
@@ -472,9 +472,13 @@ private fun PlaybackPage(viewModel: PortalViewModel, prefs: com.iptvmonitor.play
             viewModel.setPref { it.hardwareVideo = key == "hw" }
         }
     }
-    DrawerRow("Auto frame rate (AFR)", subtitle = if (prefs.afrEnabled) "On" else "Off") {
-        viewModel.openSettingsPage(SettingsPage.AFR)
+    DrawerRow("Auto frame rate (AFR)", toggle = prefs.afrEnabled) {
+        viewModel.setPref {
+            it.afrEnabled = !it.afrEnabled
+            if (it.afrEnabled && !it.afrForTv && !it.afrForVod) it.afrForTv = true
+        }
     }
+    DrawerRow("AFR options") { viewModel.openSettingsPage(SettingsPage.AFR) }
     DrawerRow("Select surround audio track by default", toggle = prefs.surroundDefault) {
         viewModel.setPref { it.surroundDefault = !it.surroundDefault }
     }

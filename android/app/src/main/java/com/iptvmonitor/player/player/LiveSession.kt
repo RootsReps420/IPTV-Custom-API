@@ -212,7 +212,9 @@ class LiveSession(
             next.hardwareVideo != config.hardwareVideo ||
             next.hardwareAudio != config.hardwareAudio ||
             next.userAgent != config.userAgent ||
-            next.udpProxy != config.udpProxy
+            next.udpProxy != config.udpProxy ||
+            next.tunneled != config.tunneled ||
+            next.passthrough != config.passthrough
         val url = currentUrl
         val live = isLive
         config = next

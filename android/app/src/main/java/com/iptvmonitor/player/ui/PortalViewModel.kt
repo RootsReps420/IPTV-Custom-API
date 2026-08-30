@@ -209,7 +209,7 @@ class PortalViewModel(application: Application) : AndroidViewModel(application) 
             showPlaylistEditor ||
             groupEditor != null
 
-    fun armInputGate(ms: Long = 450L) {
+    fun armInputGate(ms: Long = 220L) {
         inputGated = true
         gateJob?.cancel()
         gateJob = viewModelScope.launch {

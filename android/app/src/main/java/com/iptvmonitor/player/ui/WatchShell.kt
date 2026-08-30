@@ -2,7 +2,6 @@ package com.iptvmonitor.player.ui
 
 import android.app.Activity
 import android.view.WindowManager
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,11 +19,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
@@ -56,34 +53,13 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
             }
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val wide = maxWidth >= 840.dp || viewModel.isTelevision
-                val lane = viewModel.shellLane
-                val railW by animateDpAsState(
-                    targetValue = when {
-                        !wide -> 0.dp
-                        lane == ShellLane.RAIL -> 210.dp
-                        else -> 72.dp
-                    },
-                    label = "rail",
-                )
-                val catW by animateDpAsState(
-                    targetValue = when {
-                        !wide -> 0.dp
-                        lane == ShellLane.RAIL -> 248.dp
-                        lane == ShellLane.GROUPS -> 300.dp
-                        else -> 64.dp
-                    },
-                    label = "cats",
-                )
-                val previewH by animateDpAsState(
-                    targetValue = when {
-                        !wide -> 0.dp
-                        !showPlayer -> 0.dp
-                        lane == ShellLane.CHANNELS && viewModel.tab == BrowseTab.LIVE -> 128.dp
-                        lane == ShellLane.CHANNELS -> 148.dp
-                        else -> 196.dp
-                    },
-                    label = "preview",
-                )
+                val railW = if (wide) 168.dp else 0.dp
+                val catW = if (wide) 252.dp else 0.dp
+                val previewH = when {
+                    !wide || !showPlayer -> 0.dp
+                    viewModel.tab == BrowseTab.LIVE -> 120.dp
+                    else -> 148.dp
+                }
                 if (wide) {
                     Row(Modifier.fillMaxSize()) {
                         WatchRail(
@@ -92,7 +68,7 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
                                 .width(railW)
                                 .fillMaxHeight()
                                 .onFocusChanged { if (it.hasFocus) viewModel.activateLane(ShellLane.RAIL) },
-                            compact = lane != ShellLane.RAIL,
+                            compact = false,
                         )
                         CategoryPane(
                             viewModel,
@@ -100,7 +76,7 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
                                 .width(catW)
                                 .fillMaxHeight()
                                 .onFocusChanged { if (it.hasFocus) viewModel.activateLane(ShellLane.GROUPS) },
-                            compact = lane == ShellLane.CHANNELS,
+                            compact = false,
                         )
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             if (previewH > 0.dp) {

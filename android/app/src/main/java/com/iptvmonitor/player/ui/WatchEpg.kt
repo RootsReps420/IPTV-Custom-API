@@ -2,6 +2,7 @@ package com.iptvmonitor.player.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,10 +23,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -34,6 +36,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -48,6 +51,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val ChannelCol = 220.dp
 private val HourWidth = 210.dp
@@ -89,41 +93,36 @@ fun LiveEpgGuide(viewModel: PortalViewModel, items: List<CatalogItem>, modifier:
         Text("Nothing in this group.", color = WatchPalette.Muted, modifier = modifier)
         return
     }
-    val days = viewModel.epgHorizonDays()
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
             nowMs = System.currentTimeMillis()
-            delay(1_000)
+            delay(5_000)
         }
     }
-    val dayOffset = viewModel.epgDayOffset
-    val snapKey = if (dayOffset == 0) nowMs / SnapMs else dayOffset.toLong()
-    val winStart = remember(snapKey, dayOffset) { windowStart(nowMs, dayOffset) }
-    val winLen = windowLength(dayOffset)
+    val snapKey = nowMs / SnapMs
+    val winStart = remember(snapKey) { windowStart(nowMs, 0) }
+    val winLen = windowLength(0)
     val winEnd = winStart + winLen
     val gridWidth = HourWidth * (winLen.toFloat() / HourMs)
     val scroll = rememberScrollState()
-    LaunchedEffect(dayOffset, snapKey) { scroll.scrollTo(0) }
+    LaunchedEffect(snapKey) { scroll.scrollTo(0) }
     val showNeedle = nowMs in winStart until winEnd
     val needleX = epgX(nowMs, winStart).coerceIn(0.dp, gridWidth)
     val clock = remember(nowMs) {
         SimpleDateFormat("EEE HH:mm", Locale.getDefault()).format(Date(nowMs))
     }
+    val nowBucket = nowMs / 15_000L
+    val dpadGuide = viewModel.isTelevision
 
     Column(modifier) {
-        Row(
-            Modifier.fillMaxWidth().padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Guide", color = WatchPalette.Up, fontSize = 12.sp)
-            for (day in 0 until days) {
-                BoxChip(dayChipLabel(day), viewModel.epgDayOffset == day) { viewModel.epgDayOffset = day }
-            }
-            if (viewModel.epgLoading) {
-                Text("Syncing EPG…", color = WatchPalette.Muted, fontSize = 11.sp)
-            }
+        if (viewModel.epgLoading) {
+            Text(
+                "Syncing EPG…",
+                color = WatchPalette.Muted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
         }
         Row(
             Modifier
@@ -142,7 +141,7 @@ fun LiveEpgGuide(viewModel: PortalViewModel, items: List<CatalogItem>, modifier:
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .horizontalScroll(scroll)
+                    .horizontalScroll(scroll, enabled = !dpadGuide)
                     .clipToBounds()
                     .focusProperties { canFocus = false },
             ) {
@@ -180,7 +179,8 @@ fun LiveEpgGuide(viewModel: PortalViewModel, items: List<CatalogItem>, modifier:
                     scroll = scroll,
                     showNeedle = showNeedle,
                     needleX = needleX,
-                    nowMs = nowMs,
+                    nowBucket = nowBucket,
+                    scrollEnabled = !dpadGuide,
                     onPlay = { event -> viewModel.playItem(item, event) },
                     onRecord = { event -> viewModel.openItemMenu(item = item, event = event) },
                 )
@@ -201,15 +201,20 @@ private fun EpgChannelRow(
     scroll: androidx.compose.foundation.ScrollState,
     showNeedle: Boolean,
     needleX: Dp,
-    nowMs: Long,
+    nowBucket: Long,
+    scrollEnabled: Boolean,
     onPlay: (EpgEvent?) -> Unit,
     onRecord: (EpgEvent?) -> Unit,
 ) {
     val slots = events.filter { it.endMs > winStart && it.startMs < winEnd }
+    val nowMs = nowBucket * 15_000L
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
     Row(
         Modifier
             .fillMaxWidth()
             .height(RowHeight)
+            .focusGroup()
             .background(if (selected) WatchPalette.Hover04 else WatchPalette.Stage)
             .drawBehind {
                 drawLine(
@@ -266,9 +271,8 @@ private fun EpgChannelRow(
             Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .horizontalScroll(scroll)
-                .clipToBounds()
-                .focusProperties { canFocus = false },
+                .horizontalScroll(scroll, enabled = scrollEnabled)
+                .clipToBounds(),
         ) {
             Box(
                 Modifier
@@ -278,12 +282,19 @@ private fun EpgChannelRow(
                     .drawEpgTicks(),
             ) {
                 if (slots.isEmpty()) {
-                    Text(
-                        "No programme info",
-                        color = WatchPalette.Muted,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(start = 12.dp).align(Alignment.CenterStart),
-                    )
+                    WatchHotBox(
+                        selected = false,
+                        onClick = { onPlay(null) },
+                        onLongClick = { onRecord(null) },
+                        chrome = WatchChrome.Prog,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .padding(start = 8.dp, top = 6.dp, bottom = 6.dp, end = 8.dp)
+                            .width(180.dp)
+                            .fillMaxHeight(),
+                    ) {
+                        Text("No programme info", color = WatchPalette.Muted, fontSize = 11.sp)
+                    }
                 } else {
                     slots.forEach { event ->
                         val left = epgX(event.startMs, winStart).coerceAtLeast(0.dp)
@@ -302,7 +313,15 @@ private fun EpgChannelRow(
                             onLongClick = { onRecord(event) },
                             chrome = WatchChrome.Prog,
                             isNow = onNow,
+                            onFocused = {
+                                val x = with(density) { left.toPx() }.toInt()
+                                val target = (x - 48).coerceAtLeast(0)
+                                if (kotlin.math.abs(scroll.value - target) > 24) {
+                                    scope.launch { scroll.scrollTo(target) }
+                                }
+                            },
                             modifier = Modifier
+                                .align(Alignment.CenterStart)
                                 .offset(x = left + 1.dp)
                                 .width(width)
                                 .fillMaxHeight()
@@ -330,7 +349,8 @@ private fun EpgChannelRow(
                 if (showNeedle) {
                     Box(
                         Modifier
-                            .offset(x = needleX - 1.dp)
+                            .align(Alignment.TopStart)
+                            .padding(start = (needleX - 1.dp).coerceAtLeast(0.dp))
                             .width(2.dp)
                             .fillMaxHeight()
                             .zIndex(2f)
@@ -391,15 +411,6 @@ private fun WatchEpgCaret() {
 
 private fun formatTick(ms: Long): String {
     return SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
-}
-
-private fun dayChipLabel(offset: Int): String {
-    val fmt = SimpleDateFormat("EEE d", Locale.getDefault())
-    return when (offset) {
-        0 -> "Today"
-        1 -> "Tomorrow"
-        else -> fmt.format(Date(startOfLocalDay() + offset * DayMs))
-    }
 }
 
 fun upcomingEpg(events: List<EpgEvent>, limit: Int = 8): List<EpgEvent> {

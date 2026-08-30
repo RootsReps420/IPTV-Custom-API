@@ -97,6 +97,28 @@ function canPlayNativeHls() {
   return Boolean(video.canPlayType && video.canPlayType("application/vnd.apple.mpegurl"));
 }
 
+function isAppleHlsClient() {
+  const ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/i.test(ua)) {
+    return true;
+  }
+  if (navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints) > 1) {
+    return true;
+  }
+  return /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Android/i.test(ua);
+}
+
+function canPlayHevc() {
+  try {
+    return Boolean(
+      video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') ||
+        video.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function preferNativeHls() {
   // Safari, all iOS browsers (Chrome/Firefox/Edge on iPhone are WebKit),
   // and any engine without MPEG-TS MSE: use HLS instead of mpegts.js.
@@ -112,15 +134,13 @@ function liveExtensions() {
 }
 
 function vodExtensions(preferred) {
-  const ext = String(preferred || "mp4").replace(/^\./, "") || "mp4";
-  if (canPlayNativeHls()) {
-    // Safari / iOS cannot play the Chrome fMP4 remux. Native HLS only.
+  void preferred;
+  // Only Safari / iOS. Chrome's canPlayType("hls") is a maybe on some builds
+  // and must not send VOD down the HLS wrapper (that path never starts).
+  if (isAppleHlsClient()) {
     return ["m3u8"];
   }
-  if (preferNativeHls()) {
-    return [...new Set(["m3u8", ext, "mp4", "mkv"])];
-  }
-  return [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
+  return ["mp4"];
 }
 
 function meUrl() {
@@ -962,22 +982,37 @@ function vodClock() {
   return Math.max(0, vodSeekOffset + (Number(video.currentTime) || 0));
 }
 
+function vodBufferedEnd() {
+  if (!video.buffered || !video.buffered.length) {
+    return 0;
+  }
+  try {
+    return video.buffered.end(video.buffered.length - 1);
+  } catch {
+    return 0;
+  }
+}
+
 function vodCanNativeSeek(at) {
-  // Remuxed fMP4 has no real timeline (Chrome thinks it is ~20s). Seeking
-  // inside that buffer desyncs audio/video. Only HLS has a real index.
-  if (!hls) {
-    return false;
-  }
   const local = at - vodSeekOffset;
-  if (!Number.isFinite(local) || local < 0 || !video.seekable || !video.seekable.length) {
+  if (!Number.isFinite(local) || local < 0) {
     return false;
   }
-  for (let i = 0; i < video.seekable.length; i += 1) {
-    if (local >= video.seekable.start(i) && local <= video.seekable.end(i)) {
-      return true;
+  if (hls && video.seekable && video.seekable.length) {
+    for (let i = 0; i < video.seekable.length; i += 1) {
+      if (local >= video.seekable.start(i) && local <= video.seekable.end(i)) {
+        return true;
+      }
     }
   }
-  return false;
+  const end = vodBufferedEnd();
+  return end > 0.5 && local <= Math.max(0, end - 0.35);
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function isTouchIos() {
@@ -1158,7 +1193,7 @@ async function seekVod(seconds) {
       paintVodSeek(target);
       return;
     } catch {
-      /* restart below */
+      /* remux restart below */
     }
   }
   const item = state.playingItem;
@@ -1167,10 +1202,17 @@ async function seekVod(seconds) {
     return;
   }
   vodSeeking = true;
-  vodSeekOffset = target;
-  paintVodSeek(target);
   showWatchSpinner(true);
   const gen = ++playGen;
+  // Abort the current Magnum pull before asking for a new one.
+  destroyPlayers();
+  vodSeekOffset = target;
+  paintVodSeek(target);
+  await waitMs(400);
+  if (gen !== playGen) {
+    vodSeeking = false;
+    return;
+  }
   const streamId = String(item.stream_id || item.id || "");
   const ext = String(item.container_extension || "mp4").replace(/^\./, "");
   try {
@@ -1179,6 +1221,7 @@ async function seekVod(seconds) {
     if (gen !== playGen) {
       return;
     }
+    vodSeekOffset = 0;
     showBanner(error.message, "bad");
   } finally {
     if (gen === playGen) {
@@ -1733,9 +1776,7 @@ function mediaUrl(kind, streamId, ext) {
     if (src && src !== "m3u8" && src !== "mpd") {
       params.set("src", src);
     }
-    if (vodRuntimeSec && vodRuntimeSec > 1) {
-      params.set("dur", String(Math.floor(vodRuntimeSec)));
-    }
+    params.set("vc", canPlayHevc() ? "h264,hevc" : "h264");
     if (vodSeekOffset >= 1) {
       params.set("start", String(Math.floor(vodSeekOffset)));
     }
@@ -2881,6 +2922,19 @@ video.addEventListener("waiting", () => {
 video.addEventListener("stalled", () => {
   if (playing && state.playingLiveId && !liveHold) {
     beginStallRecover();
+  }
+});
+video.addEventListener("error", () => {
+  if (vodSeeking || state.playingLiveId || !playing) {
+    return;
+  }
+  if (!video.currentSrc) {
+    return;
+  }
+  const code = video.error && video.error.code;
+  if (code === 4) {
+    vodSeekOffset = 0;
+    showBanner("Playback failed. Click the title again to restart.", "bad");
   }
 });
 
