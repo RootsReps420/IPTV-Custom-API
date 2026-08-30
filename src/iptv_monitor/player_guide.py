@@ -20,6 +20,11 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from iptv_monitor.config import resolve_paths
+from iptv_monitor.player_live_groups import (
+    live_group_enabled,
+    norm_live_group,
+    set_live_group_enabled,
+)
 
 logger = logging.getLogger("iptv_monitor.player_guide")
 
@@ -166,9 +171,7 @@ _M3U_DROP_UNPREFIXED = frozenset(
 
 
 def _norm_m3u_group(name: str) -> str:
-    text = (name or "").replace("\u00a0", " ")
-    text = re.sub(r"[^\w|+/]+", " ", text, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", text).strip().lower()
+    return norm_live_group(name)
 
 
 def is_wanted_m3u_live_group(name: str) -> bool:
@@ -867,10 +870,7 @@ class WatchGuide:
         with_epg = 0
         for cat in self.data.categories:
             name = str(cat.get("category_name") or "")
-            if self.live_from_m3u():
-                if not is_wanted_m3u_live_group(name):
-                    continue
-            elif not is_wanted_live_group(name):
+            if not self.live_group_visible(name):
                 continue
             groups += 1
             rows = self.data.by_cat.get(str(cat.get("category_id") or ""), [])
@@ -921,6 +921,76 @@ class WatchGuide:
     def live_from_m3u(self) -> bool:
         return self.data.source == "m3u"
 
+    def live_group_default(self, name: str) -> bool:
+        """Built-in Magnum / Xtream filter, before any /owner override."""
+        text = (name or "").strip()
+        if self.live_from_m3u():
+            return is_wanted_m3u_live_group(text)
+        return is_wanted_live_group(text)
+
+    def live_group_visible(self, name: str) -> bool:
+        """Whether /watch Live TV should list this Magnum (or Xtream) group."""
+        text = (name or "").strip()
+        if not text:
+            return False
+        path = resolve_paths(self.root).watch_live_groups
+        return live_group_enabled(path, text, self.live_group_default(text))
+
+    def _find_live_category(
+        self, *, name: str = "", category_id: str = ""
+    ) -> dict[str, Any] | None:
+        cid = str(category_id or "").strip()
+        if cid:
+            for row in self.data.categories:
+                if str(row.get("category_id") or "") == cid:
+                    return row
+        wanted = norm_live_group(name)
+        if not wanted:
+            return None
+        for row in self.data.categories:
+            if norm_live_group(str(row.get("category_name") or "")) == wanted:
+                return row
+        return None
+
+    def owner_live_groups(self) -> dict[str, Any]:
+        """Every Magnum group in the cached playlist, with current ON/OFF for /owner."""
+        groups: list[dict[str, Any]] = []
+        for cat in self.data.categories:
+            name = str(cat.get("category_name") or "").strip()
+            if not name:
+                continue
+            cid = str(cat.get("category_id") or "")
+            groups.append(
+                {
+                    "name": name,
+                    "category_id": cid,
+                    "channels": len(self.data.by_cat.get(cid, [])),
+                    "enabled": self.live_group_visible(name),
+                }
+            )
+        groups.sort(key=lambda row: str(row["name"]).lower())
+        on = sum(1 for row in groups if row["enabled"])
+        return {
+            "groups": groups,
+            "on": on,
+            "off": len(groups) - on,
+            "total": len(groups),
+            "source": self.data.source or "m3u",
+        }
+
+    def set_owner_live_group(
+        self, *, name: str = "", category_id: str = "", enabled: bool
+    ) -> dict[str, Any]:
+        """Show or hide one live group on /watch. Writes YAML; next list fetch sees it."""
+        cat = self._find_live_category(name=name, category_id=category_id)
+        if not cat:
+            raise KeyError("Unknown live group")
+        display = str(cat.get("category_name") or "").strip()
+        if not display:
+            raise KeyError("Unknown live group")
+        set_live_group_enabled(resolve_paths(self.root).watch_live_groups, display, enabled)
+        return self.owner_live_groups()
+
     def rewrite_live_playback_host(self, old_dns: str, new_dns: str) -> int:
         """Point cached M3U stream URLs at the new Magnum host until the playlist re-downloads."""
         try:
@@ -966,16 +1036,10 @@ class WatchGuide:
     def live_categories(self) -> list[dict[str, Any]] | None:
         if not self.has_live():
             return None
-        if self.live_from_m3u():
-            return [
-                row
-                for row in self.data.categories
-                if is_wanted_m3u_live_group(str(row.get("category_name") or ""))
-            ]
         return [
             row
             for row in self.data.categories
-            if is_wanted_live_group(str(row.get("category_name") or ""))
+            if self.live_group_visible(str(row.get("category_name") or ""))
         ]
 
     def live_streams(self, category_id: str) -> list[dict[str, Any]] | None:
@@ -995,10 +1059,7 @@ class WatchGuide:
         if not cat:
             return []
         group_name = str(cat.get("category_name") or "")
-        if self.live_from_m3u():
-            if not is_wanted_m3u_live_group(group_name):
-                return []
-        elif not is_wanted_live_group(group_name):
+        if not self.live_group_visible(group_name):
             return []
         rows = self.data.by_cat.get(cid, [])
         return [self.decorate(stream) for stream in rows]
@@ -1269,10 +1330,7 @@ class WatchGuide:
 
         for stream in self.data.streams:
             group = self._group_label(stream, live_names)
-            if self.live_from_m3u():
-                if not is_wanted_m3u_live_group(group):
-                    continue
-            elif group and not is_wanted_live_group(group):
+            if not self.live_group_visible(group):
                 continue
             decorated = self.decorate(stream, guide=False)
             score, why = score_search(

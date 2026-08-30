@@ -44,6 +44,7 @@ header,
 .alerts,
 .playlists,
 .watchers,
+.live-groups,
 .current,
 .pool,
 .events,
@@ -220,6 +221,7 @@ h2 {
 
 .playlists,
 .watchers,
+.live-groups,
 .current,
 .pool,
 .events {
@@ -655,6 +657,113 @@ tr:last-child td {
 
 .sort-btn.is-here {
   background: rgba(125, 255, 195, 0.1);
+}
+
+.live-groups-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.live-groups-toolbar input {
+  appearance: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  padding: 10px 12px;
+  min-width: min(280px, 100%);
+  flex: 1 1 220px;
+}
+
+.live-groups-toolbar input:focus {
+  outline: 1px solid var(--up);
+}
+
+.live-groups-chips {
+  display: flex;
+  gap: 6px;
+}
+
+.live-groups-list {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  max-height: min(70vh, 720px);
+  overflow-y: auto;
+}
+
+.live-group-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid var(--muted);
+  cursor: pointer;
+}
+
+.live-group-row:last-child {
+  border-bottom: 0;
+}
+
+.live-group-row.is-on {
+  border-left-color: var(--up);
+  background: var(--panel);
+}
+
+.live-group-row.is-off {
+  border-left-color: var(--line);
+}
+
+.live-group-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.live-group-name {
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.live-group-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.live-group-toggle {
+  appearance: none;
+  flex-shrink: 0;
+  width: 64px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #1a222e;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.live-group-toggle[aria-checked="true"] {
+  border-color: var(--up);
+  background: rgba(125, 255, 195, 0.16);
+  color: var(--up);
+}
+
+.live-group-toggle.busy,
+.live-group-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .hist-host {
@@ -1951,5 +2060,9 @@ tr.row-down td {
   .cards-grid,
   .event-list li {
     grid-template-columns: 1fr;
+  }
+
+  .live-groups-toolbar input {
+    min-width: 100%;
   }
 }

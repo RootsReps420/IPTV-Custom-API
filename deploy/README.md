@@ -33,6 +33,7 @@ sudo journalctl -u iptv-monitor -n 50 --no-pager
 | `config/urls.yaml` | **No** | Same as playlists |
 | `config/player.yaml` | **No** | Watch portal + M3U. Magnum swaps rewrite `dns`. |
 | `config/watch_users.yaml` | **No** | Watch site hashes |
+| `config/watch_live_groups.yaml` | **No** | /watch Live TV group ON/OFF. Edited from `/owner`. Reloads without a restart. |
 | `state/` | **No** | Failure history, URL history, Watch catalogue cache |
 | Live `/etc/caddy/Caddyfile` | **No** | Do **not** overwrite with `deploy/Caddyfile` without keeping live hashes and hostname |
 
@@ -107,7 +108,7 @@ Typical access:
 | `/` `/history` | Caddy (owner and optional read-only user) | Standby pool / 90-day history |
 | `/key` `/owner` | Caddy **owner only** | Legend, playlists, Switch, Watch kick |
 | `/api/public` `/api/history` | Same as `/` | JSON for those pages |
-| `/api/status` `/api/switch` `/api/switch-back` | Owner only | Full snapshot + failover |
+| `/api/status` `/api/switch` `/api/switch-back` `/api/live-groups` | Owner only | Full snapshot, failover, Watch live-group toggles |
 | `/watch` `/api/watch/*` `/api/player/*` | Watch site cookie (not Caddy) | Player, catalogue, media proxy |
 
 To rotate the owner password, generate a hash the way **this** Caddy build expects (Ubuntu 2.6.2 wants **base64** of the bcrypt string, not a raw `$2a$` line):

@@ -3,7 +3,8 @@
 Open without Caddy: `/watch`, `/api/watch/*`, `/api/player/*`, `/static`
   (Watch still uses the app cookie / site login).
 Caddy `dan` basicauth: `/`, `/owner`, `/history`, `/key`, `/api/public`,
-  `/api/history`, `/api/status`, `/api/switch`, `/api/switch-back`, `/api/kick-watch`
+  `/api/history`, `/api/status`, `/api/switch`, `/api/switch-back`, `/api/kick-watch`,
+  `/api/live-groups`
 Caddy `Steve` (if configured): `/` and `/history` only (`/api/public`, `/api/history`).
   Not `/key`, `/owner`, or owner APIs. Not a /watch user.
 Watch (app cookie): `/watch`, `/api/watch/*`, `/api/player/*` — registered in watch.py
@@ -42,6 +43,12 @@ class KickWatchBody(BaseModel):
     kick: bool = False
 
 
+class LiveGroupBody(BaseModel):
+    name: str = Field(default="", max_length=200)
+    category_id: str = Field(default="", max_length=80)
+    enabled: bool
+
+
 def create_app(monitor: Monitor) -> FastAPI:
     """Build the FastAPI app. Watch routes register first; /static must mount last."""
     app = FastAPI(title="IPTV Portal Monitor", docs_url=None, redoc_url=None)
@@ -71,6 +78,31 @@ def create_app(monitor: Monitor) -> FastAPI:
         if watch is None:
             raise HTTPException(status_code=503, detail="Watch is not running.")
         return await watch.kick_user(body.username)
+
+    @app.get("/api/live-groups")
+    async def live_groups(request: Request) -> dict:
+        """All Magnum live groups with ON/OFF for /watch. Owner-only (Caddy)."""
+        watch = getattr(request.app.state, "watch", None)
+        if watch is None:
+            raise HTTPException(status_code=503, detail="Watch is not running.")
+        return watch.guide.owner_live_groups()
+
+    @app.post("/api/live-groups")
+    async def set_live_group(request: Request, body: LiveGroupBody) -> dict:
+        """Show or hide one live group on /watch immediately (YAML, no restart)."""
+        if not body.name.strip() and not body.category_id.strip():
+            raise HTTPException(status_code=400, detail="Set name or category_id.")
+        watch = getattr(request.app.state, "watch", None)
+        if watch is None:
+            raise HTTPException(status_code=503, detail="Watch is not running.")
+        try:
+            return watch.guide.set_owner_live_group(
+                name=body.name,
+                category_id=body.category_id,
+                enabled=body.enabled,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Unknown live group.") from exc
 
     @app.get("/api/public")
     async def public_status() -> dict:

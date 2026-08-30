@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=48" />
+  <link rel="stylesheet" href="/static/styles.css?v=49" />
 </head>
 <body>
   <div class="grid-bg" aria-hidden="true"></div>
@@ -107,6 +107,23 @@
     </div>
   </section>
 
+  <section class="live-groups" id="live-groups-section" hidden>
+    <div class="section-head">
+      <h2>Watch live groups</h2>
+      <span id="live-groups-count" class="count"></span>
+    </div>
+    <p class="history-note">Every Magnum live group. On is what /watch Live TV shows now. Off stays in the playlist but is hidden. Toggles write immediately — no restart. If /watch is already on Live TV, tap Live again to refresh the list.</p>
+    <div class="live-groups-toolbar">
+      <input type="search" id="live-groups-filter" placeholder="Filter groups…" autocomplete="off" />
+      <div class="live-groups-chips" role="tablist">
+        <button type="button" class="sort-btn is-here" data-groups-view="all">All</button>
+        <button type="button" class="sort-btn" data-groups-view="on">On</button>
+        <button type="button" class="sort-btn" data-groups-view="off">Off</button>
+      </div>
+    </div>
+    <div id="live-groups-list" class="live-groups-list"></div>
+  </section>
+
   <section class="current" id="live-section" hidden>
     <div class="section-head">
       <h2>Current DNS</h2>
@@ -130,6 +147,6 @@
     <ol id="event-list" class="event-list"></ol>
   </section>
 
-  <script src="/static/app.js?v=32"></script>
+  <script src="/static/app.js?v=33"></script>
 </body>
 </html>

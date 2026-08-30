@@ -2,7 +2,7 @@
 #
 # Open (no Caddy login): `/watch` `/api/watch/*` `/api/player/*` `/static/*`
 # /watch login is IN THE APP (cookie), not Caddy.
-# Caddy `dan`: `/` `/history` `/key` `/owner` and owner APIs (switch, kick, status).
+# Caddy `dan`: `/` `/history` `/key` `/owner` and owner APIs (switch, kick, status, live-groups).
 # Caddy `Steve`: `/` and `/history` only (plus `/api/public` `/api/history` those pages need).
 # Steve cannot open `/key`, `/owner`, or switch/kick/status APIs.
 #

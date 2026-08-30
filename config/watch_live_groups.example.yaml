@@ -1,0 +1,5 @@
+# Copy to watch_live_groups.yaml (gitignored).
+# /owner toggles write true/false here. /watch re-reads the file; no restart.
+# Names not listed follow the built-in Magnum filter (current Live TV ON set).
+
+groups: {}
