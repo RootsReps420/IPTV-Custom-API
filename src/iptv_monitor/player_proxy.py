@@ -8,6 +8,7 @@ paths in Caddy.
 VOD is remuxed with ffmpeg to fragmented MP4 for Chrome/Android.
 H.264/HEVC video is copied; older codecs (MPEG-4 ASP / Xvid, MPEG-2, …) are
 transcoded to H.264. Audio is always AAC. Matroska/E-AC3 is otherwise unplayable.
+Skip uses ffmpeg -ss on a new source connection so the browser can jump.
 """
 
 from __future__ import annotations
@@ -203,31 +204,95 @@ def video_codec_from_peek(data: bytes) -> str:
     return ""
 
 
-def _vod_ffmpeg_args(binary: str, *, copy_video: bool, codec: str) -> list[str]:
+def _vod_ffmpeg_args(
+    binary: str,
+    *,
+    copy_video: bool,
+    codec: str,
+    source: str = "pipe:0",
+    start_sec: float = 0.0,
+) -> list[str]:
+    # Copying video after -ss leaves picture on the previous keyframe while
+    # AAC is encoded from the exact skip time — audio runs ahead. Skip instead
+    # does a coarse input seek, then an accurate output seek, and encodes both.
+    seek_fine = 0.0
+    seek_coarse = 0.0
+    if start_sec >= 1.0:
+        copy_video = False
+        seek_fine = min(3.0, start_sec)
+        seek_coarse = max(0.0, start_sec - seek_fine)
     args = [
         binary,
         "-hide_banner",
         "-loglevel",
         "error",
-        "-probesize",
-        "5000000",
-        "-analyzeduration",
-        "5000000",
-        "-fflags",
-        "+genpts",
-        "-i",
-        "pipe:0",
-        "-map",
-        "0:V:0",
-        "-map",
-        "0:a:0?",
     ]
+    if source != "pipe:0":
+        args.extend(
+            [
+                "-user_agent",
+                _STREAM_UA,
+                "-seekable",
+                "1",
+            ]
+        )
+        if source.startswith("https://"):
+            args.extend(["-tls_verify", "0"])
+    if seek_coarse >= 0.05:
+        args.extend(["-ss", f"{seek_coarse:.3f}"])
+    args.extend(
+        [
+            "-probesize",
+            "5000000",
+            "-analyzeduration",
+            "5000000",
+            "-fflags",
+            "+genpts",
+            "-i",
+            source,
+        ]
+    )
+    if seek_fine >= 0.05:
+        args.extend(["-ss", f"{seek_fine:.3f}"])
+    args.extend(
+        [
+            "-map",
+            "0:V:0",
+            "-map",
+            "0:a:0?",
+        ]
+    )
     if copy_video:
         args.extend(["-c:v", "copy"])
         if codec in {"h264"}:
             args.extend(["-tag:v", "avc1"])
         elif codec in {"hevc", "h265"}:
             args.extend(["-tag:v", "hvc1"])
+    elif start_sec >= 1.0:
+        args.extend(
+            [
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-pix_fmt",
+                "yuv420p",
+                "-profile:v",
+                "main",
+                "-crf",
+                "23",
+                "-bf",
+                "0",
+                "-g",
+                "48",
+                "-keyint_min",
+                "48",
+                "-vf",
+                r"scale=-2:min(720\,ih)",
+            ]
+        )
     else:
         args.extend(
             [
@@ -255,12 +320,16 @@ def _vod_ffmpeg_args(binary: str, *, copy_video: bool, codec: str) -> list[str]:
             "aac",
             "-ac",
             "2",
+            "-ar",
+            "48000",
             "-b:a",
-            "192k",
+            "160k",
             "-max_muxing_queue_size",
             "1024",
             "-flush_packets",
             "1",
+            "-avoid_negative_ts",
+            "make_zero",
             "-movflags",
             "frag_keyframe+empty_moov+default_base_moof",
             "-f",
@@ -281,12 +350,28 @@ def _stop_proc(proc: asyncio.subprocess.Process) -> None:
 
 
 async def remux_vod_to_browser_mp4(
-    url: str, on_bytes: Callable[[int], None] | None = None
+    url: str,
+    on_bytes: Callable[[int], None] | None = None,
+    start_sec: float = 0.0,
 ) -> StreamingResponse:
     """Fragmented MP4 for Chrome: copy H.264/HEVC, transcode older video, AAC audio."""
     binary = ffmpeg_bin()
     if not binary:
         raise RuntimeError("ffmpeg is not installed")
+    start_sec = max(0.0, float(start_sec or 0.0))
+    if start_sec >= 1.0:
+        # Encode both from the same timestamp so skip cannot leave AAC ahead
+        # of copied video (previous keyframe). 720p ultrafast fits this 2-core VPS.
+        logger.info("VOD remux encode start=%.0fs", start_sec)
+        args = _vod_ffmpeg_args(
+            binary,
+            copy_video=False,
+            codec="",
+            source=url,
+            start_sec=start_sec,
+        )
+        return await _stream_vod_ffmpeg(args, feed=None, on_bytes=on_bytes)
+
     client = http_client()
     try:
         request = client.build_request(
@@ -321,19 +406,8 @@ async def remux_vod_to_browser_mp4(
     copy_video = codec in _BROWSER_COPY_VIDEO
     logger.info("VOD remux %s (%s)", "copy" if copy_video else "libx264", codec or "unknown")
     ffmpeg_args = _vod_ffmpeg_args(binary, copy_video=copy_video, codec=codec)
-    proc_kwargs: dict[str, object] = {
-        "stdin": asyncio.subprocess.PIPE,
-        "stdout": asyncio.subprocess.PIPE,
-        "stderr": asyncio.subprocess.PIPE,
-        "limit": 8 * 1024 * 1024,
-    }
-    try:
-        proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
-    except TypeError:
-        proc_kwargs.pop("limit", None)
-        proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
 
-    async def feed_source() -> None:
+    async def feed_source(proc: asyncio.subprocess.Process) -> None:
         try:
             if proc.stdin is not None:
                 proc.stdin.write(peek)
@@ -355,6 +429,27 @@ async def remux_vod_to_browser_mp4(
         finally:
             await response.aclose()
 
+    return await _stream_vod_ffmpeg(ffmpeg_args, feed=feed_source, on_bytes=on_bytes)
+
+
+async def _stream_vod_ffmpeg(
+    ffmpeg_args: list[str],
+    *,
+    feed: Callable[[asyncio.subprocess.Process], object] | None,
+    on_bytes: Callable[[int], None] | None,
+) -> StreamingResponse:
+    proc_kwargs: dict[str, object] = {
+        "stdin": asyncio.subprocess.PIPE if feed is not None else asyncio.subprocess.DEVNULL,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+        "limit": 8 * 1024 * 1024,
+    }
+    try:
+        proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
+    except TypeError:
+        proc_kwargs.pop("limit", None)
+        proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
+
     async def drain_stderr() -> None:
         if proc.stderr is None:
             return
@@ -370,7 +465,7 @@ async def remux_vod_to_browser_mp4(
             return
 
     async def body() -> AsyncIterator[bytes]:
-        feed_task = asyncio.create_task(feed_source())
+        feed_task = asyncio.create_task(feed(proc)) if feed is not None else None
         err_task = asyncio.create_task(drain_stderr())
         try:
             assert proc.stdout is not None
@@ -383,10 +478,14 @@ async def remux_vod_to_browser_mp4(
                 yield chunk
         finally:
             _stop_proc(proc)
-            for task in (feed_task, err_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(feed_task, err_task, proc.wait(), return_exceptions=True)
+            tasks = [err_task, proc.wait()]
+            if feed_task is not None:
+                if not feed_task.done():
+                    feed_task.cancel()
+                tasks.append(feed_task)
+            if not err_task.done():
+                err_task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     return StreamingResponse(
         body(),
@@ -408,10 +507,11 @@ async def proxy_url(
     remux_aac: bool = False,
     access_token: str = "",
     on_bytes: Callable[[int], None] | None = None,
+    start_sec: float = 0.0,
 ) -> Response:
     """Stream upstream bytes. Live TS skips body-peek so the player gets headers immediately."""
     if remux_aac and ffmpeg_bin() and not assume_mpegts:
-        return await remux_vod_to_browser_mp4(url, on_bytes=on_bytes)
+        return await remux_vod_to_browser_mp4(url, on_bytes=on_bytes, start_sec=start_sec)
 
     headers = {"User-Agent": _STREAM_UA, "Accept": "*/*"}
     if range_header:

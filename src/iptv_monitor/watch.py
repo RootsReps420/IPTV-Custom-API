@@ -489,6 +489,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
         stream_id: str,
         ext: str,
         sid: str = Query(default="", min_length=0),
+        start: float = Query(default=0),
     ) -> Response:
         """Proxy live/movie/series. sid is the tab play_id required to hold a slot."""
         if kind not in KINDS:
@@ -521,6 +522,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
         live_ts = kind == "live" and ext.lstrip(".").lower() == "ts"
         vod = kind in {"movie", "series"} and ext.lstrip(".").lower() not in {"m3u8", "mpd"}
         presence = svc.presence
+        start_sec = max(0.0, float(start or 0.0)) if vod else 0.0
         return await proxy_url(
             url,
             rewrite_uris=not live_ts,
@@ -530,6 +532,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
             remux_aac=vod,
             access_token="" if live_ts else mint_media_token(_root(request), user, sid),
             on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n),
+            start_sec=start_sec,
         )
 
     @app.get("/api/player/fetch")

@@ -25,7 +25,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalContext
 import com.iptvmonitor.player.player.AfrController
 import com.iptvmonitor.player.player.RecordService
@@ -171,26 +170,21 @@ private fun PortalRoot(viewModel: PortalViewModel) {
     }
 
     val blockBg = viewModel.blocksBackgroundFocus
+    val cinema = viewModel.cinema && viewModel.playing != null
     CompositionLocalProvider(LocalInputGated provides viewModel.inputGated) {
-    CompositionLocalProvider(LocalShellFocusable provides !blockBg) {
+    CompositionLocalProvider(LocalShellFocusable provides (!blockBg && !cinema)) {
     Box(Modifier.fillMaxSize()) {
         when {
-            viewModel.selectedPlaylist == null -> HomeScreen(
-                viewModel,
-                Modifier.focusProperties { canFocus = !blockBg },
-            )
-            else -> {
-                WatchShell(
-                    viewModel,
-                    showPlayer = !viewModel.cinema,
-                    modifier = Modifier.focusProperties { canFocus = !blockBg },
-                )
-                if (viewModel.cinema && viewModel.playing != null) {
-                    PlayerScreen(viewModel)
-                }
-            }
+            viewModel.selectedPlaylist == null -> HomeScreen(viewModel)
+            else -> WatchShell(viewModel, showPlayer = !cinema)
         }
     }
+    }
+
+    if (cinema) {
+        CompositionLocalProvider(LocalShellFocusable provides true) {
+            PlayerScreen(viewModel)
+        }
     }
 
     if (viewModel.screen == AppScreen.SETTINGS) {

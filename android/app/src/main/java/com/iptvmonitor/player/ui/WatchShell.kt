@@ -4,8 +4,6 @@ import android.app.Activity
 import android.view.WindowManager
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,17 +24,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptvmonitor.player.data.Category
 import java.util.Locale
-import kotlinx.coroutines.delay
 
 @Composable
 fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifier = Modifier) {
@@ -66,22 +57,6 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val wide = maxWidth >= 840.dp || viewModel.isTelevision
                 val lane = viewModel.shellLane
-                val railReq = remember { FocusRequester() }
-                val groupsReq = remember { FocusRequester() }
-                val channelsReq = remember { FocusRequester() }
-                val focus = LocalFocusManager.current
-                LaunchedEffect(viewModel.laneFocusGen) {
-                    if (viewModel.laneFocusGen == 0) return@LaunchedEffect
-                    delay(60)
-                    runCatching {
-                        when (viewModel.shellLane) {
-                            ShellLane.RAIL -> railReq.requestFocus()
-                            ShellLane.GROUPS -> groupsReq.requestFocus()
-                            ShellLane.CHANNELS -> channelsReq.requestFocus()
-                        }
-                        focus.moveFocus(FocusDirection.Down)
-                    }
-                }
                 val railW by animateDpAsState(
                     targetValue = when {
                         !wide -> 0.dp
@@ -116,11 +91,7 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
                             Modifier
                                 .width(railW)
                                 .fillMaxHeight()
-                                .focusRequester(railReq)
-                                .focusable()
-                                .focusGroup()
-                                .onFocusChanged { if (it.hasFocus) viewModel.activateLane(ShellLane.RAIL) }
-                                .laneBack(viewModel, ShellLane.RAIL),
+                                .onFocusChanged { if (it.hasFocus) viewModel.activateLane(ShellLane.RAIL) },
                             compact = lane != ShellLane.RAIL,
                         )
                         CategoryPane(
@@ -128,11 +99,7 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
                             Modifier
                                 .width(catW)
                                 .fillMaxHeight()
-                                .focusRequester(groupsReq)
-                                .focusable()
-                                .focusGroup()
-                                .onFocusChanged { if (it.hasFocus) viewModel.activateLane(ShellLane.GROUPS) }
-                                .laneBack(viewModel, ShellLane.GROUPS),
+                                .onFocusChanged { if (it.hasFocus) viewModel.activateLane(ShellLane.GROUPS) },
                             compact = lane == ShellLane.CHANNELS,
                         )
                         Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -152,9 +119,6 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
                                 Modifier
                                     .weight(1f)
                                     .fillMaxWidth()
-                                    .focusRequester(channelsReq)
-                                    .focusable()
-                                    .focusGroup()
                                     .onFocusChanged { if (it.hasFocus) viewModel.activateLane(ShellLane.CHANNELS) },
                             )
                         }
@@ -167,7 +131,10 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
                 }
                 if (viewModel.loading) {
                     Box(
-                        Modifier.fillMaxSize().background(WatchPalette.Bg.copy(alpha = 0.72f)),
+                        Modifier
+                            .fillMaxSize()
+                            .background(WatchPalette.Bg.copy(alpha = 0.72f))
+                            .focusProperties { canFocus = false },
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -288,7 +255,7 @@ fun WatchRail(viewModel: PortalViewModel, modifier: Modifier, compact: Boolean) 
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             tabs.forEach { (tab, label) ->
-                RailBtn(label.take(2), viewModel.tab == tab, onFocused = { viewModel.peekTab(tab) }) {
+                RailBtn(label.take(2), viewModel.tab == tab) {
                     viewModel.selectTab(tab)
                 }
             }
@@ -308,7 +275,7 @@ fun WatchRail(viewModel: PortalViewModel, modifier: Modifier, compact: Boolean) 
     ) {
         BrandMark(modifier = Modifier.padding(start = 6.dp, bottom = 8.dp), size = 15.sp)
         tabs.forEach { (tab, label) ->
-            RailBtn(label, viewModel.tab == tab, onFocused = { viewModel.peekTab(tab) }) {
+            RailBtn(label, viewModel.tab == tab) {
                 viewModel.selectTab(tab)
             }
         }
@@ -394,16 +361,12 @@ fun CategoryPane(viewModel: PortalViewModel, modifier: Modifier, compact: Boolea
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             item {
-                CatRow("Favourites", "★", viewModel.categoryId == FAVOURITES_ID, compact, onFocused = {
-                    viewModel.peekCategory(FAVOURITES_ID)
-                }) {
+                CatRow("Favourites", "★", viewModel.categoryId == FAVOURITES_ID, compact) {
                     viewModel.selectCategory(FAVOURITES_ID)
                 }
             }
             item {
-                CatRow("All", "ALL", viewModel.categoryId == null, compact, onFocused = {
-                    viewModel.peekCategory(null)
-                }) {
+                CatRow("All", "ALL", viewModel.categoryId == null, compact) {
                     viewModel.selectCategory(null)
                 }
             }
@@ -413,7 +376,6 @@ fun CategoryPane(viewModel: PortalViewModel, modifier: Modifier, compact: Boolea
                     catMark(cat.name),
                     viewModel.categoryId == cat.id,
                     compact,
-                    onFocused = { viewModel.peekCategory(cat.id) },
                     onLongClick = { viewModel.openGroupMenu(cat) },
                 ) {
                     viewModel.selectCategory(cat.id)

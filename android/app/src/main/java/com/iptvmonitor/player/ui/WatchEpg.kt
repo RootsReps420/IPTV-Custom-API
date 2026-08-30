@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.ContentScale
@@ -137,7 +138,14 @@ fun LiveEpgGuide(viewModel: PortalViewModel, items: List<CatalogItem>, modifier:
                 fontSize = 11.sp,
                 modifier = Modifier.width(ChannelCol).padding(horizontal = 10.dp),
             )
-            Box(Modifier.weight(1f).fillMaxHeight().horizontalScroll(scroll).clipToBounds()) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .horizontalScroll(scroll)
+                    .clipToBounds()
+                    .focusProperties { canFocus = false },
+            ) {
                 Box(Modifier.width(gridWidth).fillMaxHeight().drawEpgTicks()) {
                     var tick = winStart
                     while (tick < winEnd) {
@@ -254,7 +262,14 @@ private fun EpgChannelRow(
                 }
             }
         }
-        Box(Modifier.weight(1f).fillMaxHeight().horizontalScroll(scroll).clipToBounds()) {
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .horizontalScroll(scroll)
+                .clipToBounds()
+                .focusProperties { canFocus = false },
+        ) {
             Box(
                 Modifier
                     .width(gridWidth)

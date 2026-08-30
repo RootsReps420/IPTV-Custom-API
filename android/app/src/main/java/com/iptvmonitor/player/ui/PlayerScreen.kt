@@ -1,9 +1,11 @@
 package com.iptvmonitor.player.ui
 
 import android.app.Activity
+import android.view.View
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,12 +18,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -34,7 +41,10 @@ fun PlayerScreen(viewModel: PortalViewModel) {
     val target = viewModel.playing ?: return
     val view = LocalView.current
     val ui = viewModel.liveUi
+    val live = target.live
     var chrome by remember(target.url) { mutableStateOf(true) }
+    val backFocus = remember { FocusRequester() }
+    val catcher = remember { FocusRequester() }
     DisposableEffect(Unit) {
         val window = (view.context as? Activity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -45,32 +55,66 @@ fun PlayerScreen(viewModel: PortalViewModel) {
         delay(3_500)
         chrome = false
     }
+    LaunchedEffect(chrome, target.url) {
+        delay(80)
+        runCatching {
+            if (chrome) backFocus.requestFocus() else catcher.requestFocus()
+        }
+    }
     Box(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable { chrome = !chrome },
+            .then(
+                if (chrome) {
+                    Modifier.pointerInput(Unit) { detectTapGestures { chrome = false } }
+                } else {
+                    Modifier
+                        .focusRequester(catcher)
+                        .clickable { chrome = true }
+                },
+            ),
     ) {
+        key(target.url, live) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = viewModel.session.player
-                    useController = !target.live
+                    useController = !live
                     setShowNextButton(false)
                     setShowPreviousButton(false)
-                    setShowRewindButton(!target.live)
-                    setShowFastForwardButton(!target.live)
-                    controllerAutoShow = true
+                    setShowRewindButton(!live)
+                    setShowFastForwardButton(!live)
+                    controllerAutoShow = !live
                     controllerHideOnTouch = true
                     setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                    if (live) {
+                        hideController()
+                        blockDpad()
+                        addOnAttachStateChangeListener(
+                            object : View.OnAttachStateChangeListener {
+                                override fun onViewAttachedToWindow(v: View) {
+                                    (v as? PlayerView)?.blockDpad()
+                                }
+                                override fun onViewDetachedFromWindow(v: View) = Unit
+                            },
+                        )
+                    }
                 }
             },
             update = { playerView ->
                 playerView.player = viewModel.session.player
-                playerView.useController = !target.live
+                playerView.useController = !live
+                if (live) {
+                    playerView.hideController()
+                    playerView.blockDpad()
+                }
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (live) Modifier.focusProperties { canFocus = false } else Modifier),
         )
+        }
         if (chrome) {
             Column(
                 Modifier
@@ -91,7 +135,7 @@ fun PlayerScreen(viewModel: PortalViewModel) {
                         style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (target.live && ui.badge.isNotBlank()) {
+                        if (live && ui.badge.isNotBlank()) {
                             Text(
                                 ui.badge,
                                 color = if (ui.buffering || ui.reconnecting || ui.gaveUp) {
@@ -102,10 +146,12 @@ fun PlayerScreen(viewModel: PortalViewModel) {
                                 modifier = Modifier.padding(end = 12.dp),
                             )
                         }
-                        BoxChip("Back", selected = false) { viewModel.showCinema(false) }
+                        BoxChip("Back", selected = false, modifier = Modifier.focusRequester(backFocus)) {
+                            viewModel.showCinema(false)
+                        }
                     }
                 }
-                if (target.live) {
+                if (live) {
                     CinemaEpg(viewModel.liveEpg)
                 }
                 if (ui.message.isNotBlank()) {

@@ -82,11 +82,14 @@ fun HomeScreen(viewModel: PortalViewModel, modifier: Modifier = Modifier) {
         if (viewModel.playlists.isEmpty() && !viewModel.loading) {
             Text("No playlists yet.", color = WatchPalette.Muted)
         }
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth(),
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(viewModel.playlists, key = { it.id }) { item ->
+            viewModel.playlists.forEach { item ->
                 PlaylistCard(
                     item = item,
                     stamp = viewModel::formatSyncStamp,
@@ -168,43 +171,46 @@ private fun PlaylistCard(
     onDelete: () -> Unit,
 ) {
     Column(
-        Modifier
-            .fillMaxWidth()
-            .background(WatchPalette.Panel2)
-            .border(1.dp, WatchPalette.Line)
-            .padding(horizontal = 18.dp, vertical = 16.dp),
+        Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(item.name, color = WatchPalette.Text, style = MaterialTheme.typography.titleMedium)
-        Text(
-            buildString {
-                append(if (item.kind == PlaylistKind.XTREAM) "Xtream" else "M3U")
-                if (item.kind == PlaylistKind.XTREAM && item.username.isNotBlank()) {
-                    append(" · ")
-                    append(item.username)
-                }
-                if (item.lastLiveCount > 0) {
-                    append(" · ")
-                    append(item.lastLiveCount)
-                    append(" channels")
-                }
-            },
-            color = WatchPalette.Muted,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Text(
-            "Playlist ${stamp(item.lastPlaylistSyncAt)}" +
-                if (item.lastEpgSyncAt > 0L) {
-                    "  ·  EPG ${stamp(item.lastEpgSyncAt)}" +
-                        if (item.lastEpgCount > 0) " (${item.lastEpgCount})" else ""
-                } else {
-                    ""
-                },
-            color = WatchPalette.Muted,
-            style = MaterialTheme.typography.bodySmall,
-        )
+        WatchListRow(
+            selected = false,
+            onClick = onOpen,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(item.name, color = watchInk(WatchPalette.Text), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    buildString {
+                        append(if (item.kind == PlaylistKind.XTREAM) "Xtream" else "M3U")
+                        if (item.kind == PlaylistKind.XTREAM && item.username.isNotBlank()) {
+                            append(" · ")
+                            append(item.username)
+                        }
+                        if (item.lastLiveCount > 0) {
+                            append(" · ")
+                            append(item.lastLiveCount)
+                            append(" channels")
+                        }
+                    },
+                    color = watchInk(WatchPalette.Muted),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Playlist ${stamp(item.lastPlaylistSyncAt)}" +
+                        if (item.lastEpgSyncAt > 0L) {
+                            "  ·  EPG ${stamp(item.lastEpgSyncAt)}" +
+                                if (item.lastEpgCount > 0) " (${item.lastEpgCount})" else ""
+                        } else {
+                            ""
+                        },
+                    color = watchInk(WatchPalette.Muted),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GhostBtn("Open", tint = WatchPalette.Up, onClick = onOpen)
             GhostBtn("Groups", onClick = onGroups)
             GhostBtn("Edit", onClick = onEdit)
             GhostBtn("Delete", tint = WatchPalette.Down, onClick = onDelete)
@@ -385,14 +391,16 @@ fun GroupEditorOverlay(
                 style = MaterialTheme.typography.bodySmall,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GhostBtn("Deselect all") { viewModel.setAllGroupsHidden(true) }
+                GhostBtn("Deselect all", modifier = Modifier.focusRequester(requester)) {
+                    viewModel.setAllGroupsHidden(true)
+                }
                 GhostBtn("Select all") { viewModel.setAllGroupsHidden(false) }
             }
             if (viewModel.groupEditorLoading) {
                 CircularProgressIndicator(color = WatchPalette.Up, modifier = Modifier.align(Alignment.CenterHorizontally))
             } else {
                 LazyColumn(
-                    Modifier.heightIn(max = 480.dp).fillMaxWidth().focusRequester(requester),
+                    Modifier.heightIn(max = 480.dp).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     groupSection("Live", viewModel.groupEditorLive, viewModel.hiddenLiveDraft) {
@@ -484,9 +492,10 @@ fun SwitchBtn(
 fun GhostBtn(
     label: String,
     tint: Color? = null,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    WatchHotBox(selected = false, onClick = onClick, chrome = WatchChrome.Ghost) { hot ->
+    WatchHotBox(selected = false, onClick = onClick, modifier = modifier, chrome = WatchChrome.Ghost) { hot ->
         val color = tint ?: if (hot) WatchPalette.Text else WatchPalette.Muted
         Text(
             label.uppercase(),
@@ -503,8 +512,20 @@ fun WatchAction(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-fun BoxChip(label: String, selected: Boolean, allowFocus: Boolean = true, onClick: () -> Unit) {
-    WatchHotBox(selected = selected, onClick = onClick, chrome = WatchChrome.Chip, allowFocus = allowFocus) { hot ->
+fun BoxChip(
+    label: String,
+    selected: Boolean,
+    allowFocus: Boolean = true,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    WatchHotBox(
+        selected = selected,
+        onClick = onClick,
+        modifier = modifier,
+        chrome = WatchChrome.Chip,
+        allowFocus = allowFocus,
+    ) { hot ->
         Text(label, color = if (hot) WatchPalette.Text else WatchPalette.Muted, fontSize = 11.sp)
     }
 }

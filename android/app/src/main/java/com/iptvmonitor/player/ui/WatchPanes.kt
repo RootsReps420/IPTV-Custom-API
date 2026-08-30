@@ -1,8 +1,10 @@
 package com.iptvmonitor.player.ui
 
+import android.view.View
+import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,7 +73,6 @@ fun ChannelPane(viewModel: PortalViewModel, modifier: Modifier) {
     )
     Column(
         modifier
-            .laneBack(viewModel, ShellLane.CHANNELS)
             .background(WatchPalette.Stage)
             .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
     ) {
@@ -365,16 +367,23 @@ private fun PreviewPlayerBox(
     ui: LiveSession.LiveUiState,
     modifier: Modifier,
 ) {
+    val playTarget = {
+        if (target != null) {
+            viewModel.catalog.live.firstOrNull { it.id == target.channelId }
+                ?: viewModel.catalog.movies.firstOrNull { it.id == target.channelId }
+        } else {
+            null
+        }
+    }
     Box(
         modifier
             .border(1.dp, WatchPalette.Line)
             .background(WatchPalette.Bg)
-            .clickable(enabled = target != null) {
-                if (target != null) viewModel.playItem(
-                    viewModel.catalog.live.firstOrNull { it.id == target.channelId }
-                        ?: viewModel.catalog.movies.firstOrNull { it.id == target.channelId }
-                        ?: return@clickable,
-                )
+            .pointerInput(target?.channelId) {
+                detectTapGestures {
+                    val item = playTarget() ?: return@detectTapGestures
+                    viewModel.playItem(item)
+                }
             }
             .focusProperties { canFocus = false },
     ) {
@@ -385,12 +394,30 @@ private fun PreviewPlayerBox(
                         PlayerView(ctx).apply {
                             player = viewModel.session.player
                             useController = false
+                            controllerAutoShow = false
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                            hideController()
+                            blockDpad()
+                            addOnAttachStateChangeListener(
+                                object : View.OnAttachStateChangeListener {
+                                    override fun onViewAttachedToWindow(v: View) {
+                                        (v as? PlayerView)?.blockDpad()
+                                    }
+                                    override fun onViewDetachedFromWindow(v: View) = Unit
+                                },
+                            )
                         }
                     },
-                    update = { playerView -> playerView.player = viewModel.session.player },
-                    modifier = Modifier.fillMaxSize(),
+                    update = { playerView ->
+                        playerView.player = viewModel.session.player
+                        playerView.useController = false
+                        playerView.hideController()
+                        playerView.blockDpad()
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .focusProperties { canFocus = false },
                 )
             }
         } else if (target != null) {
@@ -537,4 +564,21 @@ private fun streamStatLine(ui: LiveSession.LiveUiState): String {
 fun formatEpgTime(event: EpgEvent): String {
     val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
     return "${fmt.format(Date(event.startMs))}–${fmt.format(Date(event.endMs))}"
+}
+
+fun PlayerView.blockDpad() {
+    lockViewFocus(this)
+    val holder = parent as? ViewGroup
+    if (holder != null && holder.javaClass.simpleName.contains("AndroidViewHolder")) {
+        lockViewFocus(holder)
+    }
+}
+
+private fun lockViewFocus(view: View) {
+    view.isFocusable = false
+    view.isFocusableInTouchMode = false
+    view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    if (view is ViewGroup) {
+        view.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+    }
 }

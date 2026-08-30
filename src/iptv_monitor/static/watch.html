@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=51" />
+  <link rel="stylesheet" href="/static/styles.css?v=55" />
 </head>
 <body class="watch-body">
   <div class="grid-bg" aria-hidden="true"></div>
@@ -130,10 +130,35 @@
           <div id="series-panel" class="watch-series" hidden></div>
         </div>
         <div class="watch-preview-card">
-          <div class="watch-video-wrap">
-            <video id="player" controls playsinline webkit-playsinline></video>
+          <div class="watch-video-wrap" id="watch-video-wrap">
+            <video id="player" playsinline webkit-playsinline></video>
             <div id="watch-spinner" class="watch-spinner" hidden><span></span></div>
             <span id="live-badge" class="watch-live-badge" hidden>LIVE</span>
+            <div id="vod-chrome" class="watch-vod-chrome" hidden>
+              <button type="button" id="vod-hit" class="watch-vod-hit" aria-label="Play or pause"></button>
+              <div class="watch-vod-dock">
+                <input
+                  id="vod-seek-range"
+                  class="watch-vod-range"
+                  type="range"
+                  min="0"
+                  max="1000"
+                  value="0"
+                  step="1"
+                  aria-label="Seek"
+                />
+                <div class="watch-vod-row">
+                  <button type="button" id="vod-play" class="watch-vod-btn" aria-label="Pause">❚❚</button>
+                  <button type="button" id="vod-seek-back" class="watch-vod-btn" title="Back 10 seconds">−10</button>
+                  <button type="button" id="vod-seek-fwd" class="watch-vod-btn" title="Forward 30 seconds">+30</button>
+                  <span id="vod-seek-time" class="watch-vod-time">0:00 / 0:00</span>
+                  <span class="watch-vod-grow"></span>
+                  <button type="button" id="vod-mute" class="watch-vod-btn" aria-label="Mute">🔊</button>
+                  <input id="vod-vol" class="watch-vod-vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" />
+                  <button type="button" id="vod-fs" class="watch-vod-btn" title="Full screen" aria-label="Full screen">⛶</button>
+                </div>
+              </div>
+            </div>
           </div>
           <div id="stream-stat" class="watch-stream-stat" hidden></div>
           <div class="watch-buffer" id="buffer-row">
@@ -158,6 +183,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=56"></script>
+  <script src="/static/watch.js?v=61"></script>
 </body>
 </html>

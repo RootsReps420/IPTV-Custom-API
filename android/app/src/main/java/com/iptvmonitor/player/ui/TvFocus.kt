@@ -24,7 +24,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -36,7 +35,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import android.view.KeyEvent as AndroidKeyEvent
@@ -207,38 +205,46 @@ fun WatchHotBox(
                 },
             )
             .then(if (allowFocus && shellFocus) Modifier else Modifier.focusProperties { canFocus = false })
-            .onPreviewKeyEvent { ev ->
-                val code = ev.nativeKeyEvent.keyCode
-                val ok = code == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
-                    code == AndroidKeyEvent.KEYCODE_ENTER ||
-                    code == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
-                    code == AndroidKeyEvent.KEYCODE_BUTTON_A
-                if (!ok) return@onPreviewKeyEvent false
-                when {
-                    ev.type == KeyEventType.KeyDown && ev.nativeKeyEvent.repeatCount == 0 -> {
-                        longPress = false
-                    }
-                    ev.type == KeyEventType.KeyDown &&
-                        ev.nativeKeyEvent.repeatCount > 0 &&
-                        onLongClick != null &&
-                        !longPress -> {
-                        longPress = true
-                    }
-                    ev.type == KeyEventType.KeyUp -> {
-                        if (gated) {
-                            longPress = false
-                            return@onPreviewKeyEvent true
+            .then(
+                if (allowFocus && shellFocus) {
+                    Modifier.onPreviewKeyEvent { ev ->
+                        if (!focused && !sourceFocused) return@onPreviewKeyEvent false
+                        val code = ev.nativeKeyEvent.keyCode
+                        val ok = code == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+                            code == AndroidKeyEvent.KEYCODE_ENTER ||
+                            code == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
+                            code == AndroidKeyEvent.KEYCODE_BUTTON_A
+                        // D-pad directions must reach Compose focus search.
+                        if (!ok) return@onPreviewKeyEvent false
+                        when {
+                            ev.type == KeyEventType.KeyDown && ev.nativeKeyEvent.repeatCount == 0 -> {
+                                longPress = false
+                            }
+                            ev.type == KeyEventType.KeyDown &&
+                                ev.nativeKeyEvent.repeatCount > 0 &&
+                                onLongClick != null &&
+                                !longPress -> {
+                                longPress = true
+                            }
+                            ev.type == KeyEventType.KeyUp -> {
+                                if (gated) {
+                                    longPress = false
+                                    return@onPreviewKeyEvent true
+                                }
+                                if (longPress && onLongClick != null) {
+                                    onLongClick()
+                                } else if (!longPress) {
+                                    onClick()
+                                }
+                                longPress = false
+                            }
                         }
-                        if (longPress && onLongClick != null) {
-                            onLongClick()
-                        } else if (!longPress) {
-                            onClick()
-                        }
-                        longPress = false
+                        true
                     }
-                }
-                true
-            }
+                } else {
+                    Modifier
+                },
+            )
             .padding(contentPadding ?: chrome.pad()),
         contentAlignment = contentAlignment,
     ) {
@@ -302,28 +308,3 @@ private fun chromeStroke(chrome: WatchChrome, hot: Boolean, selected: Boolean, i
             else -> WatchPalette.Line
         }
     }
-
-@Composable
-fun Modifier.laneBack(viewModel: PortalViewModel, whenLane: ShellLane): Modifier {
-    val focus = LocalFocusManager.current
-    return this.onPreviewKeyEvent { ev ->
-        if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-        val code = ev.nativeKeyEvent.keyCode
-        if (viewModel.shellLane != whenLane) return@onPreviewKeyEvent false
-        when (code) {
-            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                if (!focus.moveFocus(FocusDirection.Left)) {
-                    viewModel.popLane()
-                }
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                if (!focus.moveFocus(FocusDirection.Right)) {
-                    viewModel.pushLane()
-                }
-                true
-            }
-            else -> false
-        }
-    }
-}

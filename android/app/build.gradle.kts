@@ -13,8 +13,8 @@ android {
         applicationId = "com.iptvmonitor.player"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.9.2"
+        versionCode = 13
+        versionName = "0.9.4"
         vectorDrawables.useSupportLibrary = true
     }
 

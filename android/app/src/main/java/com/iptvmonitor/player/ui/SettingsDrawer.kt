@@ -3,10 +3,8 @@ package com.iptvmonitor.player.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,11 +35,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,26 +53,17 @@ fun SettingsDrawer(viewModel: PortalViewModel) {
     val rev = viewModel.settingsRev
     val prefs = viewModel.prefs()
     val panel = remember { FocusRequester() }
-    val focus = LocalFocusManager.current
-    val eatClicks = remember { MutableInteractionSource() }
-    val nested = viewModel.choicePrompt != null || viewModel.textPrompt != null
     BackHandler { viewModel.popSettings() }
     LaunchedEffect(viewModel.settingsPage) {
         delay(200)
         if (viewModel.choicePrompt != null || viewModel.textPrompt != null) return@LaunchedEffect
-        runCatching {
-            panel.requestFocus()
-            if (viewModel.settingsPage != SettingsPage.ROOT) {
-                focus.moveFocus(FocusDirection.Down)
-            }
-        }
+        runCatching { panel.requestFocus() }
     }
     Box(
         Modifier
             .fillMaxSize()
             .background(WatchPalette.Bg.copy(alpha = 0.55f))
-            .clickable(interactionSource = eatClicks, indication = null) {}
-            .focusProperties { canFocus = !nested },
+            .pointerInput(Unit) { detectTapGestures { } },
     ) {
         Column(
             Modifier
@@ -86,19 +73,13 @@ fun SettingsDrawer(viewModel: PortalViewModel) {
                 .fillMaxWidth(0.42f)
                 .background(WatchPalette.Panel)
                 .border(1.dp, WatchPalette.Line)
-                .then(
-                    if (viewModel.settingsPage == SettingsPage.ROOT) {
-                        Modifier
-                    } else {
-                        Modifier.focusRequester(panel).focusable()
-                    },
-                )
+                .focusRequester(panel)
                 .focusGroup()
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 28.dp),
         ) {
                 when (viewModel.settingsPage) {
-                    SettingsPage.ROOT -> RootPage(viewModel, panel)
+                    SettingsPage.ROOT -> RootPage(viewModel)
                     SettingsPage.GENERAL -> GeneralPage(viewModel, prefs)
                     SettingsPage.PLAYLISTS -> PlaylistsPage(viewModel)
                     SettingsPage.PLAYLIST -> PlaylistDetailPage(viewModel, prefs)
@@ -209,9 +190,9 @@ private fun DrawerSwitch(on: Boolean, hot: Boolean) {
 }
 
 @Composable
-private fun RootPage(viewModel: PortalViewModel, first: FocusRequester) {
+private fun RootPage(viewModel: PortalViewModel) {
     DrawerTitle("Settings")
-    DrawerRow("General", modifier = Modifier.focusRequester(first)) {
+    DrawerRow("General") {
         viewModel.openSettingsPage(SettingsPage.GENERAL)
     }
     DrawerRow("Playlists") { viewModel.openSettingsPage(SettingsPage.PLAYLISTS) }
