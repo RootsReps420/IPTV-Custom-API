@@ -113,6 +113,10 @@ function liveExtensions() {
 
 function vodExtensions(preferred) {
   const ext = String(preferred || "mp4").replace(/^\./, "") || "mp4";
+  if (canPlayNativeHls()) {
+    // Safari / iOS cannot play the Chrome fMP4 remux. Native HLS only.
+    return ["m3u8"];
+  }
   if (preferNativeHls()) {
     return [...new Set(["m3u8", ext, "mp4", "mkv"])];
   }
@@ -1719,8 +1723,17 @@ function mediaUrl(kind, streamId, ext) {
   if (state.mediaToken) {
     params.set("k", state.mediaToken);
   }
-  if (kind !== "live" && vodSeekOffset >= 1) {
-    params.set("start", String(Math.floor(vodSeekOffset)));
+  if (kind !== "live") {
+    const src = String(state.playingItem?.container_extension || "mp4").replace(/^\./, "");
+    if (src && src !== "m3u8" && src !== "mpd") {
+      params.set("src", src);
+    }
+    if (vodRuntimeSec && vodRuntimeSec > 1) {
+      params.set("dur", String(Math.floor(vodRuntimeSec)));
+    }
+    if (vodSeekOffset >= 1) {
+      params.set("start", String(Math.floor(vodSeekOffset)));
+    }
   }
   return `/api/player/media/${kind}/${encodeURIComponent(streamId)}.${ext}?${params}`;
 }
@@ -1923,9 +1936,13 @@ async function playSources(kind, streamId, extensions, gen) {
     const url = mediaUrl(kind, streamId, ext);
     try {
       if (ext === "m3u8") {
-        // iOS AVPlayer: play() must stay in the tap turn; awaiting hls.js loses the gesture.
-        if (canPlayNativeHls() && !(window.Hls && window.Hls.isSupported())) {
-          video.src = vodSeekOffset >= 1 ? `${url}#t=${Math.floor(vodSeekOffset)}` : url;
+        // Safari / iOS: native HLS only. hls.js MSE on desktop Safari never
+        // starts VOD (clock stuck at 0:00). iOS has no MSE.
+        if (canPlayNativeHls()) {
+          if (kind !== "live") {
+            showWatchSpinner(true);
+          }
+          video.src = url;
           playNow();
           if (kind === "live") {
             startLivePaceOnly();

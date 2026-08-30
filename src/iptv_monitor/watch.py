@@ -39,7 +39,7 @@ from iptv_monitor.player_auth import (
     require_username,
     set_session,
 )
-from iptv_monitor.player_proxy import load_fetch_url, panel_media_url, proxy_url
+from iptv_monitor.player_proxy import load_fetch_url, panel_media_url, proxy_url, vod_hls_wrapper
 from iptv_monitor.player_m3u import with_live_ext
 from iptv_monitor.player_guide import WatchGuide
 from iptv_monitor.player_presence import PresenceTracker
@@ -490,6 +490,8 @@ def register_watch(app: FastAPI, static_dir) -> None:
         ext: str,
         sid: str = Query(default="", min_length=0),
         start: float = Query(default=0),
+        src: str = Query(default=""),
+        dur: float = Query(default=0),
     ) -> Response:
         """Proxy live/movie/series. sid is the tab play_id required to hold a slot."""
         if kind not in KINDS:
@@ -520,7 +522,29 @@ def register_watch(app: FastAPI, static_dir) -> None:
         if not url:
             url = panel_media_url(cfg, kind, stream_id, ext)
         live_ts = kind == "live" and ext.lstrip(".").lower() == "ts"
-        vod = kind in {"movie", "series"} and ext.lstrip(".").lower() not in {"m3u8", "mpd"}
+        kind_vod = kind in {"movie", "series"}
+        vod_ext = ext.lstrip(".").lower()
+        token = "" if live_ts else mint_media_token(_root(request), user, sid)
+        if kind_vod and vod_ext == "m3u8":
+            src_ext = "".join(ch for ch in (src or "mp4").lower().lstrip(".") if ch.isalnum())[:8] or "mp4"
+            if src_ext in {"m3u8", "mpd", "ts"}:
+                src_ext = "mp4"
+            return vod_hls_wrapper(
+                kind=kind,
+                stream_id=stream_id,
+                sid=sid,
+                access_token=token,
+                src_ext=src_ext,
+                start_sec=max(0.0, float(start or 0.0)),
+                duration_sec=max(0.0, float(dur or 0.0)),
+            )
+        vod = kind_vod and vod_ext not in {"m3u8", "mpd"}
+        remux_container = "mpegts" if vod and vod_ext == "ts" else "mp4"
+        if vod:
+            src_ext = "".join(ch for ch in (src or "mp4").lower().lstrip(".") if ch.isalnum())[:8] or "mp4"
+            if src_ext in {"m3u8", "mpd", "ts"}:
+                src_ext = "mp4"
+            url = panel_media_url(cfg, kind, stream_id, src_ext)
         presence = svc.presence
         start_sec = max(0.0, float(start or 0.0)) if vod else 0.0
         return await proxy_url(
@@ -530,7 +554,8 @@ def register_watch(app: FastAPI, static_dir) -> None:
             range_header=None if vod else request.headers.get("range"),
             assume_mpegts=live_ts,
             remux_aac=vod,
-            access_token="" if live_ts else mint_media_token(_root(request), user, sid),
+            remux_container=remux_container,
+            access_token=token,
             on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n),
             start_sec=start_sec,
         )
