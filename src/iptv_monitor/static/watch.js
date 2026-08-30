@@ -1657,7 +1657,12 @@ function destroyPlayers() {
     tsPlayer = null;
   }
   video.pause();
-  video.removeAttribute("src");
+  try {
+    video.removeAttribute("src");
+    video.src = "";
+  } catch {
+    /* ignore */
+  }
   video.load();
 }
 
@@ -1733,6 +1738,9 @@ function mediaUrl(kind, streamId, ext) {
     }
     if (vodSeekOffset >= 1) {
       params.set("start", String(Math.floor(vodSeekOffset)));
+    }
+    if (canPlayNativeHls()) {
+      params.set("cb", String(Date.now()));
     }
   }
   return `/api/player/media/${kind}/${encodeURIComponent(streamId)}.${ext}?${params}`;
@@ -1943,6 +1951,7 @@ async function playSources(kind, streamId, extensions, gen) {
             showWatchSpinner(true);
           }
           video.src = url;
+          video.load();
           playNow();
           if (kind === "live") {
             startLivePaceOnly();
@@ -2079,6 +2088,7 @@ function playLive(item) {
 async function playVod(item) {
   const gen = ++playGen;
   vodSeekOffset = 0;
+  clearVodRuntime();
   state.playingLiveId = "";
   state.playingKind = "movie";
   state.playingItem = item;
@@ -2120,6 +2130,7 @@ async function playVod(item) {
 async function playEpisode(episode, seriesName) {
   const gen = ++playGen;
   vodSeekOffset = 0;
+  clearVodRuntime();
   state.playingLiveId = "";
   state.playingKind = "series";
   state.playingItem = {

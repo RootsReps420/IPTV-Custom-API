@@ -269,11 +269,15 @@ def _vod_ffmpeg_args(
     )
     if copy_video:
         args.extend(["-c:v", "copy"])
-        if container != "mpegts":
+        if container == "mpegts":
             if codec in {"h264"}:
-                args.extend(["-tag:v", "avc1"])
+                args.extend(["-bsf:v", "h264_mp4toannexb"])
             elif codec in {"hevc", "h265"}:
-                args.extend(["-tag:v", "hvc1"])
+                args.extend(["-bsf:v", "hevc_mp4toannexb"])
+        elif codec in {"h264"}:
+            args.extend(["-tag:v", "avc1"])
+        elif codec in {"hevc", "h265"}:
+            args.extend(["-tag:v", "hvc1"])
     elif start_sec >= 1.0:
         args.extend(
             [
@@ -363,9 +367,7 @@ def vod_hls_wrapper(
     start_sec: float = 0.0,
     duration_sec: float = 0.0,
 ) -> Response:
-    """One-segment HLS so Safari/iOS can play VOD (they cannot play piped fMP4)."""
-    dur = int(duration_sec) if duration_sec and duration_sec > 1 else 86400
-    dur = max(30, min(dur, 86400))
+    """EVENT HLS wrapping a TS pipe. Never claim 24h; never ENDLIST (the remux is a live pipe)."""
     params: dict[str, str] = {"sid": sid}
     if access_token:
         params["k"] = access_token
@@ -374,20 +376,29 @@ def vod_hls_wrapper(
     if start_sec >= 1:
         params["start"] = str(int(start_sec))
     segment = f"/api/player/media/{quote(kind, safe='')}/{quote(stream_id, safe='')}.ts?{urlencode(params)}"
+    if duration_sec and duration_sec > 1:
+        dur = max(30, min(int(duration_sec), 12 * 3600))
+        target = str(dur)
+        inf = f"{dur}.0"
+    else:
+        target = "6"
+        inf = "6.0"
     body = (
         "#EXTM3U\n"
         "#EXT-X-VERSION:3\n"
-        f"#EXT-X-TARGETDURATION:{dur}\n"
-        "#EXT-X-PLAYLIST-TYPE:VOD\n"
+        f"#EXT-X-TARGETDURATION:{target}\n"
+        "#EXT-X-PLAYLIST-TYPE:EVENT\n"
         "#EXT-X-MEDIA-SEQUENCE:0\n"
-        f"#EXTINF:{dur}.0,\n"
+        f"#EXTINF:{inf},\n"
         f"{segment}\n"
-        "#EXT-X-ENDLIST\n"
     )
     return Response(
         content=body,
         media_type="application/vnd.apple.mpegurl",
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
     )
 
 
