@@ -57,9 +57,11 @@ fun OverlayHost(
     content: @Composable BoxScope.(FocusRequester) -> Unit,
 ) {
     val requester = remember { FocusRequester() }
+    val gated = LocalInputGated.current
     BackHandler(onBack = onDismiss)
-    LaunchedEffect(Unit) {
-        delay(200)
+    LaunchedEffect(gated) {
+        if (gated) return@LaunchedEffect
+        delay(40)
         runCatching { requester.requestFocus() }
     }
     Box(

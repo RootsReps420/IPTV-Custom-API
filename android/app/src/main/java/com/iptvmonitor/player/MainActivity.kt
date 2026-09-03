@@ -25,6 +25,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import com.iptvmonitor.player.player.AfrController
 import com.iptvmonitor.player.player.RecordService
@@ -43,6 +46,7 @@ import com.iptvmonitor.player.ui.SettingsChoicePrompt
 import com.iptvmonitor.player.ui.SettingsDrawer
 import com.iptvmonitor.player.ui.SettingsTextPrompt
 import com.iptvmonitor.player.ui.WatchShell
+import com.iptvmonitor.player.ui.isConfirmKey
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -172,62 +176,78 @@ private fun PortalRoot(viewModel: PortalViewModel) {
     val blockBg = viewModel.blocksBackgroundFocus
     val cinema = viewModel.cinema && viewModel.playing != null
     CompositionLocalProvider(LocalInputGated provides viewModel.inputGated) {
-    CompositionLocalProvider(LocalShellFocusable provides (!blockBg && !cinema)) {
-    Box(Modifier.fillMaxSize()) {
-        when {
-            viewModel.selectedPlaylist == null -> HomeScreen(viewModel)
-            else -> WatchShell(viewModel, showPlayer = !cinema)
-        }
-    }
-    }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .then(
+                    if (viewModel.inputGated) {
+                        Modifier.onPreviewKeyEvent { ev ->
+                            if (!isConfirmKey(ev.nativeKeyEvent.keyCode)) return@onPreviewKeyEvent false
+                            if (ev.type == KeyEventType.KeyUp) viewModel.releaseInputGate()
+                            true
+                        }
+                    } else {
+                        Modifier
+                    },
+                ),
+        ) {
+            CompositionLocalProvider(LocalShellFocusable provides (!blockBg && !cinema)) {
+                Box(Modifier.fillMaxSize()) {
+                    when {
+                        viewModel.selectedPlaylist == null -> HomeScreen(viewModel)
+                        else -> WatchShell(viewModel, showPlayer = !cinema)
+                    }
+                }
+            }
 
-    if (cinema) {
-        CompositionLocalProvider(LocalShellFocusable provides true) {
-            PlayerScreen(viewModel)
-        }
-    }
+            if (cinema) {
+                CompositionLocalProvider(LocalShellFocusable provides true) {
+                    PlayerScreen(viewModel)
+                }
+            }
 
-    if (viewModel.screen == AppScreen.SETTINGS) {
-        val settingsFront = viewModel.choicePrompt == null &&
-            viewModel.textPrompt == null &&
-            viewModel.itemMenu == null &&
-            viewModel.groupMenu == null
-        CompositionLocalProvider(LocalShellFocusable provides settingsFront) {
-            SettingsDrawer(viewModel)
+            if (viewModel.screen == AppScreen.SETTINGS) {
+                val settingsFront = viewModel.choicePrompt == null &&
+                    viewModel.textPrompt == null &&
+                    viewModel.itemMenu == null &&
+                    viewModel.groupMenu == null
+                CompositionLocalProvider(LocalShellFocusable provides settingsFront) {
+                    SettingsDrawer(viewModel)
+                }
+            }
+            if (viewModel.showPlaylistEditor) {
+                PlaylistEditorOverlay(
+                    viewModel = viewModel,
+                    initial = viewModel.playlistEditorInitial,
+                    onDismiss = { viewModel.closePlaylistEditor() },
+                    onSave = {
+                        viewModel.savePlaylist(it)
+                        viewModel.closePlaylistEditor()
+                    },
+                )
+            }
+            if (viewModel.groupEditor != null && viewModel.screen != AppScreen.SETTINGS) {
+                val playlist = viewModel.groupEditor
+                if (playlist != null) {
+                    GroupEditorOverlay(
+                        viewModel = viewModel,
+                        playlist = playlist,
+                        onDismiss = { viewModel.closeGroupEditor() },
+                    )
+                }
+            }
+            if (viewModel.textPrompt != null) {
+                SettingsTextPrompt(viewModel)
+            }
+            if (viewModel.choicePrompt != null) {
+                SettingsChoicePrompt(viewModel)
+            }
+            if (viewModel.itemMenu != null) {
+                ItemMenuOverlay(viewModel)
+            }
+            if (viewModel.groupMenu != null) {
+                GroupMenuOverlay(viewModel)
+            }
         }
-    }
-    if (viewModel.showPlaylistEditor) {
-        PlaylistEditorOverlay(
-            viewModel = viewModel,
-            initial = viewModel.playlistEditorInitial,
-            onDismiss = { viewModel.closePlaylistEditor() },
-            onSave = {
-                viewModel.savePlaylist(it)
-                viewModel.closePlaylistEditor()
-            },
-        )
-    }
-    if (viewModel.groupEditor != null && viewModel.screen != AppScreen.SETTINGS) {
-        val playlist = viewModel.groupEditor
-        if (playlist != null) {
-            GroupEditorOverlay(
-                viewModel = viewModel,
-                playlist = playlist,
-                onDismiss = { viewModel.closeGroupEditor() },
-            )
-        }
-    }
-    if (viewModel.textPrompt != null) {
-        SettingsTextPrompt(viewModel)
-    }
-    if (viewModel.choicePrompt != null) {
-        SettingsChoicePrompt(viewModel)
-    }
-    if (viewModel.itemMenu != null) {
-        ItemMenuOverlay(viewModel)
-    }
-    if (viewModel.groupMenu != null) {
-        GroupMenuOverlay(viewModel)
-    }
     }
 }

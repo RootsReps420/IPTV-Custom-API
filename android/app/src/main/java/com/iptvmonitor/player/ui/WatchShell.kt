@@ -53,8 +53,18 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
             }
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val wide = maxWidth >= 840.dp || viewModel.isTelevision
-                val railW = if (wide) 168.dp else 0.dp
-                val catW = if (wide) 252.dp else 0.dp
+                val lane = viewModel.shellLane
+                val railW = when {
+                    !wide -> 0.dp
+                    lane == ShellLane.RAIL -> 168.dp
+                    else -> 72.dp
+                }
+                val catW = when {
+                    !wide -> 0.dp
+                    lane == ShellLane.GROUPS -> 252.dp
+                    lane == ShellLane.RAIL -> 220.dp
+                    else -> 56.dp
+                }
                 val previewH = when {
                     !wide || !showPlayer -> 0.dp
                     viewModel.tab == BrowseTab.LIVE -> 120.dp
@@ -68,7 +78,7 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
                                 .width(railW)
                                 .fillMaxHeight()
                                 .onFocusChanged { if (it.hasFocus) viewModel.activateLane(ShellLane.RAIL) },
-                            compact = false,
+                            compact = lane != ShellLane.RAIL,
                         )
                         CategoryPane(
                             viewModel,
@@ -76,7 +86,7 @@ fun WatchShell(viewModel: PortalViewModel, showPlayer: Boolean, modifier: Modifi
                                 .width(catW)
                                 .fillMaxHeight()
                                 .onFocusChanged { if (it.hasFocus) viewModel.activateLane(ShellLane.GROUPS) },
-                            compact = false,
+                            compact = lane == ShellLane.CHANNELS,
                         )
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             if (previewH > 0.dp) {
@@ -224,54 +234,42 @@ fun WatchRail(viewModel: PortalViewModel, modifier: Modifier, compact: Boolean) 
         BrowseTab.SHOWS to "Shows",
         BrowseTab.SEARCH to "Search",
     )
-    if (compact) {
-        Column(
-            modifier.background(WatchPalette.Rail).padding(vertical = 10.dp, horizontal = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            tabs.forEach { (tab, label) ->
-                RailBtn(label.take(2), viewModel.tab == tab) {
-                    viewModel.selectTab(tab)
-                }
-            }
-            Spacer(Modifier.weight(1f))
-            RailBtn("SET", selected = false) { viewModel.openSettings() }
-        }
-        return
-    }
     val live = viewModel.liveSource ?: viewModel.selectedPlaylist
     val listAt = live?.lastPlaylistSyncAt ?: 0L
     val epgAt = live?.lastEpgSyncAt ?: 0L
     val channels = if (viewModel.catalog.live.isNotEmpty()) viewModel.catalog.live.size else live?.lastLiveCount ?: 0
     val epgCount = if (viewModel.catalog.epgByChannel.isNotEmpty()) viewModel.catalog.epgByChannel.size else live?.lastEpgCount ?: 0
     Column(
-        modifier.background(WatchPalette.Rail).padding(12.dp),
+        modifier.background(WatchPalette.Rail).padding(if (compact) 8.dp else 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        BrandMark(modifier = Modifier.padding(start = 6.dp, bottom = 8.dp), size = 15.sp)
+        if (!compact) {
+            BrandMark(modifier = Modifier.padding(start = 6.dp, bottom = 8.dp), size = 15.sp)
+        }
         tabs.forEach { (tab, label) ->
-            RailBtn(label, viewModel.tab == tab) {
+            RailBtn(if (compact) label.take(2) else label, viewModel.tab == tab) {
                 viewModel.selectTab(tab)
             }
         }
         Spacer(Modifier.weight(1f))
-        RailSyncBlock(
-            title = "Last playlist sync",
-            stamp = viewModel.formatSyncStamp(listAt),
-            count = if (channels > 0) "$channels channels" else "No channels yet",
-        )
-        RailSyncBlock(
-            title = "Last EPG sync",
-            stamp = viewModel.formatSyncStamp(epgAt),
-            count = when {
-                viewModel.guideSync.running && viewModel.guideSync.kind == "epg" ->
-                    viewModel.guideSync.detail.ifBlank { "Updating…" }
-                epgCount > 0 -> "$epgCount EPG"
-                else -> "No EPG yet"
-            },
-        )
-        RailBtn("Settings", selected = false) { viewModel.openSettings() }
+        if (!compact) {
+            RailSyncBlock(
+                title = "Last playlist sync",
+                stamp = viewModel.formatSyncStamp(listAt),
+                count = if (channels > 0) "$channels channels" else "No channels yet",
+            )
+            RailSyncBlock(
+                title = "Last EPG sync",
+                stamp = viewModel.formatSyncStamp(epgAt),
+                count = when {
+                    viewModel.guideSync.running && viewModel.guideSync.kind == "epg" ->
+                        viewModel.guideSync.detail.ifBlank { "Updating…" }
+                    epgCount > 0 -> "$epgCount EPG"
+                    else -> "No EPG yet"
+                },
+            )
+        }
+        RailBtn(if (compact) "SET" else "Settings", selected = false) { viewModel.openSettings() }
     }
 }
 

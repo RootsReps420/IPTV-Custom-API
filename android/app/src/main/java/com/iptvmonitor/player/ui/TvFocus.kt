@@ -1,9 +1,8 @@
 package com.iptvmonitor.player.ui
 
 import androidx.compose.foundation.border
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
@@ -34,6 +33,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import android.view.KeyEvent as AndroidKeyEvent
@@ -137,7 +137,6 @@ fun WatchBackdrop(content: @Composable () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WatchHotBox(
     selected: Boolean,
@@ -156,6 +155,7 @@ fun WatchHotBox(
     val sourceFocused by interaction.collectIsFocusedAsState()
     var focused by remember { mutableStateOf(false) }
     var longPress by remember { mutableStateOf(false) }
+    var armed by remember { mutableStateOf(false) }
     val gated = LocalInputGated.current
     val shellFocus = LocalShellFocusable.current
     val hot = selected || focused || sourceFocused
@@ -167,6 +167,7 @@ fun WatchHotBox(
         WatchChrome.Item -> selected
         else -> false
     }
+    val focusOn = allowFocus && shellFocus
     Box(
         modifier
             .onFocusChanged {
@@ -188,56 +189,58 @@ fun WatchHotBox(
                 },
             )
             .then(
-                if (onLongClick != null) {
-                    Modifier.combinedClickable(
-                        interactionSource = interaction,
-                        indication = null,
-                        onClick = { if (!gated) onClick() },
-                        onLongClick = onLongClick,
-                    )
+                if (focusOn) {
+                    Modifier.focusable(interactionSource = interaction)
                 } else {
-                    Modifier.clickable(
-                        interactionSource = interaction,
-                        indication = null,
-                        onClick = { if (!gated) onClick() },
-                    )
+                    Modifier.focusProperties { canFocus = false }
                 },
             )
-            .then(if (allowFocus && shellFocus) Modifier else Modifier.focusProperties { canFocus = false })
+            .pointerInput(onClick, onLongClick, gated) {
+                if (onLongClick != null) {
+                    detectTapGestures(
+                        onLongPress = { onLongClick() },
+                        onTap = { if (!gated) onClick() },
+                    )
+                } else {
+                    detectTapGestures(onTap = { if (!gated) onClick() })
+                }
+            }
             .then(
-                if (allowFocus && shellFocus) {
-                    Modifier
-                        .onPreviewKeyEvent { ev ->
-                            if (!isOkKey(ev.nativeKeyEvent.keyCode)) return@onPreviewKeyEvent false
-                            if (gated) {
-                                longPress = false
-                                return@onPreviewKeyEvent true
-                            }
-                            val repeats = ev.nativeKeyEvent.repeatCount
-                            when {
-                                ev.type == KeyEventType.KeyDown && repeats == 0 -> {
+                if (focusOn) {
+                    Modifier.onPreviewKeyEvent { ev ->
+                        if (!isConfirmKey(ev.nativeKeyEvent.keyCode)) return@onPreviewKeyEvent false
+                        val repeats = ev.nativeKeyEvent.repeatCount
+                        when {
+                            ev.type == KeyEventType.KeyDown && repeats == 0 -> {
+                                if (gated) {
+                                    armed = false
                                     longPress = false
-                                    false
+                                } else {
+                                    armed = true
+                                    longPress = false
                                 }
-                                ev.type == KeyEventType.KeyDown &&
-                                    repeats > 0 &&
-                                    onLongClick != null &&
-                                    !longPress -> {
-                                    longPress = true
-                                    onLongClick()
-                                    true
-                                }
-                                ev.type == KeyEventType.KeyUp -> {
-                                    if (longPress) {
-                                        longPress = false
-                                    } else {
-                                        onClick()
-                                    }
-                                    true
-                                }
-                                else -> false
+                                true
                             }
+                            ev.type == KeyEventType.KeyDown &&
+                                repeats > 0 &&
+                                onLongClick != null &&
+                                !longPress &&
+                                !gated -> {
+                                longPress = true
+                                onLongClick()
+                                true
+                            }
+                            ev.type == KeyEventType.KeyDown && repeats > 0 -> true
+                            ev.type == KeyEventType.KeyUp -> {
+                                val fire = armed && !longPress && !gated
+                                armed = false
+                                longPress = false
+                                if (fire) onClick()
+                                true
+                            }
+                            else -> false
                         }
+                    }
                 } else {
                     Modifier
                 },
@@ -273,7 +276,7 @@ fun WatchListRow(
     }
 }
 
-private fun isOkKey(code: Int): Boolean =
+internal fun isConfirmKey(code: Int): Boolean =
     code == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
         code == AndroidKeyEvent.KEYCODE_ENTER ||
         code == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
