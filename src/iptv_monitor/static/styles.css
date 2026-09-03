@@ -1042,15 +1042,24 @@ tr.row-down td {
   border-right: 1px solid var(--line);
 }
 
-.watch-brand {
+.watch-brand,
+.watch-mark {
   font-family: Syne, sans-serif;
   font-weight: 800;
-  font-size: 15px;
-  letter-spacing: 0.02em;
+  font-size: 28px;
+  letter-spacing: 0;
+  line-height: 1;
   text-transform: none;
   color: var(--up);
-  margin: 0 6px 8px;
+  margin: 0 6px 10px;
   white-space: nowrap;
+}
+
+.watch-login .watch-mark,
+.watch-terms .watch-mark {
+  margin: 0 0 12px;
+  font-size: 32px;
+  letter-spacing: 0;
 }
 
 .watch-rail-nav {
@@ -1967,7 +1976,7 @@ tr.row-down td {
 
   .watch-brand {
     margin: 0 10px 0 0;
-    font-size: 16px;
+    font-size: 24px;
   }
 
   .watch-rail-nav {
