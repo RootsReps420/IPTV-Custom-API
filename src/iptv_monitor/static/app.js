@@ -129,10 +129,20 @@ function poolBadge(item) {
   return `<span class="${cls}">${esc(label)}</span>`;
 }
 
+function ipRow(ips) {
+  const v4 = (ips || []).filter((ip) => ip && !String(ip).includes(":"));
+  if (!v4.length) {
+    return "";
+  }
+  const chips = v4
+    .map((ip) => `<span class="ip-chip" title="${esc(ip)}">${esc(ip)}</span>`)
+    .join("");
+  return `<div class="ip-row"><span class="ip-label">IP'S</span><div class="ip-chips">${chips}</div></div>`;
+}
+
 function card(item) {
   const state = item.healthy ? "up" : "down";
   const reason = item.fail_reason ? `<span>reason ${esc(item.fail_reason)}</span>` : "";
-  const ips = item.resolved_ips?.length ? `<span>ip ${esc(item.resolved_ips.join(", "))}</span>` : "";
   const playlists = item.playlists?.length ? `<span>playlists ${esc(item.playlists.join(", "))}</span>` : "";
   const check = item.healthy
     ? `check-pass completed: ${item.consecutive_successes || 0}`
@@ -157,9 +167,9 @@ function card(item) {
         ${flag("tcp", item.tcp_ok)}
         ${flag("mpeg-ts", item.stream_ok)}
         ${reason}
-        ${ips}
         ${playlists}
       </div>
+      ${ipRow(item.resolved_ips)}
       <div class="check-line">${esc(check)} <span class="sep">|</span> ${esc(downs)}</div>
     </article>
   `;
@@ -846,6 +856,44 @@ function alertClass(text) {
   return "alert";
 }
 
+function alertHostLabel(url) {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return String(url).replace(/^https?:\/\//i, "");
+  }
+}
+
+function renderDownAlert(text, kind, count, rawList, openKeys) {
+  const urls = rawList.split(",").map((item) => item.trim()).filter(Boolean);
+  const key = `${kind}-${count}`;
+  const open = openKeys.has(key) ? " open" : "";
+  const label = count === 1 ? `${kind} URL down` : `${kind} URLs down`;
+  const chips = urls
+    .map((url) => {
+      const host = alertHostLabel(url);
+      return `<span class="alert-host" title="${esc(url)}">${esc(host)}</span>`;
+    })
+    .join("");
+  return `
+    <details class="${alertClass(text)} alert-fold" data-alert-key="${esc(key)}"${open}>
+      <summary>
+        <span><strong>${esc(String(count))}</strong> ${esc(label)}</span>
+        <span class="alert-fold-hint">Show list</span>
+      </summary>
+      <div class="alert-hosts">${chips}</div>
+    </details>
+  `;
+}
+
+function renderAlertHtml(text, openKeys) {
+  const down = /^(\d+) (live|standby) URL\(s\) down:\s*(.+)$/i.exec(text);
+  if (down) {
+    return renderDownAlert(text, down[2].toLowerCase(), Number(down[1]), down[3], openKeys);
+  }
+  return `<div class="${alertClass(text)}">${esc(text)}</div>`;
+}
+
 function renderAlerts(items, fallbackError) {
   const messages = [...(items || [])];
   if (switchNotice && Date.now() < switchNoticeUntil) {
@@ -861,10 +909,11 @@ function renderAlerts(items, fallbackError) {
     alertsEl.innerHTML = "";
     return;
   }
+  const openKeys = new Set(
+    [...alertsEl.querySelectorAll("details[open][data-alert-key]")].map((el) => el.dataset.alertKey),
+  );
   alertsEl.hidden = false;
-  alertsEl.innerHTML = messages
-    .map((text) => `<div class="${alertClass(text)}">${esc(text)}</div>`)
-    .join("");
+  alertsEl.innerHTML = messages.map((text) => renderAlertHtml(text, openKeys)).join("");
 }
 
 function tickCountdown() {
@@ -908,13 +957,18 @@ async function refresh() {
       }
     }
     if (ownerLink) {
-      ownerLink.hidden = signedIn;
+      ownerLink.hidden = false;
+      ownerLink.classList.toggle("is-here", isOwnerView());
+    }
+    const monitorNav = document.getElementById("nav-monitor");
+    if (monitorNav) {
+      monitorNav.classList.toggle("is-here", !owner);
     }
     if (publicLink) {
-      publicLink.hidden = !signedIn;
+      publicLink.hidden = true;
     }
     if (watchLink) {
-      watchLink.hidden = !signedIn;
+      watchLink.hidden = false;
     }
     if (playlistSection) {
       playlistSection.hidden = !signedIn;

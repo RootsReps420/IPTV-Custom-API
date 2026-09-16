@@ -1,5 +1,5 @@
 /* Shared styles for monitor, History, Info, and Watch.
- * Dark grid, IBM Plex Mono + Syne. Watch layout is full-width under .watch-*.
+ * Hub-like Inter on charcoal. Watch layout is full-width under .watch-*.
  * Bump ?v= on HTML links after changing this file.
  */
 
@@ -14,6 +14,7 @@
   --down: #ff6b6b;
   --warn: #f0c14a;
   --frequent: #ff7a18;
+  --font: Inter, "Segoe UI", sans-serif;
 }
 
 * {
@@ -26,7 +27,7 @@ body {
   min-height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--font);
 }
 
 .grid-bg {
@@ -73,8 +74,8 @@ header {
 
 h1,
 h2 {
-  font-family: Syne, sans-serif;
-  font-weight: 800;
+  font-family: var(--font);
+  font-weight: 700;
   margin: 0;
 }
 
@@ -205,6 +206,50 @@ h2 {
   background: rgba(255, 107, 107, 0.08);
   padding: 10px 12px;
   font-size: 13px;
+  border-radius: 12px;
+}
+
+.alert-fold summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.alert-fold summary::-webkit-details-marker {
+  display: none;
+}
+
+.alert-fold-hint {
+  color: inherit;
+  opacity: 0.7;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.alert-fold[open] .alert-fold-hint {
+  display: none;
+}
+
+.alert-hosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.alert-host {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  line-height: 1.3;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .alert.ok {
@@ -345,6 +390,39 @@ h2 {
   font-size: 12px;
 }
 
+.ip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ip-label {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ip-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ip-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text);
+  background: rgba(11, 14, 20, 0.45);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
 .check-line {
   margin-top: 8px;
   color: var(--muted);
@@ -373,8 +451,8 @@ h2 {
 }
 
 .url-group-head h3 {
-  font-family: Syne, sans-serif;
-  font-weight: 800;
+  font-family: var(--font);
+  font-weight: 700;
   font-size: 15px;
   letter-spacing: -0.02em;
   margin: 0;
@@ -509,6 +587,7 @@ tr:last-child td {
   appearance: none;
   background: transparent;
   border: 1px solid var(--up);
+  border-radius: 999px;
   color: var(--up);
   font: inherit;
   font-size: 11px;
@@ -814,6 +893,18 @@ tr.row-down td {
 
 .watch-body {
   min-height: 100vh;
+  background: #05070b;
+}
+
+.watch-body .dash-sky {
+  z-index: 0;
+}
+
+.watch-login,
+.watch-terms,
+.watch-app {
+  position: relative;
+  z-index: 1;
 }
 
 .watch-body:has(.watch-app:not([hidden])) {
@@ -825,9 +916,11 @@ tr.row-down td {
   position: relative;
   width: min(420px, calc(100% - 40px));
   margin: 80px auto;
-  background: var(--panel);
-  border: 1px solid var(--line);
+  background: rgba(16, 20, 28, 0.82);
+  border: 1px solid rgba(42, 58, 77, 0.9);
+  border-radius: 18px;
   padding: 28px 24px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
 }
 
 .watch-login h1 {
@@ -841,9 +934,11 @@ tr.row-down td {
 }
 
 .watch-terms-card {
-  background: var(--panel);
-  border: 1px solid var(--line);
+  background: rgba(16, 20, 28, 0.82);
+  border: 1px solid rgba(42, 58, 77, 0.9);
+  border-radius: 18px;
   padding: 28px 24px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
 }
 
 .watch-terms-card h1 {
@@ -910,10 +1005,11 @@ tr.row-down td {
   appearance: none;
   background: var(--panel-2);
   border: 1px solid var(--line);
+  border-radius: 10px;
   color: var(--text);
   font: inherit;
   font-size: 14px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   text-transform: none;
   letter-spacing: 0;
 }
@@ -1038,13 +1134,13 @@ tr.row-down td {
   flex-direction: column;
   gap: 8px;
   padding: 16px 10px 12px;
-  background: #0b0e14;
-  border-right: 1px solid var(--line);
+  background: rgba(11, 14, 20, 0.92);
+  border-right: 1px solid rgba(42, 58, 77, 0.85);
 }
 
 .watch-brand,
 .watch-mark {
-  font-family: Syne, sans-serif;
+  font-family: var(--font);
   font-weight: 800;
   font-size: 28px;
   letter-spacing: 0;
@@ -1074,12 +1170,13 @@ tr.row-down td {
   appearance: none;
   background: transparent;
   border: 0;
+  border-radius: 10px;
   color: var(--muted);
   font: inherit;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
   text-align: left;
-  padding: 14px 12px;
+  padding: 12px 12px;
   cursor: pointer;
 }
 
@@ -1093,16 +1190,17 @@ tr.row-down td {
 .watch-rail-btn.is-here,
 .watch-rail-btn:hover {
   color: var(--up);
-  font-weight: 700;
+  font-weight: 600;
   background: rgba(125, 255, 195, 0.12);
-  box-shadow: inset 3px 0 0 var(--up);
+  box-shadow: none;
 }
 
 .watch-slots {
   margin: 8px 4px 4px;
   padding: 12px 12px 10px;
-  border: 1px solid var(--line);
-  background: var(--panel);
+  border: 1px solid rgba(42, 58, 77, 0.9);
+  border-radius: 14px;
+  background: rgba(16, 20, 28, 0.72);
 }
 
 .watch-slots span {
@@ -1117,7 +1215,7 @@ tr.row-down td {
   display: block;
   margin-top: 4px;
   color: var(--up);
-  font-family: Syne, sans-serif;
+  font-family: var(--font);
   font-weight: 800;
   font-size: 28px;
   letter-spacing: 0.04em;
@@ -1141,7 +1239,7 @@ tr.row-down td {
   appearance: none;
   background: transparent;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 10px;
   color: var(--muted);
   font: inherit;
   font-size: 11px;
@@ -1182,8 +1280,8 @@ tr.row-down td {
 
 .watch-cats {
   overflow: auto;
-  background: var(--panel);
-  border-right: 1px solid var(--line);
+  background: rgba(16, 20, 28, 0.88);
+  border-right: 1px solid rgba(42, 58, 77, 0.85);
   padding: 10px 8px;
   display: flex;
   flex-direction: column;
@@ -1195,7 +1293,7 @@ tr.row-down td {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(320px, 1.15fr) minmax(300px, 40%);
-  background: #080a0f;
+  background: rgba(8, 10, 15, 0.72);
 }
 
 .watch-channel-col {
@@ -1939,7 +2037,7 @@ tr.row-down td {
 }
 
 .watch-season h3 {
-  font-family: Syne, sans-serif;
+  font-family: var(--font);
   font-size: 14px;
   margin: 0 0 8px;
 }
