@@ -1,0 +1,5 @@
+<resources>
+    <color name="portal_bg">#FF07090D</color>
+    <color name="portal_accent">#FF7DFFC3</color>
+    <color name="portal_banner">#FF10141C</color>
+</resources>

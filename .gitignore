@@ -9,6 +9,7 @@ config/playlists.yaml
 config/urls.yaml
 config/player.yaml
 config/watch_users.yaml
+config/watch_live_groups.yaml
 config/*.yaml.tmp
 state/
 .venv/
@@ -24,3 +25,16 @@ build/
 *.log
 .DS_Store
 Thumbs.db
+
+# Android player
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/captures/
+*.jks
+*.keystore
+*.apk
+*.aab

@@ -34,6 +34,17 @@ const nowNext = document.getElementById("now-next");
 const nowClock = document.getElementById("now-clock");
 const nowProgressWrap = document.getElementById("now-progress-wrap");
 const nowProgress = document.getElementById("now-progress");
+const videoWrap = document.getElementById("watch-video-wrap");
+const vodChrome = document.getElementById("vod-chrome");
+const vodHit = document.getElementById("vod-hit");
+const vodSeekRange = document.getElementById("vod-seek-range");
+const vodSeekTime = document.getElementById("vod-seek-time");
+const vodSeekBack = document.getElementById("vod-seek-back");
+const vodSeekFwd = document.getElementById("vod-seek-fwd");
+const vodPlayBtn = document.getElementById("vod-play");
+const vodMuteBtn = document.getElementById("vod-mute");
+const vodVol = document.getElementById("vod-vol");
+const vodFsBtn = document.getElementById("vod-fs");
 const categoryList = document.getElementById("category-list");
 const itemList = document.getElementById("item-list");
 const watchStage = document.getElementById("watch-stage");
@@ -86,6 +97,28 @@ function canPlayNativeHls() {
   return Boolean(video.canPlayType && video.canPlayType("application/vnd.apple.mpegurl"));
 }
 
+function isAppleHlsClient() {
+  const ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/i.test(ua)) {
+    return true;
+  }
+  if (navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints) > 1) {
+    return true;
+  }
+  return /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Android/i.test(ua);
+}
+
+function canPlayHevc() {
+  try {
+    return Boolean(
+      video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') ||
+        video.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function preferNativeHls() {
   // Safari, all iOS browsers (Chrome/Firefox/Edge on iPhone are WebKit),
   // and any engine without MPEG-TS MSE: use HLS instead of mpegts.js.
@@ -101,11 +134,13 @@ function liveExtensions() {
 }
 
 function vodExtensions(preferred) {
-  const ext = String(preferred || "mp4").replace(/^\./, "") || "mp4";
-  if (preferNativeHls()) {
-    return [...new Set(["m3u8", ext, "mp4", "mkv"])];
+  void preferred;
+  // Only Safari / iOS. Chrome's canPlayType("hls") is a maybe on some builds
+  // and must not send VOD down the HLS wrapper (that path never starts).
+  if (isAppleHlsClient()) {
+    return ["m3u8"];
   }
-  return [...new Set([ext, "mp4", "m3u8", "mkv", "ts"])];
+  return ["mp4"];
 }
 
 function meUrl() {
@@ -490,6 +525,11 @@ let lastLiveResume = 0;
 let lastMediaTime = 0;
 let lastMediaTimeAt = 0;
 let vodRuntimeSec = null;
+let vodSeekOffset = 0;
+let vodScrubbing = false;
+let vodSeeking = false;
+let vodChromeTimer = 0;
+let vodWaitTimer = 0;
 let memoryPlayId = "";
 let stallReports = 0;
 
@@ -506,7 +546,8 @@ function paintBufferButtons() {
   if (!bufferRow) {
     return;
   }
-  bufferRow.hidden = !canPlayMpegTs();
+  const live = Boolean(state.playingLiveId) || state.playingKind === "live";
+  bufferRow.hidden = !canPlayMpegTs() || !live;
   const key = bufferKey();
   bufferRow.querySelectorAll("[data-buf]").forEach((button) => {
     button.classList.toggle("is-here", button.getAttribute("data-buf") === key);
@@ -524,7 +565,24 @@ function showWatchSpinner(on) {
   if (!watchSpinner) {
     return;
   }
+  if (!on) {
+    window.clearTimeout(vodWaitTimer);
+    vodWaitTimer = 0;
+  }
   watchSpinner.hidden = !on;
+}
+
+function showVodWaitSpinner() {
+  window.clearTimeout(vodWaitTimer);
+  vodWaitTimer = window.setTimeout(() => {
+    vodWaitTimer = 0;
+    if (!playing || video.paused || state.playingLiveId) {
+      return;
+    }
+    if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+      showWatchSpinner(true);
+    }
+  }, 500);
 }
 
 function clearLiveStallTimer() {
@@ -909,18 +967,289 @@ function formatRuntime(seconds) {
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
-function paintVodRuntime() {
-  if (!vodRuntimeSec || state.playingLiveId) {
+function vodLength() {
+  if (vodRuntimeSec && vodRuntimeSec > 0) {
+    return vodRuntimeSec;
+  }
+  const native = Number(video.duration);
+  if (Number.isFinite(native) && native > 1) {
+    return native + vodSeekOffset;
+  }
+  return 0;
+}
+
+function vodClock() {
+  return Math.max(0, vodSeekOffset + (Number(video.currentTime) || 0));
+}
+
+function vodBufferedEnd() {
+  if (!video.buffered || !video.buffered.length) {
+    return 0;
+  }
+  try {
+    return video.buffered.end(video.buffered.length - 1);
+  } catch {
+    return 0;
+  }
+}
+
+function vodCanNativeSeek(at) {
+  const local = at - vodSeekOffset;
+  if (!Number.isFinite(local) || local < 0) {
+    return false;
+  }
+  if (hls && video.seekable && video.seekable.length) {
+    for (let i = 0; i < video.seekable.length; i += 1) {
+      if (local >= video.seekable.start(i) && local <= video.seekable.end(i)) {
+        return true;
+      }
+    }
+  }
+  const end = vodBufferedEnd();
+  return end > 0.5 && local <= Math.max(0, end - 0.35);
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function isTouchIos() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function isVodPlay() {
+  return state.playingKind === "movie" || state.playingKind === "series";
+}
+
+function vodUsesOverlay() {
+  return isVodPlay() && !isTouchIos();
+}
+
+function paintVodPlayBtn() {
+  if (!vodPlayBtn) {
     return;
   }
-  const played = Math.max(0, video.currentTime || 0);
+  const paused = video.paused || video.ended;
+  vodPlayBtn.textContent = paused ? "▶" : "❚❚";
+  vodPlayBtn.setAttribute("aria-label", paused ? "Play" : "Pause");
+}
+
+function paintVodMuteBtn() {
+  if (!vodMuteBtn) {
+    return;
+  }
+  const muted = video.muted || video.volume === 0;
+  vodMuteBtn.textContent = muted ? "🔇" : "🔊";
+  vodMuteBtn.setAttribute("aria-label", muted ? "Unmute" : "Mute");
+}
+
+function showVodChrome() {
+  if (!vodChrome || vodChrome.hidden) {
+    return;
+  }
+  vodChrome.classList.add("is-on");
+  if (videoWrap) {
+    videoWrap.classList.remove("is-vod-idle");
+  }
+  window.clearTimeout(vodChromeTimer);
+  if (video.paused || vodScrubbing) {
+    return;
+  }
+  const dock = vodChrome.querySelector(".watch-vod-dock");
+  if (dock && dock.matches(":hover")) {
+    return;
+  }
+  vodChromeTimer = window.setTimeout(() => {
+    if (video.paused || vodScrubbing) {
+      return;
+    }
+    vodChrome.classList.remove("is-on");
+    if (videoWrap) {
+      videoWrap.classList.add("is-vod-idle");
+    }
+  }, 2200);
+}
+
+function setPlayerChrome() {
+  const overlay = vodUsesOverlay();
+  video.controls = !overlay;
+  if (vodChrome) {
+    vodChrome.hidden = !overlay;
+    if (!overlay) {
+      vodChrome.classList.remove("is-on");
+    }
+  }
+  if (videoWrap) {
+    videoWrap.classList.toggle("is-vod-idle", false);
+  }
+  if (overlay) {
+    const stored = Number(localStorage.getItem("watch_volume"));
+    if (Number.isFinite(stored) && stored >= 0 && stored <= 1) {
+      video.volume = stored;
+      video.muted = stored === 0;
+    }
+    if (vodVol) {
+      vodVol.value = String(video.muted ? 0 : video.volume);
+    }
+    paintVodPlayBtn();
+    paintVodMuteBtn();
+    showVodChrome();
+  }
+}
+
+function toggleVodPlay() {
+  if (video.paused || video.ended) {
+    const play = video.play();
+    if (play && typeof play.catch === "function") {
+      play.catch(() => {});
+    }
+  } else {
+    video.pause();
+  }
+  paintVodPlayBtn();
+  showVodChrome();
+}
+
+function toggleVodMute() {
+  video.muted = !video.muted;
+  if (!video.muted && video.volume === 0) {
+    video.volume = 0.5;
+  }
+  if (!video.muted) {
+    localStorage.setItem("watch_volume", String(video.volume));
+  }
+  if (vodVol) {
+    vodVol.value = String(video.muted ? 0 : video.volume);
+  }
+  paintVodMuteBtn();
+  showVodChrome();
+}
+
+function toggleVodFs() {
+  const node = videoWrap || video;
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.().catch(() => {});
+    return;
+  }
+  if (node.requestFullscreen) {
+    node.requestFullscreen().catch(() => {});
+    return;
+  }
+  video.webkitEnterFullscreen?.();
+}
+
+function paintVodSeek(at) {
+  const overlay = vodUsesOverlay();
+  const length = vodLength();
+  const pos = Math.max(0, Math.min(length || 0, at == null ? vodClock() : at));
+  if (vodChrome) {
+    vodChrome.hidden = !overlay;
+  }
   if (nowNext) {
+    nowNext.hidden = overlay;
+  }
+  if (vodSeekTime) {
+    vodSeekTime.textContent = length
+      ? `${formatRuntime(pos)} / ${formatRuntime(length)}`
+      : "0:00 / 0:00";
+  }
+  if (vodSeekRange && length) {
+    vodSeekRange.style.setProperty("--seek-pct", `${(pos / length) * 100}%`);
+    if (!vodScrubbing) {
+      vodSeekRange.value = String(Math.round((pos / length) * 1000));
+    }
+  }
+  paintVodPlayBtn();
+}
+
+function rangeToVodTime() {
+  const length = vodLength();
+  const raw = Number(vodSeekRange && vodSeekRange.value);
+  if (!length || !Number.isFinite(raw)) {
+    return 0;
+  }
+  return (raw / 1000) * length;
+}
+
+async function seekVod(seconds) {
+  if (state.playingLiveId || vodSeeking) {
+    return;
+  }
+  const length = vodLength();
+  if (!length) {
+    return;
+  }
+  const target = Math.max(0, Math.min(length - 0.25, Number(seconds) || 0));
+  if (Math.abs(target - vodClock()) < 0.4) {
+    paintVodSeek(target);
+    return;
+  }
+  if (vodCanNativeSeek(target)) {
+    try {
+      video.currentTime = Math.max(0, target - vodSeekOffset);
+      paintVodSeek(target);
+      return;
+    } catch {
+      /* remux restart below */
+    }
+  }
+  const item = state.playingItem;
+  const kind = state.playingKind;
+  if (!item || (kind !== "movie" && kind !== "series")) {
+    return;
+  }
+  vodSeeking = true;
+  showWatchSpinner(true);
+  const gen = ++playGen;
+  // Abort the current Magnum pull before asking for a new one.
+  destroyPlayers();
+  vodSeekOffset = target;
+  paintVodSeek(target);
+  await waitMs(400);
+  if (gen !== playGen) {
+    vodSeeking = false;
+    return;
+  }
+  const streamId = String(item.stream_id || item.id || "");
+  const ext = String(item.container_extension || "mp4").replace(/^\./, "");
+  try {
+    await playSources(kind === "movie" ? "movie" : "series", streamId, vodExtensions(ext), gen);
+  } catch (error) {
+    if (gen !== playGen) {
+      return;
+    }
+    vodSeekOffset = 0;
+    showBanner(error.message, "bad");
+  } finally {
+    if (gen === playGen) {
+      vodSeeking = false;
+      showWatchSpinner(false);
+    }
+  }
+}
+
+function paintVodRuntime() {
+  if (!vodRuntimeSec || state.playingLiveId) {
+    if (state.playingLiveId) {
+      setPlayerChrome();
+    }
+    return;
+  }
+  if (vodScrubbing) {
+    return;
+  }
+  const played = vodClock();
+  if (nowNext && !vodUsesOverlay()) {
+    nowNext.hidden = false;
     nowNext.textContent = `${formatRuntime(played)} / ${formatRuntime(vodRuntimeSec)}`;
   }
-  if (nowProgressWrap && nowProgress) {
-    nowProgressWrap.hidden = false;
-    nowProgress.style.width = `${Math.min(100, (played / vodRuntimeSec) * 100)}%`;
+  if (nowProgressWrap) {
+    nowProgressWrap.hidden = true;
   }
+  paintVodSeek(played);
 }
 
 function setVodRuntime(seconds) {
@@ -934,6 +1263,19 @@ function setVodRuntime(seconds) {
 
 function clearVodRuntime() {
   vodRuntimeSec = null;
+  vodSeekOffset = 0;
+  vodScrubbing = false;
+  vodSeeking = false;
+  if (vodChrome) {
+    vodChrome.hidden = true;
+    vodChrome.classList.remove("is-on");
+  }
+  if (nowNext) {
+    nowNext.hidden = false;
+  }
+  if (videoWrap) {
+    videoWrap.classList.remove("is-vod-idle");
+  }
 }
 
 function progressPct(start, stop) {
@@ -1358,7 +1700,12 @@ function destroyPlayers() {
     tsPlayer = null;
   }
   video.pause();
-  video.removeAttribute("src");
+  try {
+    video.removeAttribute("src");
+    video.src = "";
+  } catch {
+    /* ignore */
+  }
   video.load();
 }
 
@@ -1381,6 +1728,11 @@ function stopPlayback() {
   }
   destroyPlayers();
   resetStreamInfo();
+  paintBufferButtons();
+  setPlayerChrome();
+  if (isVodPlay()) {
+    paintVodSeek();
+  }
 }
 
 async function releaseSlot() {
@@ -1419,6 +1771,19 @@ function mediaUrl(kind, streamId, ext) {
   if (state.mediaToken) {
     params.set("k", state.mediaToken);
   }
+  if (kind !== "live") {
+    const src = String(state.playingItem?.container_extension || "mp4").replace(/^\./, "");
+    if (src && src !== "m3u8" && src !== "mpd") {
+      params.set("src", src);
+    }
+    params.set("vc", canPlayHevc() ? "h264,hevc" : "h264");
+    if (vodSeekOffset >= 1) {
+      params.set("start", String(Math.floor(vodSeekOffset)));
+    }
+    if (canPlayNativeHls()) {
+      params.set("cb", String(Date.now()));
+    }
+  }
   return `/api/player/media/${kind}/${encodeURIComponent(streamId)}.${ext}?${params}`;
 }
 
@@ -1440,7 +1805,7 @@ function attachHls(url) {
     };
     if (!window.Hls || !window.Hls.isSupported()) {
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = url;
+        video.src = vodSeekOffset >= 1 ? `${url}#t=${Math.floor(vodSeekOffset)}` : url;
         done(true, "native");
         return;
       }
@@ -1453,6 +1818,7 @@ function attachHls(url) {
       },
       liveSyncDurationCount: 5,
       liveMaxLatencyDurationCount: 12,
+      startPosition: vodSeekOffset >= 1 ? vodSeekOffset : -1,
     });
     const onError = (_event, info) => {
       if (info?.fatal) {
@@ -1477,10 +1843,12 @@ function attachHls(url) {
 }
 
 function playNow() {
-  video.muted = false;
-  video.defaultMuted = false;
-  if (!Number.isFinite(video.volume) || video.volume === 0) {
-    video.volume = 1;
+  if (!vodUsesOverlay()) {
+    video.muted = false;
+    video.defaultMuted = false;
+    if (!Number.isFinite(video.volume) || video.volume === 0) {
+      video.volume = 1;
+    }
   }
   if (!liveHold && video.playbackRate !== 1) {
     video.playbackRate = 1;
@@ -1617,9 +1985,14 @@ async function playSources(kind, streamId, extensions, gen) {
     const url = mediaUrl(kind, streamId, ext);
     try {
       if (ext === "m3u8") {
-        // iOS AVPlayer: play() must stay in the tap turn; awaiting hls.js loses the gesture.
-        if (canPlayNativeHls() && !(window.Hls && window.Hls.isSupported())) {
+        // Safari / iOS: native HLS only. hls.js MSE on desktop Safari never
+        // starts VOD (clock stuck at 0:00). iOS has no MSE.
+        if (canPlayNativeHls()) {
+          if (kind !== "live") {
+            showWatchSpinner(true);
+          }
           video.src = url;
+          video.load();
           playNow();
           if (kind === "live") {
             startLivePaceOnly();
@@ -1647,9 +2020,11 @@ async function playSources(kind, streamId, extensions, gen) {
         });
       } else {
         video.src = url;
-        video.muted = false;
-        video.defaultMuted = false;
-        video.volume = 1;
+        if (!vodUsesOverlay()) {
+          video.muted = false;
+          video.defaultMuted = false;
+          video.volume = 1;
+        }
         if (kind !== "live") {
           showWatchSpinner(true);
         }
@@ -1695,6 +2070,8 @@ function playLive(item) {
   state.playingKind = "live";
   state.playingItem = item;
   setPreview(item, { fallback: "Starting…" });
+  paintBufferButtons();
+  setPlayerChrome();
   showBanner("");
   try {
     playSources("live", String(item.stream_id), liveExtensions(), gen).catch((error) => {
@@ -1751,6 +2128,8 @@ function playLive(item) {
 
 async function playVod(item) {
   const gen = ++playGen;
+  vodSeekOffset = 0;
+  clearVodRuntime();
   state.playingLiveId = "";
   state.playingKind = "movie";
   state.playingItem = item;
@@ -1759,7 +2138,10 @@ async function playVod(item) {
   nowEpg.textContent = item.plot || "";
   setProgress(0, 0);
   setVodRuntime(parseRuntime(item.duration_secs, { seconds: true }) || parseRuntime(item.duration));
-  if (!vodRuntimeSec && nowNext) {
+  paintBufferButtons();
+  setPlayerChrome();
+  paintVodSeek();
+  if (!vodRuntimeSec && nowNext && !vodUsesOverlay()) {
     nowNext.textContent = "Runtime…";
   }
   showBanner("");
@@ -1788,6 +2170,8 @@ async function playVod(item) {
 
 async function playEpisode(episode, seriesName) {
   const gen = ++playGen;
+  vodSeekOffset = 0;
+  clearVodRuntime();
   state.playingLiveId = "";
   state.playingKind = "series";
   state.playingItem = {
@@ -1803,7 +2187,10 @@ async function playEpisode(episode, seriesName) {
     parseRuntime(episode.duration_secs || episode.info?.duration_secs, { seconds: true }) ||
       parseRuntime(episode.duration || episode.info?.duration)
   );
-  if (!vodRuntimeSec && nowNext) {
+  paintBufferButtons();
+  setPlayerChrome();
+  paintVodSeek();
+  if (!vodRuntimeSec && nowNext && !vodUsesOverlay()) {
     nowNext.textContent = "Runtime…";
   }
   showBanner("");
@@ -2485,7 +2872,11 @@ if (bufferRow) {
 }
 
 video.addEventListener("timeupdate", paintVodRuntime);
-video.addEventListener("loadedmetadata", captureStreamInfo);
+video.addEventListener("loadedmetadata", () => {
+  captureStreamInfo();
+  paintVodRuntime();
+});
+video.addEventListener("durationchange", paintVodRuntime);
 video.addEventListener("resize", captureStreamInfo);
 video.addEventListener("playing", () => {
   clearLiveStallTimer();
@@ -2495,6 +2886,11 @@ video.addEventListener("playing", () => {
   }
   showWatchSpinner(false);
   paintLiveBadge();
+});
+video.addEventListener("canplay", () => {
+  if (!state.playingLiveId) {
+    showWatchSpinner(false);
+  }
 });
 video.addEventListener("pause", paintLiveBadge);
 video.addEventListener("ended", () => {
@@ -2512,8 +2908,8 @@ video.addEventListener("waiting", () => {
     return;
   }
   stallReports += 1;
-  showWatchSpinner(true);
   if (state.playingLiveId) {
+    showWatchSpinner(true);
     beginStallRecover();
     if (liveBadge && !liveBadge.hidden) {
       liveBadge.textContent = "BUFFERING";
@@ -2521,10 +2917,158 @@ video.addEventListener("waiting", () => {
     }
     return;
   }
+  showVodWaitSpinner();
 });
 video.addEventListener("stalled", () => {
   if (playing && state.playingLiveId && !liveHold) {
     beginStallRecover();
+  }
+});
+video.addEventListener("error", () => {
+  if (vodSeeking || state.playingLiveId || !playing) {
+    return;
+  }
+  if (!video.currentSrc) {
+    return;
+  }
+  const code = video.error && video.error.code;
+  if (code === 4) {
+    vodSeekOffset = 0;
+    showBanner("Playback failed. Click the title again to restart.", "bad");
+  }
+});
+
+if (vodSeekRange) {
+  vodSeekRange.addEventListener("pointerdown", () => {
+    vodScrubbing = true;
+    showVodChrome();
+  });
+  vodSeekRange.addEventListener("input", () => {
+    vodScrubbing = true;
+    paintVodSeek(rangeToVodTime());
+    showVodChrome();
+  });
+  vodSeekRange.addEventListener("change", () => {
+    vodScrubbing = false;
+    seekVod(rangeToVodTime()).catch(() => {});
+    showVodChrome();
+  });
+  vodSeekRange.addEventListener("pointerup", () => {
+    vodScrubbing = false;
+    showVodChrome();
+  });
+}
+if (vodSeekBack) {
+  vodSeekBack.addEventListener("click", () => {
+    seekVod(vodClock() - 10).catch(() => {});
+    showVodChrome();
+  });
+}
+if (vodSeekFwd) {
+  vodSeekFwd.addEventListener("click", () => {
+    seekVod(vodClock() + 30).catch(() => {});
+    showVodChrome();
+  });
+}
+if (vodPlayBtn) {
+  vodPlayBtn.addEventListener("click", () => {
+    toggleVodPlay();
+  });
+}
+if (vodMuteBtn) {
+  vodMuteBtn.addEventListener("click", () => {
+    toggleVodMute();
+  });
+}
+if (vodVol) {
+  vodVol.addEventListener("input", () => {
+    const level = Number(vodVol.value);
+    if (!Number.isFinite(level)) {
+      return;
+    }
+    video.volume = Math.max(0, Math.min(1, level));
+    video.muted = video.volume === 0;
+    if (!video.muted) {
+      localStorage.setItem("watch_volume", String(video.volume));
+    }
+    paintVodMuteBtn();
+    showVodChrome();
+  });
+}
+if (vodFsBtn) {
+  vodFsBtn.addEventListener("click", () => {
+    toggleVodFs();
+    showVodChrome();
+  });
+}
+if (vodHit) {
+  vodHit.addEventListener("click", (event) => {
+    event.preventDefault();
+    toggleVodPlay();
+  });
+  vodHit.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    toggleVodFs();
+  });
+}
+if (videoWrap) {
+  videoWrap.addEventListener("mousemove", () => {
+    if (vodUsesOverlay()) {
+      showVodChrome();
+    }
+  });
+  videoWrap.addEventListener("pointerdown", () => {
+    if (vodUsesOverlay()) {
+      showVodChrome();
+    }
+  });
+}
+video.addEventListener("play", () => {
+  paintVodPlayBtn();
+  if (vodUsesOverlay()) {
+    showVodChrome();
+  }
+});
+video.addEventListener("pause", () => {
+  paintVodPlayBtn();
+  if (vodUsesOverlay()) {
+    showVodChrome();
+  }
+});
+video.addEventListener("volumechange", paintVodMuteBtn);
+document.addEventListener("fullscreenchange", () => {
+  if (!vodFsBtn) {
+    return;
+  }
+  const on = Boolean(document.fullscreenElement);
+  vodFsBtn.setAttribute("aria-label", on ? "Exit full screen" : "Full screen");
+  vodFsBtn.title = on ? "Exit full screen" : "Full screen";
+});
+document.addEventListener("keydown", (event) => {
+  if (!vodUsesOverlay()) {
+    return;
+  }
+  const target = event.target;
+  if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+    return;
+  }
+  if (event.key === " " || event.code === "Space") {
+    event.preventDefault();
+    toggleVodPlay();
+  } else if (event.key === "f" || event.key === "F") {
+    event.preventDefault();
+    toggleVodFs();
+  } else if (event.key === "m" || event.key === "M") {
+    event.preventDefault();
+    toggleVodMute();
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    seekVod(vodClock() + 30).catch(() => {});
+    showVodChrome();
+  } else if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    seekVod(vodClock() - 10).catch(() => {});
+    showVodChrome();
   }
 });
 

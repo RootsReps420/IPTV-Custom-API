@@ -7,22 +7,34 @@
   <title>Info · Portal Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=23" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css?v=52" />
+  <link rel="stylesheet" href="/static/dash.css?v=4" />
 </head>
-<body>
-  <div class="grid-bg" aria-hidden="true"></div>
-  <header>
-    <div>
-      <p class="eyebrow">IPTV · EPGenius failover</p>
-      <div class="title-row">
+<body class="dash">
+  <div class="dash-sky" aria-hidden="true">
+    <div class="dash-nebula"></div>
+    <div class="dash-stars dash-stars-a"></div>
+    <div class="dash-stars dash-stars-b"></div>
+    <div class="dash-meteor"></div>
+  </div>
+  <div class="dash-app">
+    <div class="dash-top">
+      <nav class="dash-nav" aria-label="Pages">
+        <a href="/">Monitor</a>
+        <a href="/history">History</a>
+        <a href="/key" class="is-here" aria-current="page">Info</a>
+        <a href="/owner">Playlists</a>
+        <a href="/watch">Watch</a>
+      </nav>
+    </div>
+
+    <div class="dash-intro">
+      <div>
         <h1>Info</h1>
-        <a class="key-btn" href="/">Monitor</a>
-        <a class="key-btn" href="/history">History</a>
-        <a class="key-btn is-here" href="/key" aria-current="page">Info</a>
+        <p class="dash-sub">What the badges and actions mean</p>
       </div>
     </div>
-  </header>
 
   <section class="key-page">
     <article class="key-card">
@@ -176,5 +188,6 @@
       </p>
     </article>
   </section>
+  </div>
 </body>
 </html>

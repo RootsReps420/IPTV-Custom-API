@@ -25,6 +25,10 @@ const watchersSection = document.getElementById("watchers-section");
 const watchersBody = document.getElementById("watchers-body");
 const watchStatWrap = document.getElementById("stat-watch-wrap");
 const statWatch = document.getElementById("stat-watch");
+const liveGroupsSection = document.getElementById("live-groups-section");
+const liveGroupsList = document.getElementById("live-groups-list");
+const liveGroupsCount = document.getElementById("live-groups-count");
+const liveGroupsFilter = document.getElementById("live-groups-filter");
 const ownerLink = document.getElementById("owner-link");
 const publicLink = document.getElementById("public-link");
 const watchLink = document.getElementById("watch-link");
@@ -125,10 +129,20 @@ function poolBadge(item) {
   return `<span class="${cls}">${esc(label)}</span>`;
 }
 
+function ipRow(ips) {
+  const v4 = (ips || []).filter((ip) => ip && !String(ip).includes(":"));
+  if (!v4.length) {
+    return "";
+  }
+  const chips = v4
+    .map((ip) => `<span class="ip-chip" title="${esc(ip)}">${esc(ip)}</span>`)
+    .join("");
+  return `<div class="ip-row"><span class="ip-label">IP'S</span><div class="ip-chips">${chips}</div></div>`;
+}
+
 function card(item) {
   const state = item.healthy ? "up" : "down";
   const reason = item.fail_reason ? `<span>reason ${esc(item.fail_reason)}</span>` : "";
-  const ips = item.resolved_ips?.length ? `<span>ip ${esc(item.resolved_ips.join(", "))}</span>` : "";
   const playlists = item.playlists?.length ? `<span>playlists ${esc(item.playlists.join(", "))}</span>` : "";
   const check = item.healthy
     ? `check-pass completed: ${item.consecutive_successes || 0}`
@@ -153,9 +167,9 @@ function card(item) {
         ${flag("tcp", item.tcp_ok)}
         ${flag("mpeg-ts", item.stream_ok)}
         ${reason}
-        ${ips}
         ${playlists}
       </div>
+      ${ipRow(item.resolved_ips)}
       <div class="check-line">${esc(check)} <span class="sep">|</span> ${esc(downs)}</div>
     </article>
   `;
@@ -219,6 +233,10 @@ let switchNoticeUntil = 0;
 // Keep Choose URL open across 4s re-renders.
 let pickOpen = null;
 let pickValue = "";
+let liveGroups = [];
+let liveGroupsView = "all";
+let liveGroupsLoaded = false;
+const togglingGroups = new Set();
 
 function hostOf(url) {
   try {
@@ -603,6 +621,118 @@ async function kickWatchUser(username) {
   }
 }
 
+function liveGroupMatches(row) {
+  if (liveGroupsView === "on" && !row.enabled) {
+    return false;
+  }
+  if (liveGroupsView === "off" && row.enabled) {
+    return false;
+  }
+  const query = (liveGroupsFilter?.value || "").trim().toLowerCase();
+  if (!query) {
+    return true;
+  }
+  return String(row.name || "").toLowerCase().includes(query);
+}
+
+function renderLiveGroups() {
+  if (!liveGroupsList) {
+    return;
+  }
+  const on = liveGroups.filter((row) => row.enabled).length;
+  const total = liveGroups.length;
+  if (liveGroupsCount) {
+    liveGroupsCount.textContent = total ? `${on} on · ${total - on} off` : "";
+  }
+  document.querySelectorAll("[data-groups-view]").forEach((button) => {
+    button.classList.toggle("is-here", button.getAttribute("data-groups-view") === liveGroupsView);
+  });
+  if (!total) {
+    liveGroupsList.innerHTML = `<div class="empty-events">No live groups in the Watch playlist yet. Wait for a Magnum refresh.</div>`;
+    return;
+  }
+  const rows = liveGroups.filter(liveGroupMatches);
+  if (!rows.length) {
+    liveGroupsList.innerHTML = `<div class="empty-events">No groups match that filter.</div>`;
+    return;
+  }
+  liveGroupsList.innerHTML = rows
+    .map((row) => {
+      const enabled = !!row.enabled;
+      const busy = togglingGroups.has(String(row.category_id || ""));
+      const count = Number(row.channels) || 0;
+      const label = count === 1 ? "1 channel" : `${count} channels`;
+      return `<div class="live-group-row ${enabled ? "is-on" : "is-off"}">
+        <span class="live-group-copy">
+          <span class="live-group-name">${esc(row.name)}</span>
+          <span class="live-group-meta">${esc(label)}</span>
+        </span>
+        <button type="button" class="live-group-toggle${busy ? " busy" : ""}" role="switch" aria-checked="${enabled ? "true" : "false"}" data-group-id="${esc(row.category_id)}" ${busy ? "disabled" : ""}>${enabled ? "On" : "Off"}</button>
+      </div>`;
+    })
+    .join("");
+}
+
+async function loadLiveGroups() {
+  if (!isOwnerView() || !liveGroupsSection) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/live-groups", { credentials: "same-origin" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(apiError(data, `HTTP ${response.status}`));
+    }
+    liveGroups = data.groups || [];
+    liveGroupsLoaded = true;
+    renderLiveGroups();
+  } catch (error) {
+    liveGroupsLoaded = false;
+    if (liveGroupsList) {
+      liveGroupsList.innerHTML = `<div class="empty-events">Could not load live groups: ${esc(error.message)}</div>`;
+    }
+  }
+}
+
+async function toggleLiveGroup(categoryId, enabled) {
+  const id = String(categoryId || "").trim();
+  if (!id || togglingGroups.has(id)) {
+    return;
+  }
+  togglingGroups.add(id);
+  const previous = liveGroups;
+  const current = liveGroups.find((row) => String(row.category_id || "") === id);
+  liveGroups = liveGroups.map((row) =>
+    String(row.category_id || "") === id ? { ...row, enabled } : row
+  );
+  renderLiveGroups();
+  try {
+    const response = await fetch("/api/live-groups", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        category_id: id,
+        name: current?.name || "",
+        enabled,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(apiError(data, `HTTP ${response.status}`));
+    }
+    liveGroups = data.groups || [];
+  } catch (error) {
+    liveGroups = previous;
+    switchNotice = `Could not update live group: ${error.message}`;
+    switchNoticeUntil = Date.now() + 8000;
+    renderAlerts([switchNotice]);
+  } finally {
+    togglingGroups.delete(id);
+    renderLiveGroups();
+  }
+}
+
 if (playlistBody) {
   playlistBody.addEventListener("click", (event) => {
     const revert = event.target.closest("[data-revert]");
@@ -665,6 +795,34 @@ if (watchersBody) {
   });
 }
 
+if (liveGroupsList) {
+  liveGroupsList.addEventListener("click", (event) => {
+    const row = event.target.closest(".live-group-row");
+    if (!row) {
+      return;
+    }
+    const button = row.querySelector("[data-group-id]");
+    if (!button || button.disabled) {
+      return;
+    }
+    const next = button.getAttribute("aria-checked") !== "true";
+    toggleLiveGroup(button.getAttribute("data-group-id"), next);
+  });
+}
+
+if (liveGroupsFilter) {
+  liveGroupsFilter.addEventListener("input", () => {
+    renderLiveGroups();
+  });
+}
+
+document.querySelectorAll("[data-groups-view]").forEach((button) => {
+  button.addEventListener("click", () => {
+    liveGroupsView = button.getAttribute("data-groups-view") || "all";
+    renderLiveGroups();
+  });
+});
+
 function renderEvents(items) {
   if (!items || !items.length) {
     eventList.innerHTML = `<li class="empty-events">No events yet this process. Downs, recoveries, and swaps show up here.</li>`;
@@ -698,6 +856,44 @@ function alertClass(text) {
   return "alert";
 }
 
+function alertHostLabel(url) {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return String(url).replace(/^https?:\/\//i, "");
+  }
+}
+
+function renderDownAlert(text, kind, count, rawList, openKeys) {
+  const urls = rawList.split(",").map((item) => item.trim()).filter(Boolean);
+  const key = `${kind}-${count}`;
+  const open = openKeys.has(key) ? " open" : "";
+  const label = count === 1 ? `${kind} URL down` : `${kind} URLs down`;
+  const chips = urls
+    .map((url) => {
+      const host = alertHostLabel(url);
+      return `<span class="alert-host" title="${esc(url)}">${esc(host)}</span>`;
+    })
+    .join("");
+  return `
+    <details class="${alertClass(text)} alert-fold" data-alert-key="${esc(key)}"${open}>
+      <summary>
+        <span><strong>${esc(String(count))}</strong> ${esc(label)}</span>
+        <span class="alert-fold-hint">Show list</span>
+      </summary>
+      <div class="alert-hosts">${chips}</div>
+    </details>
+  `;
+}
+
+function renderAlertHtml(text, openKeys) {
+  const down = /^(\d+) (live|standby) URL\(s\) down:\s*(.+)$/i.exec(text);
+  if (down) {
+    return renderDownAlert(text, down[2].toLowerCase(), Number(down[1]), down[3], openKeys);
+  }
+  return `<div class="${alertClass(text)}">${esc(text)}</div>`;
+}
+
 function renderAlerts(items, fallbackError) {
   const messages = [...(items || [])];
   if (switchNotice && Date.now() < switchNoticeUntil) {
@@ -713,10 +909,11 @@ function renderAlerts(items, fallbackError) {
     alertsEl.innerHTML = "";
     return;
   }
+  const openKeys = new Set(
+    [...alertsEl.querySelectorAll("details[open][data-alert-key]")].map((el) => el.dataset.alertKey),
+  );
   alertsEl.hidden = false;
-  alertsEl.innerHTML = messages
-    .map((text) => `<div class="${alertClass(text)}">${esc(text)}</div>`)
-    .join("");
+  alertsEl.innerHTML = messages.map((text) => renderAlertHtml(text, openKeys)).join("");
 }
 
 function tickCountdown() {
@@ -760,13 +957,18 @@ async function refresh() {
       }
     }
     if (ownerLink) {
-      ownerLink.hidden = signedIn;
+      ownerLink.hidden = false;
+      ownerLink.classList.toggle("is-here", isOwnerView());
+    }
+    const monitorNav = document.getElementById("nav-monitor");
+    if (monitorNav) {
+      monitorNav.classList.toggle("is-here", !owner);
     }
     if (publicLink) {
-      publicLink.hidden = !signedIn;
+      publicLink.hidden = true;
     }
     if (watchLink) {
-      watchLink.hidden = !signedIn;
+      watchLink.hidden = false;
     }
     if (playlistSection) {
       playlistSection.hidden = !signedIn;
@@ -776,6 +978,12 @@ async function refresh() {
     }
     if (watchersSection) {
       watchersSection.hidden = !signedIn;
+    }
+    if (liveGroupsSection) {
+      liveGroupsSection.hidden = !signedIn;
+      if (signedIn && isOwnerView() && !liveGroupsLoaded) {
+        loadLiveGroups();
+      }
     }
     modePill.hidden = !data.dry_run;
     tickCountdown();

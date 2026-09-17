@@ -6,21 +6,25 @@ streamed in chunks (never loaded fully into RAM). Gzip must stay off these
 paths in Caddy.
 
 VOD is remuxed with ffmpeg to fragmented MP4 for Chrome/Android.
-H.264/HEVC video is copied; older codecs (MPEG-4 ASP / Xvid, MPEG-2, …) are
-transcoded to H.264. Audio is always AAC. Matroska/E-AC3 is otherwise unplayable.
+H.264 is copied; HEVC is copied only when the browser said it can play it
+(Safari / Edge). MPEG-4 ASP / unknown video is transcoded to H.264 ultrafast 720p.
+ffmpeg reads Magnum over HTTP (not a pipe) so MP4/MKV headers can be sought.
+Audio is always AAC. Skip uses ffmpeg -ss on a new source connection.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import secrets
 import shutil
+import signal
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import quote, urlencode, urljoin, urlparse
 
 import httpx
 from fastapi import HTTPException
@@ -36,8 +40,10 @@ _FETCH_MAX_TICKETS = 40_000
 _URI_ATTR = re.compile(r'URI="([^"]+)"')
 _HLS_HINTS = ("application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl")
 _HTTP: httpx.AsyncClient | None = None
-_BROWSER_COPY_VIDEO = frozenset({"h264", "hevc", "h265", "av1", "vp8", "vp9"})
-_PEEK_BYTES = 1024 * 1024
+_ALWAYS_COPY_VIDEO = frozenset({"h264", "av1", "vp8", "vp9"})
+_vod_run = asyncio.Lock()
+_vod_procs: set[asyncio.subprocess.Process] = set()
+_codec_by_url: dict[str, str] = {}
 _CODEC_MARKERS = (
     ("h264", (b"V_MPEG4/ISO/AVC", b"avc1", b"avcC")),
     ("hevc", (b"V_MPEGH/ISO/HEVC", b"V_MPEGI/ISO/HEVC", b"hvc1", b"hev1", b"hvcC")),
@@ -194,6 +200,10 @@ def ffmpeg_bin() -> str | None:
     return shutil.which("ffmpeg")
 
 
+def _vod_media_type(container: str) -> str:
+    return "video/mp2t" if container == "mpegts" else "video/mp4"
+
+
 def video_codec_from_peek(data: bytes) -> str:
     """Read codec from MKV/MP4 headers so we do not open a second Xtream connection."""
     blob = data or b""
@@ -203,50 +213,161 @@ def video_codec_from_peek(data: bytes) -> str:
     return ""
 
 
-def _vod_ffmpeg_args(binary: str, *, copy_video: bool, codec: str) -> list[str]:
+def _copy_video_for_browser(codec: str, *, allow_hevc: bool) -> bool:
+    if codec in _ALWAYS_COPY_VIDEO:
+        return True
+    if codec in {"hevc", "h265"}:
+        return allow_hevc
+    return False
+
+
+async def probe_vod_video_codec(url: str) -> str:
+    """ffprobe the Magnum URL. Peeking 1MB of HEVC/MP4 often mislabels the codec."""
+    hit = _codec_by_url.get(url)
+    if hit:
+        return hit
+    probe = shutil.which("ffprobe")
+    if not probe:
+        return ""
+    args = [probe, "-v", "error", "-user_agent", _STREAM_UA]
+    if url.startswith("https://"):
+        args.extend(["-tls_verify", "0"])
+    args.extend(
+        [
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "csv=p=0",
+            url,
+        ]
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return ""
+    try:
+        async with asyncio.timeout(12):
+            out, _err = await proc.communicate()
+    except TimeoutError:
+        _stop_proc(proc)
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+        return ""
+    raw = (out or b"").decode("utf-8", "replace").strip().splitlines()
+    name = (raw[0] if raw else "").split(",")[0].strip().lower()
+    if name in {"h265"}:
+        name = "hevc"
+    if name:
+        if len(_codec_by_url) >= 80:
+            _codec_by_url.pop(next(iter(_codec_by_url)))
+        _codec_by_url[url] = name
+    return name
+
+
+def _vod_ffmpeg_args(
+    binary: str,
+    *,
+    copy_video: bool,
+    codec: str,
+    source: str = "pipe:0",
+    start_sec: float = 0.0,
+    container: str = "mp4",
+) -> list[str]:
+    # Skip: one -ss before -i (HTTP Range). A second -ss after -i made Magnum
+    # re-read from the start while the first remux was still open.
     args = [
         binary,
         "-hide_banner",
         "-loglevel",
         "error",
-        "-probesize",
-        "5000000",
-        "-analyzeduration",
-        "5000000",
-        "-fflags",
-        "+genpts",
-        "-i",
-        "pipe:0",
-        "-map",
-        "0:V:0",
-        "-map",
-        "0:a:0?",
     ]
+    if source != "pipe:0":
+        args.extend(
+            [
+                "-user_agent",
+                _STREAM_UA,
+                "-seekable",
+                "1",
+                "-multiple_requests",
+                "1",
+                "-reconnect",
+                "1",
+                "-reconnect_streamed",
+                "1",
+                "-reconnect_delay_max",
+                "2",
+            ]
+        )
+        if source.startswith("https://"):
+            args.extend(["-tls_verify", "0"])
+    if start_sec >= 1.0:
+        args.extend(["-ss", f"{start_sec:.3f}"])
+    args.extend(
+        [
+            "-probesize",
+            "5000000",
+            "-analyzeduration",
+            "5000000",
+            "-fflags",
+            "+genpts",
+            "-i",
+            source,
+        ]
+    )
+    args.extend(
+        [
+            "-map",
+            "0:V:0",
+            "-map",
+            "0:a:0?",
+        ]
+    )
     if copy_video:
         args.extend(["-c:v", "copy"])
-        if codec in {"h264"}:
+        if container == "mpegts":
+            if codec in {"h264"}:
+                args.extend(["-bsf:v", "h264_mp4toannexb"])
+            elif codec in {"hevc", "h265"}:
+                args.extend(["-bsf:v", "hevc_mp4toannexb"])
+        elif codec in {"h264"}:
             args.extend(["-tag:v", "avc1"])
         elif codec in {"hevc", "h265"}:
             args.extend(["-tag:v", "hvc1"])
     else:
+        # 2-core Haswell cannot realtime-encode 1080p. MPEG-4 ASP / skip must
+        # stay ultrafast 720p or the browser sits on a spinner forever.
         args.extend(
             [
                 "-c:v",
                 "libx264",
                 "-preset",
-                "veryfast",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-threads",
+                "2",
                 "-pix_fmt",
                 "yuv420p",
                 "-profile:v",
-                "high",
+                "main",
                 "-crf",
-                "20",
+                "23",
+                "-bf",
+                "0",
                 "-g",
                 "48",
                 "-keyint_min",
                 "48",
                 "-vf",
-                "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                r"scale=-2:min(720\,ih)",
             ]
         )
     args.extend(
@@ -255,20 +376,75 @@ def _vod_ffmpeg_args(binary: str, *, copy_video: bool, codec: str) -> list[str]:
             "aac",
             "-ac",
             "2",
+            "-ar",
+            "48000",
             "-b:a",
-            "192k",
+            "160k",
             "-max_muxing_queue_size",
             "1024",
             "-flush_packets",
             "1",
-            "-movflags",
-            "frag_keyframe+empty_moov+default_base_moof",
-            "-f",
-            "mp4",
-            "pipe:1",
+            "-avoid_negative_ts",
+            "make_zero",
         ]
     )
+    if container == "mpegts":
+        args.extend(["-f", "mpegts", "pipe:1"])
+    else:
+        args.extend(
+            [
+                "-movflags",
+                "frag_keyframe+empty_moov+default_base_moof",
+                "-f",
+                "mp4",
+                "pipe:1",
+            ]
+        )
     return args
+
+
+def vod_hls_wrapper(
+    *,
+    kind: str,
+    stream_id: str,
+    sid: str,
+    access_token: str,
+    src_ext: str,
+    start_sec: float = 0.0,
+    duration_sec: float = 0.0,
+    video_caps: str = "",
+) -> Response:
+    """Live HLS wrapping a TS pipe. Never ENDLIST; never claim the movie runtime as the segment length."""
+    params: dict[str, str] = {"sid": sid}
+    if access_token:
+        params["k"] = access_token
+    if src_ext:
+        params["src"] = src_ext
+    if start_sec >= 1:
+        params["start"] = str(int(start_sec))
+    caps = "".join(ch for ch in (video_caps or "").lower() if ch.isalnum() or ch == ",")[:32]
+    if caps:
+        params["vc"] = caps
+    segment = f"/api/player/media/{quote(kind, safe='')}/{quote(stream_id, safe='')}.ts?{urlencode(params)}"
+    # duration_sec used to become TARGETDURATION (the whole movie). Safari then
+    # waited for the remux to finish before showing a frame.
+    _ = duration_sec
+    body = (
+        "#EXTM3U\n"
+        "#EXT-X-VERSION:3\n"
+        "#EXT-X-TARGETDURATION:6\n"
+        "#EXT-X-MEDIA-SEQUENCE:0\n"
+        "#EXTINF:6.0,\n"
+        f"{segment}\n"
+    )
+    return Response(
+        content=body,
+        media_type="application/vnd.apple.mpegurl",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 def _stop_proc(proc: asyncio.subprocess.Process) -> None:
@@ -280,80 +456,136 @@ def _stop_proc(proc: asyncio.subprocess.Process) -> None:
         return
 
 
+async def _pgrep_exact(name: str) -> list[int]:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "pgrep",
+            "-x",
+            name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return []
+    out, _err = await proc.communicate()
+    pids: list[int] = []
+    for token in (out or b"").decode("utf-8", "replace").split():
+        if token.isdigit():
+            pids.append(int(token))
+    return pids
+
+
+async def _pkill_exact(name: str) -> None:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "pkill",
+            "-x",
+            name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+    except OSError:
+        return
+
+
+async def _stop_all_vod() -> None:
+    """One Magnum VOD pull at a time. Kill remux/probe leftovers and wait until they are gone."""
+    tracked = list(_vod_procs)
+    extra = await _pgrep_exact("ffmpeg")
+    extra += await _pgrep_exact("ffprobe")
+    had = bool(tracked) or bool(extra)
+    _vod_procs.clear()
+    for proc in tracked:
+        _stop_proc(proc)
+    for proc in tracked:
+        try:
+            await asyncio.wait_for(proc.wait(), 3)
+        except TimeoutError:
+            _stop_proc(proc)
+            try:
+                await asyncio.wait_for(proc.wait(), 2)
+            except TimeoutError:
+                pass
+    await _pkill_exact("ffmpeg")
+    await _pkill_exact("ffprobe")
+    deadline = time.monotonic() + 6.0
+    while time.monotonic() < deadline:
+        ffmpeg_pids = await _pgrep_exact("ffmpeg")
+        probe_pids = await _pgrep_exact("ffprobe")
+        leftover = ffmpeg_pids + probe_pids
+        if not leftover:
+            break
+        for pid in leftover:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        await asyncio.sleep(0.12)
+    if had:
+        await asyncio.sleep(0.4)
+
+
 async def remux_vod_to_browser_mp4(
-    url: str, on_bytes: Callable[[int], None] | None = None
+    url: str,
+    on_bytes: Callable[[int], None] | None = None,
+    start_sec: float = 0.0,
+    container: str = "mp4",
+    allow_hevc: bool = False,
 ) -> StreamingResponse:
-    """Fragmented MP4 for Chrome: copy H.264/HEVC, transcode older video, AAC audio."""
+    """Fragmented MP4/TS: ffmpeg reads Magnum over HTTP so it can seek headers."""
     binary = ffmpeg_bin()
     if not binary:
         raise RuntimeError("ffmpeg is not installed")
-    client = http_client()
-    try:
-        request = client.build_request(
-            "GET",
-            url,
-            headers={"User-Agent": _STREAM_UA, "Accept": "*/*"},
+    async with _vod_run:
+        await _stop_all_vod()
+        start_sec = max(0.0, float(start_sec or 0.0))
+        codec = await probe_vod_video_codec(url)
+        copy_video = _copy_video_for_browser(codec, allow_hevc=allow_hevc)
+        logger.info(
+            "VOD remux %s (%s) start=%.0fs hevc_ok=%s",
+            "copy" if copy_video else "libx264",
+            codec or "unknown",
+            start_sec,
+            allow_hevc,
         )
-        response = await client.send(request, stream=True)
-    except httpx.RequestError as exc:
-        logger.warning("VOD remux source failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="Could not reach the stream.") from exc
-    if response.status_code >= 400:
-        await response.aclose()
-        raise HTTPException(status_code=502, detail=f"Stream HTTP {response.status_code}")
+        args = _vod_ffmpeg_args(
+            binary,
+            copy_video=copy_video,
+            codec=codec,
+            source=url,
+            start_sec=start_sec,
+            container=container,
+        )
+        return await _stream_vod_ffmpeg(
+            args, feed=None, on_bytes=on_bytes, media_type=_vod_media_type(container)
+        )
 
-    stream = response.aiter_bytes(64 * 1024)
-    peek = bytearray()
-    codec = ""
-    try:
-        async for chunk in stream:
-            peek.extend(chunk)
-            codec = video_codec_from_peek(bytes(peek))
-            if codec or len(peek) >= _PEEK_BYTES:
-                break
-    except Exception:
-        await response.aclose()
-        raise HTTPException(status_code=502, detail="Could not read the stream.") from None
-    if not peek:
-        await response.aclose()
-        raise HTTPException(status_code=502, detail="Empty stream.")
 
-    copy_video = codec in _BROWSER_COPY_VIDEO
-    logger.info("VOD remux %s (%s)", "copy" if copy_video else "libx264", codec or "unknown")
-    ffmpeg_args = _vod_ffmpeg_args(binary, copy_video=copy_video, codec=codec)
+async def _stream_vod_ffmpeg(
+    ffmpeg_args: list[str],
+    *,
+    feed: Callable[[asyncio.subprocess.Process], object] | None,
+    on_bytes: Callable[[int], None] | None,
+    media_type: str = "video/mp4",
+) -> StreamingResponse:
     proc_kwargs: dict[str, object] = {
-        "stdin": asyncio.subprocess.PIPE,
+        "stdin": asyncio.subprocess.PIPE if feed is not None else asyncio.subprocess.DEVNULL,
         "stdout": asyncio.subprocess.PIPE,
         "stderr": asyncio.subprocess.PIPE,
         "limit": 8 * 1024 * 1024,
+        "start_new_session": True,
     }
     try:
         proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
     except TypeError:
         proc_kwargs.pop("limit", None)
-        proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
-
-    async def feed_source() -> None:
         try:
-            if proc.stdin is not None:
-                proc.stdin.write(peek)
-                await proc.stdin.drain()
-            async for chunk in stream:
-                if proc.stdin is None or proc.returncode is not None:
-                    break
-                try:
-                    proc.stdin.write(chunk)
-                    await proc.stdin.drain()
-                except (BrokenPipeError, ConnectionResetError):
-                    break
-            if proc.stdin and proc.returncode is None:
-                proc.stdin.close()
-                await proc.stdin.wait_closed()
-        except Exception:
-            logger.warning("VOD remux input stopped")
-            _stop_proc(proc)
-        finally:
-            await response.aclose()
+            proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
+        except TypeError:
+            proc_kwargs.pop("start_new_session", None)
+            proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
+    _vod_procs.add(proc)
 
     async def drain_stderr() -> None:
         if proc.stderr is None:
@@ -369,9 +601,10 @@ async def remux_vod_to_browser_mp4(
         except Exception:
             return
 
+    feed_task = asyncio.create_task(feed(proc)) if feed is not None else None
+    err_task = asyncio.create_task(drain_stderr())
+
     async def body() -> AsyncIterator[bytes]:
-        feed_task = asyncio.create_task(feed_source())
-        err_task = asyncio.create_task(drain_stderr())
         try:
             assert proc.stdout is not None
             while True:
@@ -382,15 +615,20 @@ async def remux_vod_to_browser_mp4(
                     on_bytes(len(chunk))
                 yield chunk
         finally:
+            _vod_procs.discard(proc)
             _stop_proc(proc)
-            for task in (feed_task, err_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(feed_task, err_task, proc.wait(), return_exceptions=True)
+            tasks = [err_task, proc.wait()]
+            if feed_task is not None:
+                if not feed_task.done():
+                    feed_task.cancel()
+                tasks.append(feed_task)
+            if not err_task.done():
+                err_task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     return StreamingResponse(
         body(),
-        media_type="video/mp4",
+        media_type=media_type,
         headers={
             "Cache-Control": "no-store",
             "X-Accel-Buffering": "no",
@@ -406,12 +644,22 @@ async def proxy_url(
     range_header: str | None = None,
     assume_mpegts: bool = False,
     remux_aac: bool = False,
+    remux_container: str = "mp4",
     access_token: str = "",
     on_bytes: Callable[[int], None] | None = None,
+    start_sec: float = 0.0,
+    allow_hevc: bool = False,
 ) -> Response:
     """Stream upstream bytes. Live TS skips body-peek so the player gets headers immediately."""
     if remux_aac and ffmpeg_bin() and not assume_mpegts:
-        return await remux_vod_to_browser_mp4(url, on_bytes=on_bytes)
+        fmt = "mpegts" if remux_container == "mpegts" else "mp4"
+        return await remux_vod_to_browser_mp4(
+            url,
+            on_bytes=on_bytes,
+            start_sec=start_sec,
+            container=fmt,
+            allow_hevc=allow_hevc,
+        )
 
     headers = {"User-Agent": _STREAM_UA, "Accept": "*/*"}
     if range_header:

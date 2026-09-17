@@ -251,6 +251,7 @@ Do not put the status webhook in the swaps channel.
 | `state/` | **No** | 24h failure stamps, 90-day history, Watch cache. |
 | `logs/monitor.log` | **No** | Rotating log. |
 | `src/iptv_monitor/` | Yes | The app. |
+| `android/` | Yes | Sideloadable TV/phone player (Xtream/M3U on device). See [android/README.md](android/README.md). |
 | `deploy/` | Yes | systemd unit, Caddy **template** (replace hostname and hashes on the server). |
 
 `current_dns` must be the portal URL **as EPGenius expects it** (usually `http://host`, no extra port unless the panel really uses one).

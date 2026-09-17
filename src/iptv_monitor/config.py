@@ -4,7 +4,8 @@ YAML under config/ is re-read every monitor cycle (and Watch re-reads player.yam
 per request), so playlist / URL / settings edits apply without a restart.
 Python code changes still need `systemctl restart iptv-monitor`.
 
-Gitignored live files: playlists.yaml, urls.yaml, player.yaml, watch_users.yaml, .env
+Gitignored live files: playlists.yaml, urls.yaml, player.yaml, watch_users.yaml,
+watch_live_groups.yaml, .env
 Examples in this folder are safe to commit.
 """
 
@@ -105,6 +106,7 @@ class Paths(BaseModel):
     urls: Path
     player: Path
     watch_users: Path
+    watch_live_groups: Path
     env: Path
 
 
@@ -149,6 +151,7 @@ def resolve_paths(root: Path | None = None) -> Paths:
         urls=config_dir / "urls.yaml",
         player=config_dir / "player.yaml",
         watch_users=config_dir / "watch_users.yaml",
+        watch_live_groups=config_dir / "watch_live_groups.yaml",
         env=base / ".env",
     )
 
@@ -160,6 +163,7 @@ def ensure_runtime_configs(paths: Paths) -> None:
         (paths.urls, paths.config_dir / "urls.example.yaml"),
         (paths.player, paths.config_dir / "player.example.yaml"),
         (paths.watch_users, paths.config_dir / "watch_users.example.yaml"),
+        (paths.watch_live_groups, paths.config_dir / "watch_live_groups.example.yaml"),
     )
     for dest, example in pairs:
         if not dest.exists() and example.exists():
