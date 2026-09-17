@@ -16,6 +16,8 @@ from typing import Iterable
 
 import httpx
 
+from iptv_monitor.vpn import magnum_client_kwargs
+
 # MPEG-TS packets are 188 bytes; the sync byte is always 0x47.
 TS_SYNC = 0x47
 TS_PACKET = 188
@@ -80,7 +82,7 @@ def _deny_status(hops: list[int]) -> int | None:
 
 async def _read_prefix(client: httpx.AsyncClient, url: str, nbytes: int) -> tuple[int, str, bytes, str, list[int]]:
     """Read a short prefix then hang up so we do not download a full live channel."""
-    async with client.stream("GET", url) as response:
+    async with client.stream("GET", url, headers={"Connection": "close"}) as response:
         ctype = (response.headers.get("content-type") or "").split(";")[0]
         chunks = b""
         async for chunk in response.aiter_bytes():
@@ -263,11 +265,15 @@ async def check_xtream_mpegts(
     credentials: Credentials,
     timeout: float,
     insecure: bool,
+    *,
+    via_vpn: bool = False,
 ) -> tuple[bool | None, str | None, str | None]:
     """Probe a portal with each playlist account until one yields MPEG-TS.
 
     Returns (ok, fail_reason, detail). ok is None only when we had no credentials.
     If every account 404s / fails auth, we still mark the URL down so it is not a swap target.
+    Dashboard Magnum/Strong 8K probes stay on the public NIC. via_vpn is only
+    for /watch Magnum HTTP when a caller opts in.
     """
     if not credentials:
         return None, None, None
@@ -275,12 +281,14 @@ async def check_xtream_mpegts(
     timeout_cfg = httpx.Timeout(timeout, connect=min(5.0, timeout))
     last_skip: tuple[str | None, str | None] = (None, None)
     last_fail: tuple[str | None, str | None] | None = None
+    extra = magnum_client_kwargs() if via_vpn else {}
     async with _SEM:
         async with httpx.AsyncClient(
             verify=not insecure,
             follow_redirects=True,
             timeout=timeout_cfg,
             headers={"User-Agent": _STREAM_UA, "Accept": "*/*"},
+            **extra,
         ) as client:
             for username, password in credentials:
                 ok, reason, detail = await _try_credentials(client, base, username, password)

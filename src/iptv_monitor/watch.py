@@ -558,7 +558,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
             url,
             rewrite_uris=not live_ts,
             sid=sid,
-            range_header=None if vod else request.headers.get("range"),
+            range_header=None if (vod or live_ts) else request.headers.get("range"),
             assume_mpegts=live_ts,
             remux_aac=vod,
             remux_container=remux_container,

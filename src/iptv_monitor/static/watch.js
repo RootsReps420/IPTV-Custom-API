@@ -4,8 +4,9 @@
  * Playback: live is MPEG-TS (mpegts.js) on Chrome/Edge/Android. Safari and
  * every iOS browser use native HLS. Live TS: play() in the same click as
  * the channel (Chrome autoplay). Never pause to "fill" — that blocks the
- * later play() and drops the panel socket. Stash + 0.97× if the cushion
- * thins; reconnect only after a real stall. Panel user/pass never appear here.
+ * later play() and drops the panel socket. Keep rate at 1×. Reconnect only
+ * when the HTTP pipe is dead (error / EOF), not on ordinary buffer waits.
+ * Panel user/pass never appear here.
  */
 
 const loginPanel = document.getElementById("login-panel");
@@ -61,7 +62,7 @@ const termsOk = document.getElementById("terms-ok");
 
 /* Live stash is capped at 512KB so FHD still shows a frame quickly.
  * Multi-MB stash used to wait to fill before the first MSE append.
- * target = seconds of cushion after play (0.97× if it thins). */
+ * target is leftover profile metadata; live no longer eases playbackRate. */
 const BUFFER_PROFILES = {
   small: { target: 3, stash: 256 * 1024 },
   medium: { target: 6, stash: 512 * 1024 },
@@ -629,14 +630,23 @@ function paintLiveBadge() {
   liveBadge.classList.remove("is-behind");
 }
 
+function liveLoadUrl(url) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    parsed.searchParams.set("r", String(Date.now()));
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return url;
+  }
+}
+
 function tickLiveFrozen() {
-  /* Play-button freeze (paused/ended/EOF) never fires `waiting`, so the 4.5s
-   * stall reconnect never runs. If currentTime is stuck ~4s while we still
-   * own the channel, re-open the TS socket. Leave a real user pause alone. */
+  /* Last resort only: clock frozen ~20s with an empty buffer, and no HTTP
+   * error yet. Ordinary `waiting` must not reopen the Magnum socket. */
   if (!playing || !state.playingLiveId || !liveMpeg || !liveTsUrl || liveHold) {
     return;
   }
-  if (liveReconnectTimer) {
+  if (liveReconnectTimer || video.paused) {
     return;
   }
   const t = video.currentTime;
@@ -650,42 +660,19 @@ function tickLiveFrozen() {
     lastMediaTimeAt = now;
     return;
   }
-  if (now - lastMediaTimeAt < 4000) {
+  if (now - lastMediaTimeAt < 20000) {
     return;
   }
-  if (video.paused && !video.ended && bufferedAhead() > 1.5) {
+  if (bufferedAhead() >= 0.4) {
+    lastMediaTimeAt = now;
     return;
   }
   lastMediaTimeAt = now;
   scheduleLiveReconnect(liveTsUrl, playGen);
 }
 
-function tickLivePace() {
-  if (!playing || !state.playingLiveId || liveHold) {
-    return;
-  }
-  tickLiveFrozen();
-  if (video.paused) {
-    return;
-  }
-  if (lastLiveResume && performance.now() - lastLiveResume > 30000) {
-    liveReconnectTries = 0;
-  }
-  const ahead = bufferedAhead();
-  const { target } = bufferProfile();
-  const low = Math.min(2.5, Math.max(1.2, target * 0.28));
-  const recover = Math.min(target * 0.55, Math.max(low + 1.5, 4));
-  if (ahead > 0.2 && ahead < low) {
-    if (Math.abs(video.playbackRate - 0.97) > 0.001) {
-      video.playbackRate = 0.97;
-    }
-  } else if (ahead >= recover && video.playbackRate !== 1) {
-    video.playbackRate = 1;
-  }
-}
-
 function tickLiveFill() {
-  /* Spinner until the first media, then pace. Never pause the element. */
+  /* Spinner until the first media. Never pause the element; never 0.97×. */
   if (!playing || !state.playingLiveId) {
     return;
   }
@@ -712,31 +699,10 @@ function tickLiveFill() {
     showWatchSpinner(true);
     return;
   }
-  tickLivePace();
-}
-
-function beginStallRecover() {
-  /* Do not pause here: that stops the TS loader and IPTV panels drop the
-   * socket. If we are still starved after a few seconds, reconnect. */
-  if (!playing || !state.playingLiveId || liveHold) {
-    return;
+  if (lastLiveResume && performance.now() - lastLiveResume > 30000) {
+    liveReconnectTries = 0;
   }
-  if (lastLiveResume && performance.now() - lastLiveResume < 2500) {
-    return;
-  }
-  if (!liveMpeg || !liveTsUrl || liveStallTimer || liveReconnectTimer) {
-    return;
-  }
-  liveStallTimer = window.setTimeout(() => {
-    liveStallTimer = null;
-    if (!playing || !state.playingLiveId || liveHold) {
-      return;
-    }
-    if (bufferedAhead() >= 1.5 && video.readyState >= 3) {
-      return;
-    }
-    scheduleLiveReconnect(liveTsUrl, playGen);
-  }, 4500);
+  tickLiveFrozen();
 }
 
 function scheduleLiveReconnect(url, gen) {
@@ -748,6 +714,7 @@ function scheduleLiveReconnect(url, gen) {
     return;
   }
   liveReconnectTries += 1;
+  const delay = Math.min(8000, 1500 + (liveReconnectTries - 1) * 1000);
   liveReconnectTimer = window.setTimeout(() => {
     liveReconnectTimer = null;
     if (gen !== playGen || !playing || !state.playingLiveId) {
@@ -765,7 +732,7 @@ function scheduleLiveReconnect(url, gen) {
       tsPlayer = null;
     }
     attachMpegTs(url, gen, true);
-  }, 700);
+  }, delay);
 }
 
 function startLiveWatch() {
@@ -1882,7 +1849,7 @@ function attachMpegTs(url, gen, live) {
       isLive: Boolean(live),
       hasAudio: true,
       hasVideo: true,
-      url,
+      url: live ? liveLoadUrl(url) : url,
       withCredentials: true,
     },
     {
@@ -1912,8 +1879,7 @@ function attachMpegTs(url, gen, live) {
       if (
         live &&
         (kind === "NetworkError" ||
-          kind === "MediaError" ||
-          /network|http|status|eof|unrecoverable|mediaerror|loader/i.test(`${kind} ${msg}`))
+          /network|http|status|eof|unrecoverable|loader/i.test(`${kind} ${msg}`))
       ) {
         scheduleLiveReconnect(url, gen);
         return;
@@ -2910,7 +2876,6 @@ video.addEventListener("waiting", () => {
   stallReports += 1;
   if (state.playingLiveId) {
     showWatchSpinner(true);
-    beginStallRecover();
     if (liveBadge && !liveBadge.hidden) {
       liveBadge.textContent = "BUFFERING";
       liveBadge.classList.add("is-behind");
@@ -2921,7 +2886,7 @@ video.addEventListener("waiting", () => {
 });
 video.addEventListener("stalled", () => {
   if (playing && state.playingLiveId && !liveHold) {
-    beginStallRecover();
+    showWatchSpinner(true);
   }
 });
 video.addEventListener("error", () => {

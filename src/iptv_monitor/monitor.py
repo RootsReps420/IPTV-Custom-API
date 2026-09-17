@@ -392,6 +392,18 @@ class Monitor:
                     pool,
                     claimed[key],
                 )
+        magnum_busy = False
+        watch = getattr(self, "watch_service", None)
+        if watch is not None:
+            try:
+                magnum_busy = await watch.presence.has_playing()
+            except Exception:  # noqa: BLE001
+                magnum_busy = False
+        if magnum_busy:
+            logger.info(
+                "Skipping Magnum MPEG-TS health probes while /watch is using the panel"
+            )
+
         results: dict[str, HealthResult] = {}
         for pool, urls in grouped.items():
             creds = [
@@ -399,7 +411,10 @@ class Monitor:
                 for item in cfg.playlists
                 if normalize_pool(item.pool) == pool and item.username and item.password
             ]
-            batch = await check_urls(urls, settings, creds or None)
+            skip_stream = magnum_busy and pool == "magnum"
+            batch = await check_urls(
+                urls, settings, creds or None, skip_stream=skip_stream
+            )
             results.update(batch)
 
         live_set = set(live_keys)

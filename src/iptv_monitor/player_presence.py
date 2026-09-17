@@ -56,6 +56,13 @@ class PresenceTracker:
         self._lock = asyncio.Lock()
         self._byte_add: dict[str, int] = {}
 
+    async def has_playing(self) -> bool:
+        """True if any /watch tab is mid-playback (live or VOD)."""
+        now = time.monotonic()
+        async with self._lock:
+            self._prune_unlocked(now)
+            return any(row.playing for row in self._rows.values())
+
     def add_bytes(self, play_id: str, n: int) -> None:
         """Called from the media proxy on each chunk. No await / no lock."""
         pid = (play_id or "").strip()

@@ -13,11 +13,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css?v=57" />
-  <link rel="stylesheet" href="/static/dash.css?v=2" />
+  <link rel="stylesheet" href="/static/dash.css?v=8" />
 </head>
 <body class="watch-body">
   <div class="dash-sky is-static" aria-hidden="true">
     <div class="dash-nebula"></div>
+    <div class="dash-dust"></div>
     <div class="dash-stars dash-stars-a"></div>
     <div class="dash-stars dash-stars-b"></div>
   </div>
@@ -169,7 +170,7 @@
           <div class="watch-buffer" id="buffer-row">
             <span>Live buffer</span>
             <button type="button" data-buf="small" title="Start immediately. Smaller jitter cushion.">Small</button>
-            <button type="button" data-buf="medium" title="Start immediately. Default cushion; eases to 0.97× if it thins.">Medium</button>
+            <button type="button" data-buf="medium" title="Start immediately. Default live cushion.">Medium</button>
             <button type="button" data-buf="large" title="Start immediately. Larger cushion after playback has started.">Large</button>
           </div>
           <div class="watch-now">
@@ -188,6 +189,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=68"></script>
+  <script src="/static/watch.js?v=69"></script>
 </body>
 </html>

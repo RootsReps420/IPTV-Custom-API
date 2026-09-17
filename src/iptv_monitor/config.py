@@ -63,6 +63,8 @@ class Settings(BaseModel):
     watch_sync_seconds: int = 14400
     # Movies/Shows catalogue. Same 4-hour cadence as live + EPG.
     watch_library_sync_seconds: int = 14400
+    # WireGuard interface for /watch Magnum traffic. Empty = auto-detect surfshark/wg0.
+    watch_vpn_interface: str = ""
 
 
 class Playlist(BaseModel):
@@ -172,7 +174,11 @@ def ensure_runtime_configs(paths: Paths) -> None:
 
 def load_settings(path: Path) -> Settings:
     data = _safe_yaml().load(path.read_text(encoding="utf-8")) or {}
-    return Settings.model_validate(data)
+    settings = Settings.model_validate(data)
+    from iptv_monitor.vpn import set_interface_preference
+
+    set_interface_preference(settings.watch_vpn_interface)
+    return settings
 
 
 def load_playlists(path: Path) -> list[Playlist]:

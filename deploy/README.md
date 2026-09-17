@@ -34,6 +34,7 @@ sudo journalctl -u iptv-monitor -n 50 --no-pager
 | `config/player.yaml` | **No** | Watch portal + M3U. Magnum swaps rewrite `dns`. |
 | `config/watch_users.yaml` | **No** | Watch site hashes |
 | `config/watch_live_groups.yaml` | **No** | /watch Live TV group ON/OFF. Edited from `/owner`. Reloads without a restart. |
+| `deploy/surfshark.md` | Yes | Split-tunnel WireGuard for Magnum /watch. Keys stay on the VPS. |
 | `state/` | **No** | Failure history, URL history, Watch catalogue cache |
 | Live `/etc/caddy/Caddyfile` | **No** | Do **not** overwrite with `deploy/Caddyfile` without keeping live hashes and hostname |
 
@@ -106,9 +107,9 @@ Typical access:
 | Path | Login | What it shows |
 |------|--------|----------------|
 | `/` `/history` | Caddy (owner and optional read-only user) | Standby pool / 90-day history |
-| `/key` `/owner` | Caddy **owner only** | Legend, playlists, Switch, Watch kick |
+| `/key` `/owner` | Caddy **owner only** | Legend, playlists, Switch, Watch kick, Watch VPN |
 | `/api/public` `/api/history` | Same as `/` | JSON for those pages |
-| `/api/status` `/api/switch` `/api/switch-back` `/api/live-groups` | Owner only | Full snapshot, failover, Watch live-group toggles |
+| `/api/status` `/api/switch` `/api/switch-back` `/api/live-groups` `/api/vpn/*` | Owner only | Full snapshot, failover, Watch live-group toggles, VPN status / speed test |
 | `/watch` `/api/watch/*` `/api/player/*` | Watch site cookie (not Caddy) | Player, catalogue, media proxy |
 
 To rotate the owner password, generate a hash the way **this** Caddy build expects (Ubuntu 2.6.2 wants **base64** of the bcrypt string, not a raw `$2a$` line):
@@ -148,6 +149,12 @@ sudo systemctl restart iptv-monitor
 ```
 
 A private repo needs a deploy key (or keep copying files).
+
+---
+
+## Watch VPN (Surfshark)
+
+Split-tunnel WireGuard so `/watch` Magnum leaves through Surfshark while SSH/Caddy/Strong 8K stay on the public NIC. Setup: `deploy/surfshark.md`. Keys never go in git. Owner Playlists shows connected / city / a speed test once the interface is up.
 
 ---
 

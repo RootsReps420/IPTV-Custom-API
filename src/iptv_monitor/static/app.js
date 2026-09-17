@@ -29,6 +29,13 @@ const liveGroupsSection = document.getElementById("live-groups-section");
 const liveGroupsList = document.getElementById("live-groups-list");
 const liveGroupsCount = document.getElementById("live-groups-count");
 const liveGroupsFilter = document.getElementById("live-groups-filter");
+const vpnSection = document.getElementById("vpn-section");
+const vpnGrid = document.getElementById("vpn-grid");
+const vpnPill = document.getElementById("vpn-pill");
+const vpnSpeedBtn = document.getElementById("vpn-speed-btn");
+const vpnSpeedResult = document.getElementById("vpn-speed-result");
+const vpnStatWrap = document.getElementById("stat-vpn-wrap");
+const statVpn = document.getElementById("stat-vpn");
 const ownerLink = document.getElementById("owner-link");
 const publicLink = document.getElementById("public-link");
 const watchLink = document.getElementById("watch-link");
@@ -66,6 +73,80 @@ function fmtAge(seconds) {
   const h = Math.floor(n / 3600);
   const m = Math.floor((n % 3600) / 60);
   return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function fmtBytes(n) {
+  const v = Number(n) || 0;
+  if (v < 1024) {
+    return `${Math.round(v)} B`;
+  }
+  if (v < 1024 * 1024) {
+    return `${(v / 1024).toFixed(1)} KB`;
+  }
+  if (v < 1024 * 1024 * 1024) {
+    return `${(v / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(v / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+let vpnSpeedBusy = false;
+
+function vpnCell(label, value) {
+  return `<div class="vpn-cell"><span class="label">${esc(label)}</span><span class="value">${esc(value || "—")}</span></div>`;
+}
+
+function renderVpn(vpn) {
+  if (!vpnSection) {
+    return;
+  }
+  if (!vpn) {
+    vpnSection.hidden = true;
+    if (vpnStatWrap) {
+      vpnStatWrap.hidden = true;
+    }
+    return;
+  }
+  vpnSection.hidden = false;
+  if (vpnStatWrap) {
+    vpnStatWrap.hidden = false;
+  }
+  const connected = Boolean(vpn.connected);
+  if (vpnPill) {
+    vpnPill.textContent = connected ? "connected" : vpn.configured ? "down" : "not set up";
+    vpnPill.className = `pill ${connected ? "up" : "down"}`;
+  }
+  if (statVpn) {
+    if (connected) {
+      statVpn.textContent = vpn.location || "Connected";
+    } else if (vpn.configured) {
+      statVpn.textContent = "Down";
+    } else {
+      statVpn.textContent = "Not set up";
+    }
+  }
+  if (vpnGrid) {
+    vpnGrid.innerHTML = [
+      vpnCell("Location", connected ? vpn.location || "Connected" : "Not connected"),
+      vpnCell("Exit IP", vpn.exit_ip),
+      vpnCell("Endpoint", vpn.endpoint),
+      vpnCell("Interface", vpn.interface ? `${vpn.interface} · ${vpn.bind_ip || "no address"}` : ""),
+      vpnCell(
+        "Handshake",
+        vpn.handshake_seconds == null ? (connected ? "up" : "—") : `${fmtAge(vpn.handshake_seconds)} ago`,
+      ),
+      vpnCell("Traffic", `${fmtBytes(vpn.rx_bytes)} in · ${fmtBytes(vpn.tx_bytes)} out`),
+      vpnCell("Watch Magnum", vpn.watch_via_vpn ? "via VPN" : "public NIC"),
+    ].join("");
+  }
+  if (vpnSpeedBtn) {
+    vpnSpeedBtn.disabled = vpnSpeedBusy || !connected;
+  }
+  if (vpnSpeedResult && !vpnSpeedBusy && !vpnSpeedResult.textContent) {
+    vpnSpeedResult.textContent = connected
+      ? "Runs a 5MB download through the VPN."
+      : "Connect the VPS tunnel first.";
+    vpnSpeedResult.className = "vpn-speed-result";
+  }
 }
 
 function watchKindLabel(kind) {
@@ -273,6 +354,27 @@ function poolChoices(playlist) {
     });
 }
 
+function pickerIsMounted() {
+  if (!pickOpen || !playlistBody) {
+    return false;
+  }
+  const select = playlistBody.querySelector("[data-pick-url]");
+  return Boolean(select && select.getAttribute("data-pick-url") === pickOpen);
+}
+
+function syncPickerGoButton() {
+  const go = playlistBody && playlistBody.querySelector("[data-pick-go]");
+  const select = playlistBody && playlistBody.querySelector("[data-pick-url]");
+  if (!go || !select) {
+    return;
+  }
+  const option = select.selectedOptions && select.selectedOptions[0];
+  const healthy = Boolean(select.value) && option && !option.disabled;
+  const busy = switching.has(select.getAttribute("data-pick-url"));
+  const dryRun = Boolean(latest && latest.dry_run);
+  go.disabled = !healthy || busy || dryRun;
+}
+
 function pickerMarkup(item, id, dryRun, busy) {
   if (pickOpen !== id) {
     return "";
@@ -313,11 +415,12 @@ function pickerMarkup(item, id, dryRun, busy) {
   `;
 }
 
-function renderPlaylists(items) {
-  // Re-render replaces innerHTML; restore Choose URL dropdown focus if it was open.
-  const keepPickerFocus = Boolean(
-    document.activeElement && document.activeElement.matches("[data-pick-url]")
-  );
+function renderPlaylists(items, { force = false } = {}) {
+  // Native <select> lists close if we replace innerHTML. Leave the open
+  // Choose URL picker alone until Close / Switch.
+  if (!force && pickerIsMounted()) {
+    return;
+  }
   const playlistCount = document.getElementById("playlist-count");
   if (playlistCount) {
     playlistCount.textContent = items.length ? `${items.length} loaded` : "none";
@@ -406,12 +509,6 @@ function renderPlaylists(items) {
       `;
     })
     .join("");
-  if (keepPickerFocus) {
-    const next = playlistBody.querySelector("[data-pick-url]");
-    if (next) {
-      next.focus();
-    }
-  }
 }
 
 function fmtRes(width, height) {
@@ -547,7 +644,7 @@ async function postSwitch(path, playlistId, failPrefix, extra = {}) {
   }
   switching.add(playlistId);
   if (latest) {
-    renderPlaylists(latest.playlists || []);
+    renderPlaylists(latest.playlists || [], { force: true });
   }
   try {
     const response = await fetch(path, {
@@ -772,16 +869,7 @@ if (playlistBody) {
     }
     pickOpen = select.getAttribute("data-pick-url");
     pickValue = select.value;
-    if (latest) {
-      const keepFocus = true;
-      renderPlaylists(latest.playlists || []);
-      if (keepFocus) {
-        const next = playlistBody.querySelector("[data-pick-url]");
-        if (next) {
-          next.focus();
-        }
-      }
-    }
+    syncPickerGoButton();
   });
 }
 
@@ -947,6 +1035,9 @@ async function refresh() {
     if (watchStatWrap) {
       watchStatWrap.hidden = !signedIn;
     }
+    if (vpnStatWrap) {
+      vpnStatWrap.hidden = !signedIn;
+    }
     if (signedIn) {
       statLive.textContent = `${counts.live_up ?? "—"}/${counts.live_total ?? "—"} up`;
       statPlaylists.textContent = String(counts.playlists ?? (data.playlists || []).length);
@@ -979,6 +1070,9 @@ async function refresh() {
     if (watchersSection) {
       watchersSection.hidden = !signedIn;
     }
+    if (vpnSection) {
+      vpnSection.hidden = !signedIn;
+    }
     if (liveGroupsSection) {
       liveGroupsSection.hidden = !signedIn;
       if (signedIn && isOwnerView() && !liveGroupsLoaded) {
@@ -993,6 +1087,9 @@ async function refresh() {
       renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false);
       renderPlaylists(data.playlists || []);
       renderWatchers(data.watch);
+      renderVpn(data.vpn);
+    } else {
+      renderVpn(null);
     }
     renderEvents(data.events || []);
   } catch (error) {
@@ -1006,3 +1103,40 @@ async function refresh() {
 refresh();
 setInterval(refresh, 4000);
 setInterval(tickCountdown, 1000);
+
+if (vpnSpeedBtn) {
+  vpnSpeedBtn.addEventListener("click", async () => {
+    if (vpnSpeedBusy) {
+      return;
+    }
+    vpnSpeedBusy = true;
+    vpnSpeedBtn.disabled = true;
+    if (vpnSpeedResult) {
+      vpnSpeedResult.textContent = "Testing… this takes a few seconds.";
+      vpnSpeedResult.className = "vpn-speed-result";
+    }
+    try {
+      const response = await fetch("/api/vpn/speedtest", { method: "POST" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || `HTTP ${response.status}`);
+      }
+      const mbps = payload.download_mbps ?? "—";
+      const ping = payload.latency_ms == null ? "" : ` · ${payload.latency_ms} ms`;
+      if (vpnSpeedResult) {
+        vpnSpeedResult.textContent = `${mbps} Mbps download${ping}`;
+        vpnSpeedResult.className = "vpn-speed-result is-up";
+      }
+    } catch (error) {
+      if (vpnSpeedResult) {
+        vpnSpeedResult.textContent = error.message || "Speed test failed.";
+        vpnSpeedResult.className = "vpn-speed-result is-down";
+      }
+    } finally {
+      vpnSpeedBusy = false;
+      if (vpnSpeedBtn) {
+        vpnSpeedBtn.disabled = !(latest && latest.vpn && latest.vpn.connected);
+      }
+    }
+  });
+}

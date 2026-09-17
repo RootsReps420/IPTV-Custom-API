@@ -16,6 +16,7 @@ tcp_check_enabled: true
 http_check_enabled: false
 
 # Short HTTP MPEG-TS pull (what players use). Failures count toward failover.
+# Magnum probes are skipped while /watch is playing so they cannot steal the panel slot.
 stream_check_enabled: true
 
 dns_timeout_seconds: 5
@@ -41,6 +42,10 @@ frequent_failure_window_hours: 24
 
 # History tab: how long to keep per-URL down events.
 history_retention_days: 90
+
+# Watch Magnum HTTP binds to this WireGuard interface when it is up.
+# Empty = auto-detect surfshark / wg0. SSH and Caddy stay on the public NIC.
+watch_vpn_interface: ""
 
 # Watch: live channels + now/next EPG into state/. 14400 = 4 hours.
 watch_sync_seconds: 14400

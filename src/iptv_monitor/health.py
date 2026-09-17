@@ -162,6 +162,9 @@ async def check_url(
     raw_url: str,
     settings: Settings,
     credentials: Credentials | None = None,
+    *,
+    skip_stream: bool = False,
+    via_vpn: bool = False,
 ) -> HealthResult:
     """Run enabled checks in order. First failure becomes fail_reason; later checks are skipped.
 
@@ -219,12 +222,18 @@ async def check_url(
                 fail_reason = http_reason
                 error_detail = http_detail
 
-        if fail_reason is None and settings.stream_check_enabled and credentials:
+        if (
+            fail_reason is None
+            and settings.stream_check_enabled
+            and credentials
+            and not skip_stream
+        ):
             stream_ok, stream_reason, stream_detail = await check_xtream_mpegts(
                 url,
                 credentials,
                 settings.stream_timeout_seconds,
                 settings.allow_insecure_tls,
+                via_vpn=via_vpn,
             )
             if stream_ok is False:
                 fail_reason = stream_reason
@@ -267,6 +276,9 @@ async def check_urls(
     urls: list[str],
     settings: Settings,
     credentials: Credentials | None = None,
+    *,
+    skip_stream: bool = False,
+    via_vpn: bool = False,
 ) -> dict[str, HealthResult]:
     """Probe unique URLs in parallel. Keyed by normalised URL."""
     unique: list[str] = []
@@ -281,7 +293,10 @@ async def check_urls(
             unique.append(raw)
 
     results = await asyncio.gather(
-        *(check_url(url, settings, credentials) for url in unique),
+        *(
+            check_url(url, settings, credentials, skip_stream=skip_stream, via_vpn=via_vpn)
+            for url in unique
+        ),
         return_exceptions=True,
     )
     mapped: dict[str, HealthResult] = {}

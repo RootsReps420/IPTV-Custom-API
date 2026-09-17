@@ -46,6 +46,7 @@ header,
 .playlists,
 .watchers,
 .live-groups,
+.vpn,
 .current,
 .pool,
 .events,
@@ -267,6 +268,7 @@ h2 {
 .playlists,
 .watchers,
 .live-groups,
+.vpn,
 .current,
 .pool,
 .events {
@@ -736,6 +738,64 @@ tr:last-child td {
 
 .sort-btn.is-here {
   background: rgba(125, 255, 195, 0.1);
+}
+
+.live-groups-fold {
+  margin: 0;
+}
+
+.live-groups-summary {
+  list-style: none;
+  cursor: pointer;
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+.live-groups-summary::-webkit-details-marker {
+  display: none;
+}
+
+.live-groups-summary h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.live-groups-summary h2::before {
+  content: "";
+  width: 0.42em;
+  height: 0.42em;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.live-groups-fold[open] .live-groups-summary {
+  margin-bottom: 14px;
+}
+
+.live-groups-fold[open] .live-groups-summary h2::before {
+  transform: rotate(45deg);
+  border-color: var(--up);
+}
+
+.live-groups-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.live-groups-hint {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.live-groups-fold[open] .live-groups-hint {
+  display: none;
 }
 
 .live-groups-toolbar {
@@ -2172,4 +2232,55 @@ tr.row-down td {
   .live-groups-toolbar input {
     min-width: 100%;
   }
+}
+
+.vpn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.vpn-cell {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  border-radius: 12px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.vpn-cell .label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.vpn-cell .value {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.vpn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.vpn-speed-result {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.vpn-speed-result.is-up {
+  color: var(--up);
+}
+
+.vpn-speed-result.is-down {
+  color: var(--down);
 }

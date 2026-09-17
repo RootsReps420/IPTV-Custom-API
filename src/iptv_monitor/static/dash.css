@@ -19,21 +19,84 @@
   pointer-events: none;
   overflow: hidden;
   background:
-    radial-gradient(ellipse 80% 55% at 50% -10%, rgba(18, 36, 52, 0.55), transparent 58%),
-    radial-gradient(ellipse 50% 40% at 100% 0%, rgba(20, 48, 70, 0.28), transparent 50%),
+    radial-gradient(ellipse 90% 70% at 8% 42%, rgba(125, 255, 195, 0.16), transparent 58%),
+    radial-gradient(ellipse 80% 65% at 96% 48%, rgba(16, 20, 28, 0.9), transparent 56%),
+    radial-gradient(ellipse 70% 50% at 50% -8%, rgba(22, 32, 28, 0.55), transparent 62%),
     #05070b;
+}
+
+.dash-sky::before,
+.dash-sky::after {
+  content: "";
+  position: absolute;
+  width: 78vw;
+  height: 90vh;
+  filter: blur(28px);
+  will-change: transform, opacity;
+}
+
+.dash-sky::before {
+  left: -28%;
+  top: 4%;
+  background: radial-gradient(
+    ellipse at 40% 50%,
+    rgba(125, 255, 195, 0.32),
+    rgba(125, 255, 195, 0.08) 42%,
+    transparent 70%
+  );
+  animation: dash-glow-l 16s ease-in-out infinite alternate;
+}
+
+.dash-sky::after {
+  right: -30%;
+  top: 8%;
+  background: radial-gradient(
+    ellipse at 55% 48%,
+    rgba(125, 255, 195, 0.14),
+    rgba(16, 20, 28, 0.35) 46%,
+    transparent 70%
+  );
+  animation: dash-glow-r 19s ease-in-out infinite alternate;
 }
 
 .dash-nebula {
   position: absolute;
-  inset: -35%;
+  inset: -40%;
   background:
-    radial-gradient(ellipse 42% 34% at 18% 22%, rgba(125, 255, 195, 0.09), transparent 58%),
-    radial-gradient(ellipse 38% 30% at 86% 12%, rgba(72, 140, 220, 0.14), transparent 52%),
-    radial-gradient(ellipse 36% 40% at 72% 78%, rgba(90, 70, 180, 0.08), transparent 55%),
-    radial-gradient(ellipse 28% 24% at 40% 64%, rgba(125, 255, 195, 0.05), transparent 50%);
-  filter: blur(12px);
-  animation: dash-aurora 64s ease-in-out infinite alternate;
+    radial-gradient(ellipse 48% 38% at 16% 28%, rgba(125, 255, 195, 0.26), transparent 58%),
+    radial-gradient(ellipse 42% 34% at 88% 18%, rgba(125, 255, 195, 0.1), transparent 54%),
+    radial-gradient(ellipse 40% 44% at 74% 82%, rgba(16, 20, 28, 0.55), transparent 56%),
+    radial-gradient(ellipse 32% 28% at 38% 70%, rgba(125, 255, 195, 0.12), transparent 50%);
+  filter: blur(18px);
+  animation: dash-aurora 22s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.dash-dust {
+  position: absolute;
+  inset: -30%;
+  opacity: 0.9;
+  background-image:
+    radial-gradient(1.5px 1.5px at 8% 12%, rgba(238, 243, 248, 0.85), transparent),
+    radial-gradient(1px 1px at 18% 38%, rgba(125, 255, 195, 0.55), transparent),
+    radial-gradient(1.5px 1.5px at 27% 8%, rgba(238, 243, 248, 0.55), transparent),
+    radial-gradient(1px 1px at 36% 62%, rgba(125, 255, 195, 0.5), transparent),
+    radial-gradient(2px 2px at 47% 22%, rgba(238, 243, 248, 0.75), transparent),
+    radial-gradient(1px 1px at 58% 48%, rgba(125, 255, 195, 0.4), transparent),
+    radial-gradient(1.5px 1.5px at 69% 14%, rgba(238, 243, 248, 0.65), transparent),
+    radial-gradient(1px 1px at 78% 71%, rgba(125, 255, 195, 0.45), transparent),
+    radial-gradient(1.5px 1.5px at 88% 33%, rgba(238, 243, 248, 0.8), transparent),
+    radial-gradient(1px 1px at 94% 86%, rgba(125, 255, 195, 0.4), transparent),
+    radial-gradient(1px 1px at 12% 78%, rgba(238, 243, 248, 0.5), transparent),
+    radial-gradient(1.5px 1.5px at 23% 91%, rgba(125, 255, 195, 0.4), transparent),
+    radial-gradient(1px 1px at 41% 84%, rgba(238, 243, 248, 0.7), transparent),
+    radial-gradient(2px 2px at 63% 93%, rgba(238, 243, 248, 0.6), transparent),
+    radial-gradient(1px 1px at 81% 54%, rgba(125, 255, 195, 0.4), transparent),
+    radial-gradient(1px 1px at 4% 52%, rgba(238, 243, 248, 0.45), transparent),
+    radial-gradient(1.5px 1.5px at 52% 6%, rgba(238, 243, 248, 0.7), transparent),
+    radial-gradient(1px 1px at 73% 41%, rgba(125, 255, 195, 0.35), transparent);
+  animation: dash-dust 36s linear infinite;
+  will-change: transform;
 }
 
 .dash-stars {
@@ -48,85 +111,116 @@
 
 .dash-stars-a {
   box-shadow:
-    40px 60px 0 0 rgba(255, 255, 255, 0.55),
-    180px 140px 0 0 rgba(125, 255, 195, 0.35),
-    320px 40px 0 0 rgba(255, 255, 255, 0.4),
-    510px 220px 0 0 rgba(255, 255, 255, 0.5),
-    680px 90px 0 0 rgba(180, 220, 255, 0.4),
-    820px 310px 0 0 rgba(255, 255, 255, 0.28),
-    980px 160px 0 0 rgba(125, 255, 195, 0.28),
-    1120px 70px 0 0 rgba(255, 255, 255, 0.45),
-    1280px 250px 0 0 rgba(255, 255, 255, 0.3),
-    1480px 120px 0 0 rgba(180, 220, 255, 0.35),
-    90px 380px 0 0 rgba(255, 255, 255, 0.35),
-    260px 520px 0 0 rgba(125, 255, 195, 0.22),
-    430px 430px 0 0 rgba(255, 255, 255, 0.4),
-    620px 580px 0 0 rgba(255, 255, 255, 0.25),
-    790px 470px 0 0 rgba(180, 220, 255, 0.3),
-    960px 620px 0 0 rgba(255, 255, 255, 0.38),
-    1180px 510px 0 0 rgba(125, 255, 195, 0.2),
-    1360px 640px 0 0 rgba(255, 255, 255, 0.32),
-    1540px 420px 0 0 rgba(255, 255, 255, 0.28),
-    120px 720px 0 0 rgba(180, 220, 255, 0.25),
-    340px 800px 0 0 rgba(255, 255, 255, 0.4),
-    560px 740px 0 0 rgba(125, 255, 195, 0.18),
-    880px 860px 0 0 rgba(255, 255, 255, 0.3),
-    1090px 780px 0 0 rgba(255, 255, 255, 0.22),
-    1320px 900px 0 0 rgba(180, 220, 255, 0.28),
-    210px 980px 0 0 rgba(255, 255, 255, 0.35),
-    740px 1040px 0 0 rgba(255, 255, 255, 0.25),
-    1240px 1100px 0 0 rgba(125, 255, 195, 0.2),
-    1600px 980px 0 0 rgba(255, 255, 255, 0.3);
-  animation: dash-drift-a 88s linear infinite;
+    40px 60px 1px 0.4px rgba(238, 243, 248, 0.95),
+    180px 140px 1px 0 rgba(125, 255, 195, 0.7),
+    320px 40px 1px 0.3px rgba(238, 243, 248, 0.85),
+    510px 220px 1px 0 rgba(238, 243, 248, 0.9),
+    680px 90px 1px 0.4px rgba(125, 255, 195, 0.65),
+    820px 310px 1px 0 rgba(238, 243, 248, 0.65),
+    980px 160px 1px 0 rgba(125, 255, 195, 0.6),
+    1120px 70px 1px 0.3px rgba(238, 243, 248, 0.9),
+    1280px 250px 1px 0 rgba(238, 243, 248, 0.7),
+    1480px 120px 1px 0.4px rgba(125, 255, 195, 0.6),
+    90px 380px 1px 0 rgba(238, 243, 248, 0.8),
+    260px 520px 1px 0 rgba(125, 255, 195, 0.55),
+    430px 430px 1px 0.3px rgba(238, 243, 248, 0.85),
+    620px 580px 1px 0 rgba(238, 243, 248, 0.6),
+    790px 470px 1px 0 rgba(125, 255, 195, 0.55),
+    960px 620px 1px 0.4px rgba(238, 243, 248, 0.8),
+    1180px 510px 1px 0 rgba(125, 255, 195, 0.5),
+    1360px 640px 1px 0 rgba(238, 243, 248, 0.7),
+    1540px 420px 1px 0.3px rgba(238, 243, 248, 0.65),
+    120px 720px 1px 0 rgba(125, 255, 195, 0.5),
+    340px 800px 1px 0.4px rgba(238, 243, 248, 0.85),
+    560px 740px 1px 0 rgba(125, 255, 195, 0.5),
+    880px 860px 1px 0 rgba(238, 243, 248, 0.7),
+    1090px 780px 1px 0.3px rgba(238, 243, 248, 0.55),
+    1320px 900px 1px 0 rgba(125, 255, 195, 0.5),
+    210px 980px 1px 0 rgba(238, 243, 248, 0.75),
+    740px 1040px 1px 0.4px rgba(238, 243, 248, 0.6),
+    1240px 1100px 1px 0 rgba(125, 255, 195, 0.5),
+    1600px 980px 1px 0 rgba(238, 243, 248, 0.7),
+    1720px 240px 1px 0.3px rgba(238, 243, 248, 0.8),
+    1680px 700px 1px 0 rgba(125, 255, 195, 0.5);
+  animation: dash-drift-a 28s linear infinite, dash-twinkle 4.5s ease-in-out infinite alternate;
 }
 
 .dash-stars-b {
   width: 1px;
   height: 1px;
-  opacity: 0.7;
   box-shadow:
-    70px 200px 0 0 rgba(255, 255, 255, 0.45),
-    250px 80px 0 0 rgba(255, 255, 255, 0.3),
-    400px 300px 0 0 rgba(125, 255, 195, 0.25),
-    590px 150px 0 0 rgba(255, 255, 255, 0.4),
-    760px 260px 0 0 rgba(180, 220, 255, 0.28),
-    930px 40px 0 0 rgba(255, 255, 255, 0.35),
-    1100px 340px 0 0 rgba(255, 255, 255, 0.22),
-    1290px 180px 0 0 rgba(125, 255, 195, 0.2),
-    1450px 300px 0 0 rgba(255, 255, 255, 0.32),
-    160px 450px 0 0 rgba(255, 255, 255, 0.28),
-    380px 610px 0 0 rgba(180, 220, 255, 0.22),
-    540px 390px 0 0 rgba(255, 255, 255, 0.35),
-    710px 700px 0 0 rgba(255, 255, 255, 0.2),
-    890px 540px 0 0 rgba(125, 255, 195, 0.18),
-    1070px 690px 0 0 rgba(255, 255, 255, 0.3),
-    1260px 430px 0 0 rgba(255, 255, 255, 0.25),
-    1430px 760px 0 0 rgba(180, 220, 255, 0.22),
-    80px 880px 0 0 rgba(255, 255, 255, 0.28),
-    460px 940px 0 0 rgba(255, 255, 255, 0.2),
-    820px 990px 0 0 rgba(125, 255, 195, 0.16),
-    1140px 920px 0 0 rgba(255, 255, 255, 0.28),
-    1500px 860px 0 0 rgba(255, 255, 255, 0.22);
-  animation: dash-drift-b 110s linear infinite;
+    70px 200px 1px 0 rgba(238, 243, 248, 0.8),
+    250px 80px 1px 0 rgba(238, 243, 248, 0.55),
+    400px 300px 1px 0 rgba(125, 255, 195, 0.55),
+    590px 150px 1px 0 rgba(238, 243, 248, 0.75),
+    760px 260px 1px 0 rgba(125, 255, 195, 0.45),
+    930px 40px 1px 0 rgba(238, 243, 248, 0.7),
+    1100px 340px 1px 0 rgba(238, 243, 248, 0.5),
+    1290px 180px 1px 0 rgba(125, 255, 195, 0.5),
+    1450px 300px 1px 0 rgba(238, 243, 248, 0.65),
+    160px 450px 1px 0 rgba(238, 243, 248, 0.55),
+    380px 610px 1px 0 rgba(125, 255, 195, 0.4),
+    540px 390px 1px 0 rgba(238, 243, 248, 0.7),
+    710px 700px 1px 0 rgba(238, 243, 248, 0.45),
+    890px 540px 1px 0 rgba(125, 255, 195, 0.45),
+    1070px 690px 1px 0 rgba(238, 243, 248, 0.6),
+    1260px 430px 1px 0 rgba(238, 243, 248, 0.5),
+    1430px 760px 1px 0 rgba(125, 255, 195, 0.4),
+    80px 880px 1px 0 rgba(238, 243, 248, 0.55),
+    460px 940px 1px 0 rgba(238, 243, 248, 0.45),
+    820px 990px 1px 0 rgba(125, 255, 195, 0.4),
+    1140px 920px 1px 0 rgba(238, 243, 248, 0.55),
+    1500px 860px 1px 0 rgba(238, 243, 248, 0.5),
+    1700px 500px 1px 0 rgba(125, 255, 195, 0.4),
+    1650px 80px 1px 0 rgba(238, 243, 248, 0.7);
+  animation: dash-drift-b 22s linear infinite, dash-twinkle 3.2s ease-in-out infinite alternate-reverse;
+}
+
+.dash-meteor,
+.dash-meteor-b,
+.dash-meteor-c {
+  position: absolute;
+  left: -18%;
+  height: 2px;
+  border-radius: 2px;
+  opacity: 0;
+  will-change: transform, opacity;
+  filter: drop-shadow(0 0 6px rgba(125, 255, 195, 0.55));
 }
 
 .dash-meteor {
-  position: absolute;
-  top: 16%;
-  left: -15%;
-  width: 90px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(125, 255, 195, 0.7), rgba(255, 255, 255, 0.4));
-  transform: rotate(-22deg);
-  opacity: 0;
-  animation: dash-meteor 22s ease-in infinite;
+  top: 14%;
+  width: 180px;
+  background: linear-gradient(90deg, transparent, rgba(125, 255, 195, 0.95), rgba(238, 243, 248, 0.8));
+  animation: dash-meteor 16s linear infinite;
+}
+
+.dash-meteor-b {
+  top: 42%;
+  width: 140px;
+  background: linear-gradient(90deg, transparent, rgba(125, 255, 195, 0.75), rgba(238, 243, 248, 0.7));
+  animation: dash-meteor 18s linear infinite;
+  animation-delay: 5s;
+}
+
+.dash-meteor-c {
+  top: 68%;
+  width: 120px;
+  background: linear-gradient(90deg, transparent, rgba(125, 255, 195, 0.7), rgba(238, 243, 248, 0.65));
+  animation: dash-meteor 17s linear infinite;
+  animation-delay: 10s;
 }
 
 /* Frozen sky for /watch: no keyframes, no blur filter, no meteor. */
+.dash-sky.is-static::before,
+.dash-sky.is-static::after,
 .dash-sky.is-static .dash-nebula,
+.dash-sky.is-static .dash-dust,
 .dash-sky.is-static .dash-stars-a,
 .dash-sky.is-static .dash-stars-b,
-.dash-sky.is-static .dash-meteor {
+.dash-sky.is-static .dash-meteor,
+.dash-sky.is-static .dash-meteor-b,
+.dash-sky.is-static .dash-meteor-c {
   animation: none;
 }
 
@@ -135,7 +229,9 @@
   inset: 0;
 }
 
-.dash-sky.is-static .dash-meteor {
+.dash-sky.is-static .dash-meteor,
+.dash-sky.is-static .dash-meteor-b,
+.dash-sky.is-static .dash-meteor-c {
   display: none;
 }
 
@@ -152,6 +248,7 @@
 .dash .playlists,
 .dash .watchers,
 .dash .live-groups,
+.dash .vpn,
 .dash .current,
 .dash .pool,
 .dash .events,
@@ -261,6 +358,7 @@
 .dash-stat:nth-child(4) { animation-delay: 0.16s; }
 .dash-stat:nth-child(5) { animation-delay: 0.2s; }
 .dash-stat:nth-child(6) { animation-delay: 0.24s; }
+.dash-stat:nth-child(7) { animation-delay: 0.28s; }
 
 .dash-stat .label {
   margin-bottom: 10px;
@@ -303,6 +401,7 @@
 .dash .playlists,
 .dash .watchers,
 .dash .live-groups,
+.dash .vpn,
 .dash .current,
 .dash .pool,
 .dash .events,
@@ -326,13 +425,29 @@
   font-size: 18px;
 }
 
+.dash .live-groups-summary {
+  border-radius: 12px;
+  padding: 6px 8px;
+  margin: -6px -8px 0;
+  transition: background-color 0.18s ease;
+}
+
+.dash .live-groups-fold[open] .live-groups-summary {
+  margin-bottom: 12px;
+}
+
+.dash .live-groups-summary:hover {
+  background: rgba(125, 255, 195, 0.06);
+}
+
 .dash .history-note {
   max-width: none;
 }
 
 .dash .table-wrap,
 .dash .event-list,
-.dash .live-groups-list {
+.dash .live-groups-list,
+.dash .vpn-cell {
   border-color: rgba(42, 58, 77, 0.65);
   background: rgba(11, 14, 20, 0.45);
   border-radius: 12px;
@@ -505,33 +620,60 @@
   transform: scale(0.96);
 }
 
+@keyframes dash-glow-l {
+  from { transform: translate3d(0, 0, 0) scale(1); opacity: 0.75; }
+  to { transform: translate3d(10%, 7%, 0) scale(1.18); opacity: 1; }
+}
+
+@keyframes dash-glow-r {
+  from { transform: translate3d(0, 0, 0) scale(1); opacity: 0.7; }
+  to { transform: translate3d(-9%, 5%, 0) scale(1.14); opacity: 1; }
+}
+
 @keyframes dash-aurora {
   from { transform: translate3d(0, 0, 0) scale(1); }
-  to { transform: translate3d(4%, 3%, 0) scale(1.06); }
+  to { transform: translate3d(7%, 5%, 0) scale(1.1); }
+}
+
+@keyframes dash-dust {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-6%, 4%, 0); }
 }
 
 @keyframes dash-drift-a {
   from { transform: translate3d(0, 0, 0); }
-  to { transform: translate3d(-70px, 36px, 0); }
+  to { transform: translate3d(-160px, 80px, 0); }
 }
 
 @keyframes dash-drift-b {
   from { transform: translate3d(0, 0, 0); }
-  to { transform: translate3d(50px, -28px, 0); }
+  to { transform: translate3d(120px, -70px, 0); }
+}
+
+@keyframes dash-twinkle {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
 }
 
 @keyframes dash-meteor {
-  0%,
-  82% {
+  0% {
     opacity: 0;
-    transform: translate3d(0, 0, 0) rotate(-22deg);
+    transform: translate3d(0, 0, 0) rotate(-24deg);
   }
-  86% {
-    opacity: 0.75;
+  6% {
+    opacity: 1;
   }
+  78% {
+    opacity: 0.85;
+  }
+  90% {
+    opacity: 0;
+    transform: translate3d(88vw, 36vh, 0) rotate(-24deg);
+  }
+  91%,
   100% {
     opacity: 0;
-    transform: translate3d(110vw, 38vh, 0) rotate(-22deg);
+    transform: translate3d(0, 0, 0) rotate(-24deg);
   }
 }
 
@@ -573,10 +715,15 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .dash-sky::before,
+  .dash-sky::after,
   .dash-nebula,
+  .dash-dust,
   .dash-stars-a,
   .dash-stars-b,
   .dash-meteor,
+  .dash-meteor-b,
+  .dash-meteor-c,
   .dash-stat,
   .dash-panel,
   .dash .key-card,

@@ -4,7 +4,7 @@ Open without Caddy: `/watch`, `/api/watch/*`, `/api/player/*`, `/static`
   (Watch still uses the app cookie / site login).
 Caddy `dan` basicauth: `/`, `/owner`, `/history`, `/key`, `/api/public`,
   `/api/history`, `/api/status`, `/api/switch`, `/api/switch-back`, `/api/kick-watch`,
-  `/api/live-groups`
+  `/api/live-groups`, `/api/vpn/*`
 Caddy `Steve` (if configured): `/` and `/history` only (`/api/public`, `/api/history`).
   Not `/key`, `/owner`, or owner APIs. Not a /watch user.
 Watch (app cookie): `/watch`, `/api/watch/*`, `/api/player/*` — registered in watch.py
@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from iptv_monitor.monitor import Monitor, SwitchError
+from iptv_monitor.vpn import snapshot as vpn_snapshot, speedtest as vpn_speedtest, start_bind_proxy
 from iptv_monitor.watch import WatchService, register_watch
 
 logger = logging.getLogger("iptv_monitor.dashboard")
@@ -66,6 +67,7 @@ def create_app(monitor: Monitor) -> FastAPI:
             counts = data.setdefault("counts", {})
             counts["watch_online"] = data["watch"].get("online", 0)
             counts["watch_playing"] = data["watch"].get("playing", 0)
+        data["vpn"] = await vpn_snapshot()
         return data
 
     @app.post("/api/status")
@@ -103,6 +105,19 @@ def create_app(monitor: Monitor) -> FastAPI:
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Unknown live group.") from exc
+
+    @app.get("/api/vpn/status")
+    async def vpn_status() -> dict:
+        """WireGuard / Surfshark status for /watch Magnum. Owner-only (Caddy)."""
+        return await vpn_snapshot()
+
+    @app.post("/api/vpn/speedtest")
+    async def vpn_speed() -> dict:
+        """~5MB download through the VPN bind. Owner-only (Caddy)."""
+        try:
+            return await vpn_speedtest()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/public")
     async def public_status() -> dict:
@@ -175,4 +190,5 @@ async def serve_dashboard(monitor: Monitor, host: str, port: int) -> None:
     )
     server = uvicorn.Server(config)
     logger.info("Dashboard listening on http://%s:%s", host, port)
+    start_bind_proxy()
     await asyncio.gather(server.serve(), syncer.run_forever())
