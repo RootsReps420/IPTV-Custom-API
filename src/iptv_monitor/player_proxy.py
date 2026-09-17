@@ -58,7 +58,10 @@ _CODEC_MARKERS = (
 
 
 def http_client() -> httpx.AsyncClient:
-    """Keepalive pool so zapping a channel does not redo TLS to the panel every time."""
+    """Keepalive pool so zapping a channel does not redo TLS to the panel every time.
+
+    Magnum live/VOD binds to the Watch VPN when it is up. Strong 8K never uses this client.
+    """
     global _HTTP, _HTTP_BIND
     bind = bind_ip()
     if _HTTP is None or _HTTP.is_closed or _HTTP_BIND != bind:

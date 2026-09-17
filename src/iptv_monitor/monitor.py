@@ -413,7 +413,11 @@ class Monitor:
             ]
             skip_stream = magnum_busy and pool == "magnum"
             batch = await check_urls(
-                urls, settings, creds or None, skip_stream=skip_stream
+                urls,
+                settings,
+                creds or None,
+                skip_stream=skip_stream,
+                via_vpn=(pool == "magnum"),
             )
             results.update(batch)
 
@@ -755,7 +759,12 @@ class Monitor:
     ) -> HealthResult:
         """Fresh DNS + TCP + MPEG-TS of a swap target. Updates the in-memory snapshot."""
         creds = self._pool_credentials(cfg, playlist.pool)
-        result = await check_url(url, cfg.settings, creds or None)
+        result = await check_url(
+            url,
+            cfg.settings,
+            creds or None,
+            via_vpn=normalize_pool(playlist.pool) == "magnum",
+        )
         if cfg.settings.stream_check_enabled and result.healthy and result.stream_ok is not True:
             result.healthy = False
             result.fail_reason = result.fail_reason or "stream_not_verified"

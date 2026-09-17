@@ -25,6 +25,20 @@ _HANDSHAKE_MAX = 180.0
 _EXIT_TTL = 45.0
 _SNAP_TTL = 8.0
 _PROXY_PORT = 18788
+_WATCH_STREAMS = 5
+_BYTES_EACH = 12_000_000
+_SPEED_URLS = (
+    "https://speed.cloudflare.com/__down?bytes={bytes}",
+    "http://ipv4.download.thinkbroadband.com/20MB.zip",
+)
+# Aggregate Mbps for 5 concurrent lives (typical bitrate + ~20% overhead).
+_SPEED_TIERS = (
+    (140.0, "comfortable_4k", "Comfortable for 5 concurrent /watch streams, including 4K."),
+    (100.0, "ok_4k", "Enough for 5× 4K if each stays near 20 Mbps."),
+    (60.0, "ok_fhd", "Enough for 5× FHD. Five 4K streams would be tight."),
+    (35.0, "ok_hd", "Enough for 5× HD. Not enough for five FHD/4K streams."),
+    (0.0, "insufficient", "Not enough headroom for 5 concurrent /watch streams."),
+)
 
 _CC = {
     "ae": "United Arab Emirates",
@@ -345,55 +359,157 @@ async def snapshot() -> dict[str, Any]:
     return dict(data)
 
 
-async def speedtest() -> dict[str, Any]:
-    """Download ~5MB through the VPN bind and report Mbps + latency."""
-    ip = bind_ip()
-    if not ip:
-        raise RuntimeError("VPN is not connected.")
-    async with _speed_lock:
-        timeout = httpx.Timeout(25.0, connect=8.0)
-        transport = httpx.AsyncHTTPTransport(local_address=ip, verify=False)
-        urls = (
-            "https://speed.cloudflare.com/__down?bytes=5000000",
-            "http://ipv4.download.thinkbroadband.com/5MB.zip",
-        )
-        last_error = "speed test failed"
-        async with httpx.AsyncClient(
-            timeout=timeout, transport=transport, follow_redirects=True
-        ) as client:
-            ping_ms: float | None = None
+async def _ping_ms(client: httpx.AsyncClient) -> float | None:
+    try:
+        t0 = time.perf_counter()
+        ping = await client.get("https://www.cloudflare.com/cdn-cgi/trace")
+        if ping.status_code == 200:
+            return round((time.perf_counter() - t0) * 1000, 1)
+    except Exception:
+        return None
+    return None
+
+
+async def _pull_bytes(client: httpx.AsyncClient, url: str, want: int) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    total = 0
+    async with client.stream("GET", url) as response:
+        if response.status_code >= 400:
+            raise RuntimeError(f"HTTP {response.status_code}")
+        async for chunk in response.aiter_bytes(64 * 1024):
+            total += len(chunk)
+            if total >= want:
+                break
+    seconds = max(0.001, time.perf_counter() - t0)
+    if total < max(1_000_000, want // 4):
+        raise RuntimeError(f"short read ({total} bytes)")
+    return {
+        "bytes": total,
+        "seconds": round(seconds, 2),
+        "mbps": round((total * 8) / seconds / 1_000_000, 2),
+    }
+
+
+def _verdict(aggregate_mbps: float) -> tuple[str, str]:
+    for floor, key, label in _SPEED_TIERS:
+        if aggregate_mbps >= floor:
+            return key, label
+    return _SPEED_TIERS[-1][1], _SPEED_TIERS[-1][2]
+
+
+async def _burst(
+    *,
+    path: str,
+    bind: str,
+    streams: int,
+    want: int,
+) -> dict[str, Any]:
+    timeout = httpx.Timeout(40.0, connect=8.0)
+    kwargs: dict[str, Any] = {
+        "timeout": timeout,
+        "follow_redirects": True,
+        "http2": False,
+        "verify": False,
+        "headers": {"User-Agent": "iptv-monitor-speedtest", "Accept": "*/*"},
+    }
+    if bind:
+        kwargs["transport"] = httpx.AsyncHTTPTransport(local_address=bind, verify=False)
+    last_error = "speed test failed"
+    async with httpx.AsyncClient(**kwargs) as client:
+        ping_ms = await _ping_ms(client)
+        for template in _SPEED_URLS:
+            url = template.format(bytes=want)
             try:
-                t0 = time.perf_counter()
-                ping = await client.get("https://www.cloudflare.com/cdn-cgi/trace")
-                if ping.status_code == 200:
-                    ping_ms = round((time.perf_counter() - t0) * 1000, 1)
-            except Exception:
-                ping_ms = None
-            for url in urls:
-                try:
-                    t1 = time.perf_counter()
-                    total = 0
-                    async with client.stream("GET", url) as response:
-                        if response.status_code >= 400:
-                            last_error = f"HTTP {response.status_code}"
-                            continue
-                        async for chunk in response.aiter_bytes(64 * 1024):
-                            total += len(chunk)
-                            if total >= 5_000_000:
-                                break
-                    seconds = max(0.001, time.perf_counter() - t1)
-                    mbps = round((total * 8) / seconds / 1_000_000, 2)
-                    return {
-                        "ok": True,
-                        "download_mbps": mbps,
-                        "latency_ms": ping_ms,
-                        "bytes": total,
-                        "seconds": round(seconds, 2),
-                        "bind_ip": ip,
-                    }
-                except Exception as exc:
-                    last_error = str(exc)[:160]
-        raise RuntimeError(last_error)
+                started = time.perf_counter()
+                rows = await asyncio.gather(
+                    *[_pull_bytes(client, url, want) for _ in range(streams)],
+                    return_exceptions=True,
+                )
+                wall = max(0.001, time.perf_counter() - started)
+            except Exception as exc:
+                last_error = str(exc)[:160]
+                continue
+            ok_rows = [row for row in rows if isinstance(row, dict)]
+            if not ok_rows:
+                err = next((row for row in rows if isinstance(row, Exception)), None)
+                last_error = str(err)[:160] if err else "all connections failed"
+                continue
+            total_bytes = sum(int(row["bytes"]) for row in ok_rows)
+            aggregate = round((total_bytes * 8) / wall / 1_000_000, 2)
+            per_stream = round(aggregate / max(1, len(ok_rows)), 2)
+            min_mbps = min(float(row["mbps"]) for row in ok_rows)
+            key, label = _verdict(aggregate)
+            return {
+                "ok": True,
+                "path": path,
+                "download_mbps": aggregate,
+                "per_stream_mbps": per_stream,
+                "min_stream_mbps": min_mbps,
+                "connections": len(ok_rows),
+                "wanted_connections": streams,
+                "bytes": total_bytes,
+                "seconds": round(wall, 2),
+                "latency_ms": ping_ms,
+                "bind_ip": bind,
+                "verdict": key,
+                "verdict_label": label,
+            }
+    raise RuntimeError(last_error)
+
+
+async def speedtest() -> dict[str, Any]:
+    """Five parallel downloads on the /watch Magnum path (VPN when up)."""
+    async with _speed_lock:
+        ip = bind_ip()
+        if ip:
+            watch = await _burst(
+                path="vpn",
+                bind=ip,
+                streams=_WATCH_STREAMS,
+                want=_BYTES_EACH,
+            )
+            nic_row: dict[str, Any] | None = None
+            try:
+                nic_row = await _burst(
+                    path="public_nic",
+                    bind="",
+                    streams=_WATCH_STREAMS,
+                    want=_BYTES_EACH,
+                )
+            except Exception as exc:
+                nic_row = {"ok": False, "path": "public_nic", "error": str(exc)[:160]}
+            return {
+                "ok": True,
+                "download_mbps": watch["download_mbps"],
+                "per_stream_mbps": watch["per_stream_mbps"],
+                "latency_ms": watch["latency_ms"],
+                "bytes": watch["bytes"],
+                "seconds": watch["seconds"],
+                "verdict": watch["verdict"],
+                "verdict_label": watch["verdict_label"],
+                "watch": watch,
+                "vpn": watch,
+                "nic": nic_row,
+            }
+        watch = await _burst(
+            path="public_nic",
+            bind="",
+            streams=_WATCH_STREAMS,
+            want=_BYTES_EACH,
+        )
+        return {
+            "ok": True,
+            "download_mbps": watch["download_mbps"],
+            "per_stream_mbps": watch["per_stream_mbps"],
+            "latency_ms": watch["latency_ms"],
+            "bytes": watch["bytes"],
+            "seconds": watch["seconds"],
+            "verdict": watch["verdict"],
+            "verdict_label": watch["verdict_label"],
+            "watch": watch,
+            "vpn": None,
+            "nic": watch,
+        }
 
 
 async def _proxy_handle(

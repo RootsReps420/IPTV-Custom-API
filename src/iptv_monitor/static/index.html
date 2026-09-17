@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=54" />
+  <link rel="stylesheet" href="/static/styles.css?v=55" />
   <link rel="stylesheet" href="/static/dash.css?v=9" />
 </head>
 <body class="dash">
@@ -129,10 +129,10 @@
         <h2>Watch VPN</h2>
         <span id="vpn-pill" class="pill">—</span>
       </div>
-      <p class="history-note">Surfshark WireGuard is only for /watch Magnum (live/VOD proxy, catalogue, EPG). The dashboard, EPGenius, Discord, Android app, SSH, Caddy, and Strong 8K stay on the public NIC. Status is where the tunnel exits; speed test downloads ~5MB through the /watch bind.</p>
+      <p class="history-note">Surfshark carries all Magnum traffic: /watch live/VOD, catalogue, EPG, and Magnum DNS/TCP/MPEG-TS health. Strong 8K, EPGenius, Discord, Android, SSH, and Caddy stay on the public NIC. Speed test runs 5 parallel downloads through the VPN (the /watch path) and compares the public NIC.</p>
       <div id="vpn-grid" class="vpn-grid"></div>
       <div class="vpn-actions">
-        <button type="button" class="switch-btn" id="vpn-speed-btn" disabled>Speed test</button>
+        <button type="button" class="switch-btn" id="vpn-speed-btn">Test 5 streams</button>
         <p id="vpn-speed-result" class="vpn-speed-result"></p>
       </div>
     </section>
@@ -182,6 +182,6 @@
       <ol id="event-list" class="event-list"></ol>
     </section>
   </div>
-  <script src="/static/app.js?v=41"></script>
+  <script src="/static/app.js?v=44"></script>
 </body>
 </html>

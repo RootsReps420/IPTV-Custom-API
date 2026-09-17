@@ -89,6 +89,45 @@ function fmtBytes(n) {
   return `${(v / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+function speedVerdictClass(verdict) {
+  if (verdict === "comfortable_4k" || verdict === "ok_4k" || verdict === "ok_fhd") {
+    return "is-up";
+  }
+  if (verdict === "ok_hd") {
+    return "is-warn";
+  }
+  return "is-down";
+}
+
+function renderSpeedPayload(payload) {
+  const watch = payload.watch || payload;
+  const lines = [];
+  if (watch.verdict_label) {
+    lines.push(`<strong>${esc(watch.verdict_label)}</strong>`);
+  }
+  const total = watch.download_mbps ?? payload.download_mbps ?? "—";
+  const each = watch.per_stream_mbps ?? payload.per_stream_mbps ?? "—";
+  const n = watch.connections ?? 5;
+  const pathLabel = watch.path === "vpn" ? "Surfshark VPN" : "public NIC";
+  const ping = watch.latency_ms ?? payload.latency_ms;
+  const pingBit = ping == null ? "" : ` · ${esc(ping)} ms`;
+  lines.push(
+    `${esc(total)} Mbps total via ${pathLabel} · ${esc(each)} Mbps each across ${esc(n)} parallel pulls${pingBit}`,
+  );
+  if (watch.min_stream_mbps != null) {
+    lines.push(`Slowest connection ${esc(watch.min_stream_mbps)} Mbps`);
+  }
+  const nic = payload.nic;
+  if (nic && nic.ok && watch.path === "vpn") {
+    lines.push(
+      `Public NIC comparison: ${esc(nic.download_mbps)} Mbps total · ${esc(nic.per_stream_mbps)} Mbps each`,
+    );
+  } else if (nic && nic.error) {
+    lines.push(`Public NIC burst failed: ${esc(nic.error)}`);
+  }
+  return { html: lines.join("<br>"), cls: speedVerdictClass(watch.verdict || payload.verdict || "") };
+}
+
 let vpnSpeedBusy = false;
 
 function vpnCell(label, value) {
@@ -139,12 +178,11 @@ function renderVpn(vpn) {
     ].join("");
   }
   if (vpnSpeedBtn) {
-    vpnSpeedBtn.disabled = vpnSpeedBusy || !connected;
+    vpnSpeedBtn.disabled = vpnSpeedBusy;
   }
-  if (vpnSpeedResult && !vpnSpeedBusy && !vpnSpeedResult.textContent) {
-    vpnSpeedResult.textContent = connected
-      ? "Runs a 5MB download through the VPN."
-      : "Connect the VPS tunnel first.";
+  if (vpnSpeedResult && !vpnSpeedBusy && !vpnSpeedResult.dataset.filled) {
+    vpnSpeedResult.textContent =
+      "Five parallel ~12MB downloads on the /watch Magnum path (Surfshark when the tunnel is up).";
     vpnSpeedResult.className = "vpn-speed-result";
   }
 }
@@ -1112,8 +1150,9 @@ if (vpnSpeedBtn) {
     vpnSpeedBusy = true;
     vpnSpeedBtn.disabled = true;
     if (vpnSpeedResult) {
-      vpnSpeedResult.textContent = "Testing… this takes a few seconds.";
+      vpnSpeedResult.textContent = "Testing 5 parallel streams… about 10–20 seconds.";
       vpnSpeedResult.className = "vpn-speed-result";
+      delete vpnSpeedResult.dataset.filled;
     }
     try {
       const response = await fetch("/api/vpn/speedtest", { method: "POST" });
@@ -1121,21 +1160,22 @@ if (vpnSpeedBtn) {
       if (!response.ok) {
         throw new Error(payload.detail || `HTTP ${response.status}`);
       }
-      const mbps = payload.download_mbps ?? "—";
-      const ping = payload.latency_ms == null ? "" : ` · ${payload.latency_ms} ms`;
       if (vpnSpeedResult) {
-        vpnSpeedResult.textContent = `${mbps} Mbps download${ping}`;
-        vpnSpeedResult.className = "vpn-speed-result is-up";
+        const painted = renderSpeedPayload(payload);
+        vpnSpeedResult.innerHTML = painted.html;
+        vpnSpeedResult.className = `vpn-speed-result ${painted.cls}`;
+        vpnSpeedResult.dataset.filled = "1";
       }
     } catch (error) {
       if (vpnSpeedResult) {
         vpnSpeedResult.textContent = error.message || "Speed test failed.";
         vpnSpeedResult.className = "vpn-speed-result is-down";
+        vpnSpeedResult.dataset.filled = "1";
       }
     } finally {
       vpnSpeedBusy = false;
       if (vpnSpeedBtn) {
-        vpnSpeedBtn.disabled = !(latest && latest.vpn && latest.vpn.connected);
+        vpnSpeedBtn.disabled = false;
       }
     }
   });
