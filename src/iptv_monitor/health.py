@@ -24,7 +24,7 @@ import httpx
 from iptv_monitor.config import Settings
 from iptv_monitor.nameserver import classify_ns_hosts, ip_is_cloudflare, lookup_ns_hosts
 from iptv_monitor.stream import Credentials, check_xtream_mpegts
-from iptv_monitor.vpn import bind_ip, magnum_client_kwargs
+from iptv_monitor.vpn import bind_ip
 
 logger = logging.getLogger("iptv_monitor.health")
 
@@ -162,16 +162,14 @@ async def _check_tcp(
 
 
 async def _check_http(
-    url: str, timeout: float, insecure: bool, *, via_vpn: bool = False
+    url: str, timeout: float, insecure: bool
 ) -> tuple[bool, str | None, str | None]:
     """Optional GET /. Off by default — Xtream portals often look 'down' on the homepage."""
-    extra = magnum_client_kwargs() if via_vpn else {}
     try:
         async with httpx.AsyncClient(
             verify=not insecure,
             follow_redirects=True,
             timeout=timeout,
-            **extra,
         ) as client:
             await client.get(url)
             return True, None, None
@@ -192,8 +190,9 @@ async def check_url(
     """Run enabled checks in order. First failure becomes fail_reason; later checks are skipped.
 
     Nameserver lookup runs in parallel and never fails the URL.
-    Magnum (via_vpn) binds DNS, TCP, HTTP, and MPEG-TS to the Watch VPN so
-    dashboard UP/DOWN matches /watch. Strong 8K stays on the public NIC.
+    Magnum (via_vpn) resolves DNS through Surfshark. TCP, HTTP, and MPEG-TS
+    stay on the public NIC — Magnum rejects live stream URLs from the VPN.
+    Strong 8K is NIC-only.
     """
     try:
         url, host, port = parse_endpoint(raw_url)
@@ -217,7 +216,7 @@ async def check_url(
     resolved_ips: list[str] = []
     fail_reason: str | None = None
     error_detail: str | None = None
-    local_ip = bind_ip() if via_vpn else ""
+    dns_source = bind_ip() if via_vpn else ""
     ns_task = None
     if host and not _is_ip(host):
         ns_task = asyncio.create_task(lookup_ns_hosts(host, settings.dns_timeout_seconds))
@@ -225,7 +224,7 @@ async def check_url(
     try:
         if settings.dns_check_enabled:
             dns_ok, resolved_ips, fail_reason, error_detail = await _resolve_dns(
-                host, settings.dns_timeout_seconds, source=local_ip or None
+                host, settings.dns_timeout_seconds, source=dns_source or None
             )
         elif _is_ip(host):
             resolved_ips = [host]
@@ -238,7 +237,6 @@ async def check_url(
                 host,
                 port,
                 settings.tcp_timeout_seconds,
-                local_ip=local_ip or None,
             )
             if not tcp_ok:
                 fail_reason = tcp_reason
@@ -249,7 +247,6 @@ async def check_url(
                 url,
                 settings.http_timeout_seconds,
                 settings.allow_insecure_tls,
-                via_vpn=bool(local_ip),
             )
             if not http_ok:
                 fail_reason = http_reason
@@ -266,7 +263,7 @@ async def check_url(
                 credentials,
                 settings.stream_timeout_seconds,
                 settings.allow_insecure_tls,
-                via_vpn=bool(local_ip),
+                via_vpn=False,
             )
             if stream_ok is False:
                 fail_reason = stream_reason

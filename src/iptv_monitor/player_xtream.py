@@ -29,7 +29,6 @@ from iptv_monitor.player_guide import (
 )
 from iptv_monitor.health import normalize_url
 from iptv_monitor.stream import _STREAM_UA
-from iptv_monitor.vpn import magnum_client_kwargs
 
 logger = logging.getLogger("iptv_monitor.player_xtream")
 
@@ -298,7 +297,6 @@ class XtreamCatalogue:
                 follow_redirects=True,
                 timeout=self._timeout(action),
                 headers={"User-Agent": _STREAM_UA, "Accept": "application/json"},
-                **magnum_client_kwargs(),
             ) as client:
                 response = await client.get(f"{cfg.base}/player_api.php", params=params)
         except httpx.TimeoutException as exc:

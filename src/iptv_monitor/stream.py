@@ -272,8 +272,7 @@ async def check_xtream_mpegts(
 
     Returns (ok, fail_reason, detail). ok is None only when we had no credentials.
     If every account 404s / fails auth, we still mark the URL down so it is not a swap target.
-    Magnum probes (via_vpn) bind to the Watch VPN so dashboard MPEG-TS matches
-    /watch. Strong 8K never uses that path.
+    Magnum MPEG-TS always uses the public NIC. Magnum live URLs 401 from Surfshark.
     """
     if not credentials:
         return None, None, None

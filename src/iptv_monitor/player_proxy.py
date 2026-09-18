@@ -32,7 +32,6 @@ from fastapi.responses import Response, StreamingResponse
 
 from iptv_monitor.player_xtream import PlayerConfig
 from iptv_monitor.stream import TS_SYNC, _STREAM_UA, _is_blocked_stream_url
-from iptv_monitor.vpn import bind_ip, ffmpeg_env, magnum_client_kwargs
 
 logger = logging.getLogger("iptv_monitor.player_proxy")
 
@@ -41,7 +40,6 @@ _FETCH_MAX_TICKETS = 40_000
 _URI_ATTR = re.compile(r'URI="([^"]+)"')
 _HLS_HINTS = ("application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl")
 _HTTP: httpx.AsyncClient | None = None
-_HTTP_BIND = ""
 _ALWAYS_COPY_VIDEO = frozenset({"h264", "av1", "vp8", "vp9"})
 _vod_run = asyncio.Lock()
 _vod_procs: set[asyncio.subprocess.Process] = set()
@@ -60,14 +58,10 @@ _CODEC_MARKERS = (
 def http_client() -> httpx.AsyncClient:
     """Keepalive pool so zapping a channel does not redo TLS to the panel every time.
 
-    Magnum live/VOD binds to the Watch VPN when it is up. Strong 8K never uses this client.
+    Magnum live/VOD leave the public NIC. The panel rejects stream URLs from Surfshark.
     """
-    global _HTTP, _HTTP_BIND
-    bind = bind_ip()
-    if _HTTP is None or _HTTP.is_closed or _HTTP_BIND != bind:
-        old = _HTTP
-        _HTTP_BIND = bind
-        kwargs = magnum_client_kwargs()
+    global _HTTP
+    if _HTTP is None or _HTTP.is_closed:
         _HTTP = httpx.AsyncClient(
             verify=False,
             follow_redirects=True,
@@ -75,13 +69,7 @@ def http_client() -> httpx.AsyncClient:
             timeout=httpx.Timeout(None, connect=8.0),
             headers={"User-Agent": _STREAM_UA, "Accept": "*/*"},
             limits=httpx.Limits(max_keepalive_connections=20, max_connections=40, keepalive_expiry=90),
-            **kwargs,
         )
-        if old is not None and not old.is_closed:
-            try:
-                asyncio.create_task(old.aclose())
-            except Exception:
-                pass
     return _HTTP
 
 
@@ -263,7 +251,6 @@ async def probe_vod_video_codec(url: str) -> str:
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
-            env=ffmpeg_env(),
         )
     except OSError:
         return ""
@@ -591,7 +578,6 @@ async def _stream_vod_ffmpeg(
         "stderr": asyncio.subprocess.PIPE,
         "limit": 8 * 1024 * 1024,
         "start_new_session": True,
-        "env": ffmpeg_env(),
     }
     try:
         proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)

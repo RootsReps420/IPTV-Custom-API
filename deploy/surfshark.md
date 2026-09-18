@@ -1,8 +1,9 @@
 # Surfshark WireGuard for /watch (split tunnel)
 
-Magnum `/watch` traffic (live, VOD, catalogue, EPG) and Magnum dashboard health
-(DNS, TCP, MPEG-TS) bind to the VPN when it is up. Strong 8K, EPGenius, Discord,
-Android, SSH, and Caddy stay on the VPS public NIC.
+Magnum `/watch` live/VOD and Magnum MPEG-TS health stay on the public NIC (the
+panel rejects stream URLs from Surfshark). Magnum DNS health binds to the VPN
+when it is up. Strong 8K, EPGenius, Discord, Android, SSH, and Caddy stay on
+the VPS public NIC.
 
 Do **not** put `AllowedIPs = 0.0.0.0/0` on the **main** routing table. That
 blackholes SSH. Use a separate table (`51820`) plus `from <wg-ip>` so only

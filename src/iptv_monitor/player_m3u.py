@@ -17,8 +17,6 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from iptv_monitor.vpn import magnum_client_kwargs
-
 logger = logging.getLogger("iptv_monitor.player_m3u")
 
 # Google Drive refuses a VLC user-agent; GitHub is fine with either.
@@ -47,7 +45,6 @@ def playlist_client(timeout: httpx.Timeout) -> httpx.Client:
         follow_redirects=True,
         timeout=timeout,
         headers=playlist_headers(),
-        **magnum_client_kwargs(sync=True),
     )
 
 

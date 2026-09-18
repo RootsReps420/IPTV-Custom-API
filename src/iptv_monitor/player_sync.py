@@ -47,7 +47,6 @@ from iptv_monitor.player_xtream import (
     load_player_config,
 )
 from iptv_monitor.stream import _STREAM_UA
-from iptv_monitor.vpn import magnum_client_kwargs
 
 logger = logging.getLogger("iptv_monitor.player_sync")
 
@@ -444,7 +443,6 @@ class WatchSyncer:
             follow_redirects=True,
             timeout=timeout,
             headers={"User-Agent": _STREAM_UA, "Accept": "*/*"},
-            **magnum_client_kwargs(sync=True),
         )
 
     def _download_live(self, cfg) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
@@ -705,7 +703,6 @@ class WatchSyncer:
             timeout=EPG_TIMEOUT,
             headers={"User-Agent": _STREAM_UA, "Accept": "application/json"},
             limits=limits,
-            **magnum_client_kwargs(sync=True),
         ) as client:
             with ThreadPoolExecutor(max_workers=EPG_WORKERS) as pool:
                 futures = [pool.submit(fetch, stream) for stream in streams]

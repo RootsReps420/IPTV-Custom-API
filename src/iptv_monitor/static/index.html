@@ -129,7 +129,7 @@
         <h2>Watch VPN</h2>
         <span id="vpn-pill" class="pill">—</span>
       </div>
-      <p class="history-note">Surfshark carries all Magnum traffic: /watch live/VOD, catalogue, EPG, and Magnum DNS/TCP/MPEG-TS health. Strong 8K, EPGenius, Discord, Android, SSH, and Caddy stay on the public NIC. Speed test runs 5 parallel downloads through the VPN (the /watch path) and compares the public NIC.</p>
+      <p class="history-note">/watch Magnum live/VOD and Magnum MPEG-TS health stay on the public NIC (the panel rejects stream URLs from Surfshark). Magnum DNS health uses the VPN. Strong 8K, EPGenius, Discord, Android, SSH, and Caddy stay on the public NIC. Speed test runs 5 parallel downloads on the public NIC and compares the VPN if it is up.</p>
       <div id="vpn-grid" class="vpn-grid"></div>
       <div class="vpn-actions">
         <button type="button" class="switch-btn" id="vpn-speed-btn">Test 5 streams</button>
@@ -182,6 +182,6 @@
       <ol id="event-list" class="event-list"></ol>
     </section>
   </div>
-  <script src="/static/app.js?v=44"></script>
+  <script src="/static/app.js?v=45"></script>
 </body>
 </html>

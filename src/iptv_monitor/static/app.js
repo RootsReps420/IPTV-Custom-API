@@ -117,13 +117,13 @@ function renderSpeedPayload(payload) {
   if (watch.min_stream_mbps != null) {
     lines.push(`Slowest connection ${esc(watch.min_stream_mbps)} Mbps`);
   }
-  const nic = payload.nic;
-  if (nic && nic.ok && watch.path === "vpn") {
+  const vpn = payload.vpn;
+  if (vpn && vpn.ok && watch.path !== "vpn") {
     lines.push(
-      `Public NIC comparison: ${esc(nic.download_mbps)} Mbps total · ${esc(nic.per_stream_mbps)} Mbps each`,
+      `VPN comparison: ${esc(vpn.download_mbps)} Mbps total · ${esc(vpn.per_stream_mbps)} Mbps each. Magnum live uses the public NIC.`,
     );
-  } else if (nic && nic.error) {
-    lines.push(`Public NIC burst failed: ${esc(nic.error)}`);
+  } else if (vpn && vpn.error) {
+    lines.push(`VPN burst failed: ${esc(vpn.error)}`);
   }
   return { html: lines.join("<br>"), cls: speedVerdictClass(watch.verdict || payload.verdict || "") };
 }
@@ -174,7 +174,8 @@ function renderVpn(vpn) {
         vpn.handshake_seconds == null ? (connected ? "up" : "—") : `${fmtAge(vpn.handshake_seconds)} ago`,
       ),
       vpnCell("Traffic", `${fmtBytes(vpn.rx_bytes)} in · ${fmtBytes(vpn.tx_bytes)} out`),
-      vpnCell("Watch Magnum", vpn.watch_via_vpn ? "via VPN" : "public NIC"),
+      vpnCell("Watch Magnum", "public NIC"),
+      vpnCell("Magnum DNS", vpn.watch_via_vpn ? "via VPN" : "public NIC"),
     ].join("");
   }
   if (vpnSpeedBtn) {
@@ -182,7 +183,7 @@ function renderVpn(vpn) {
   }
   if (vpnSpeedResult && !vpnSpeedBusy && !vpnSpeedResult.dataset.filled) {
     vpnSpeedResult.textContent =
-      "Five parallel ~12MB downloads on the /watch Magnum path (Surfshark when the tunnel is up).";
+      "Five parallel ~12MB downloads on the public NIC (/watch Magnum path). VPN is compared if it is up.";
     vpnSpeedResult.className = "vpn-speed-result";
   }
 }

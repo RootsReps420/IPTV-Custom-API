@@ -113,7 +113,7 @@ def create_app(monitor: Monitor) -> FastAPI:
 
     @app.post("/api/vpn/speedtest")
     async def vpn_speed() -> dict:
-        """Five parallel downloads on the /watch Magnum path (VPN when up)."""
+        """Five parallel downloads on the /watch Magnum path (public NIC)."""
         try:
             return await vpn_speedtest()
         except RuntimeError as exc:

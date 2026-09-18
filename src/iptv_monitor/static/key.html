@@ -198,9 +198,10 @@
       </div>
       <p>
         Owner Playlists shows whether Surfshark WireGuard is up, the city, and a
-        five-stream speed test. All Magnum /watch traffic and Magnum URL health
-        (DNS, TCP, MPEG-TS) bind to the VPN. Strong 8K, Android, SSH, Caddy, and
-        Discord stay on the VPS public address.
+        five-stream speed test. Magnum DNS health checks go through the VPN.
+        /watch live/VOD stay on the VPS public IP because Magnum rejects stream
+        URLs from the VPN exit. Strong 8K, Android, SSH, Caddy, and Discord stay
+        on the public address.
       </p>
     </article>
   </section>

@@ -1,8 +1,10 @@
-"""Surfshark / WireGuard split tunnel used by /watch Magnum traffic.
+"""Surfshark / WireGuard split tunnel for Magnum DNS health (not live/VOD).
 
-The VPS default route stays on the public NIC (SSH, Caddy, Discord, Strong 8K).
-When a WireGuard interface is up, Magnum HTTP binds to that address so /watch
-leaves through the VPN. Status + speed-test are owner-only.
+The VPS default route stays on the public NIC (SSH, Caddy, Discord, Strong 8K,
+and Magnum /watch live/VOD). Magnum rejects stream URLs from the VPN exit.
+When WireGuard is up, Magnum DNS lookups bind to that address. Status +
+speed-test are owner-only. The speed test scores the public NIC as the /watch
+path and compares the VPN when it is up.
 """
 
 from __future__ import annotations
@@ -458,45 +460,26 @@ async def _burst(
 
 
 async def speedtest() -> dict[str, Any]:
-    """Five parallel downloads on the /watch Magnum path (VPN when up)."""
+    """Five parallel downloads on the /watch Magnum path (public NIC)."""
     async with _speed_lock:
-        ip = bind_ip()
-        if ip:
-            watch = await _burst(
-                path="vpn",
-                bind=ip,
-                streams=_WATCH_STREAMS,
-                want=_BYTES_EACH,
-            )
-            nic_row: dict[str, Any] | None = None
-            try:
-                nic_row = await _burst(
-                    path="public_nic",
-                    bind="",
-                    streams=_WATCH_STREAMS,
-                    want=_BYTES_EACH,
-                )
-            except Exception as exc:
-                nic_row = {"ok": False, "path": "public_nic", "error": str(exc)[:160]}
-            return {
-                "ok": True,
-                "download_mbps": watch["download_mbps"],
-                "per_stream_mbps": watch["per_stream_mbps"],
-                "latency_ms": watch["latency_ms"],
-                "bytes": watch["bytes"],
-                "seconds": watch["seconds"],
-                "verdict": watch["verdict"],
-                "verdict_label": watch["verdict_label"],
-                "watch": watch,
-                "vpn": watch,
-                "nic": nic_row,
-            }
         watch = await _burst(
             path="public_nic",
             bind="",
             streams=_WATCH_STREAMS,
             want=_BYTES_EACH,
         )
+        vpn_row: dict[str, Any] | None = None
+        ip = bind_ip()
+        if ip:
+            try:
+                vpn_row = await _burst(
+                    path="vpn",
+                    bind=ip,
+                    streams=_WATCH_STREAMS,
+                    want=_BYTES_EACH,
+                )
+            except Exception as exc:
+                vpn_row = {"ok": False, "path": "vpn", "error": str(exc)[:160], "bind_ip": ip}
         return {
             "ok": True,
             "download_mbps": watch["download_mbps"],
@@ -507,7 +490,7 @@ async def speedtest() -> dict[str, Any]:
             "verdict": watch["verdict"],
             "verdict_label": watch["verdict_label"],
             "watch": watch,
-            "vpn": None,
+            "vpn": vpn_row,
             "nic": watch,
         }
 
