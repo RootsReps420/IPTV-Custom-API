@@ -186,13 +186,15 @@ async def check_url(
     *,
     skip_stream: bool = False,
     via_vpn: bool = False,
+    require_mpegts: bool = True,
 ) -> HealthResult:
     """Run enabled checks in order. First failure becomes fail_reason; later checks are skipped.
 
     Nameserver lookup runs in parallel and never fails the URL.
     Magnum (via_vpn) resolves DNS through Surfshark. TCP, HTTP, and MPEG-TS
     stay on the public NIC — Magnum rejects live stream URLs from the VPN.
-    Strong 8K is NIC-only.
+    Strong 8K is NIC-only. Magnum requires a real MPEG-TS pull; Strong 8K is
+    up once Xtream player_api accepts an account (VPS TS pulls are often blocked).
     """
     try:
         url, host, port = parse_endpoint(raw_url)
@@ -264,6 +266,7 @@ async def check_url(
                 settings.stream_timeout_seconds,
                 settings.allow_insecure_tls,
                 via_vpn=False,
+                require_mpegts=require_mpegts,
             )
             if stream_ok is False:
                 fail_reason = stream_reason
@@ -309,6 +312,7 @@ async def check_urls(
     *,
     skip_stream: bool = False,
     via_vpn: bool = False,
+    require_mpegts: bool = True,
 ) -> dict[str, HealthResult]:
     """Probe unique URLs in parallel. Keyed by normalised URL."""
     unique: list[str] = []
@@ -324,7 +328,14 @@ async def check_urls(
 
     results = await asyncio.gather(
         *(
-            check_url(url, settings, credentials, skip_stream=skip_stream, via_vpn=via_vpn)
+            check_url(
+                url,
+                settings,
+                credentials,
+                skip_stream=skip_stream,
+                via_vpn=via_vpn,
+                require_mpegts=require_mpegts,
+            )
             for url in unique
         ),
         return_exceptions=True,
@@ -332,7 +343,7 @@ async def check_urls(
     mapped: dict[str, HealthResult] = {}
     for raw, result in zip(unique, results, strict=True):
         if isinstance(result, Exception):
-            logger.exception("Health check crashed for %s: %s", raw, result)
+            logger.error("Health check crashed for %s: %s", raw, result, exc_info=result)
             try:
                 key = normalize_url(raw)
             except ValueError:

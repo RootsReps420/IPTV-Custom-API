@@ -46,6 +46,13 @@ const vodPlayBtn = document.getElementById("vod-play");
 const vodMuteBtn = document.getElementById("vod-mute");
 const vodVol = document.getElementById("vod-vol");
 const vodFsBtn = document.getElementById("vod-fs");
+const vodEpPrev = document.getElementById("vod-ep-prev");
+const vodEpNext = document.getElementById("vod-ep-next");
+const vodUpNext = document.getElementById("vod-upnext");
+const vodUpNextTitle = document.getElementById("vod-upnext-title");
+const vodUpNextSecs = document.getElementById("vod-upnext-secs");
+const vodUpNextPlay = document.getElementById("vod-upnext-play");
+const vodUpNextCancel = document.getElementById("vod-upnext-cancel");
 const categoryList = document.getElementById("category-list");
 const itemList = document.getElementById("item-list");
 const watchStage = document.getElementById("watch-stage");
@@ -59,6 +66,16 @@ const watchSpinner = document.getElementById("watch-spinner");
 const termsPanel = document.getElementById("terms-panel");
 const termsAgree = document.getElementById("terms-agree");
 const termsOk = document.getElementById("terms-ok");
+const vodDetail = document.getElementById("vod-detail");
+const vodDetailClose = document.getElementById("vod-detail-close");
+const vodDetailBackdrop = document.getElementById("vod-detail-backdrop");
+const vodDetailMeta = document.getElementById("vod-detail-meta");
+const vodDetailTitle = document.getElementById("vod-detail-title");
+const vodDetailPlot = document.getElementById("vod-detail-plot");
+const vodDetailPlay = document.getElementById("vod-detail-play");
+const vodDetailPeople = document.getElementById("vod-detail-people");
+const vodDetailEps = document.getElementById("vod-detail-episodes");
+const vodPlayerClose = document.getElementById("vod-player-close");
 
 /* Live stash is capped at 512KB so FHD still shows a frame quickly.
  * Multi-MB stash used to wait to fill before the first MSE append.
@@ -68,6 +85,8 @@ const BUFFER_PROFILES = {
   medium: { target: 6, stash: 512 * 1024 },
   large: { target: 10, stash: 512 * 1024 },
 };
+const UP_NEXT_SECS = 8;
+const VOD_VIEW_ALL_CAP = 400;
 
 function playId() {
   // One UUID per tab so two tabs from the same friend consume two panel slots.
@@ -494,6 +513,10 @@ const state = {
   categoryId: "",
   items: [],
   seriesDetail: null,
+  seriesName: "",
+  episodeQueue: [],
+  playingEpisodes: [],
+  episodeIndex: -1,
   playingLiveId: "",
   playingItem: null,
   playingKind: "",
@@ -503,6 +526,11 @@ const state = {
   searchKind: "all",
   searchHits: { live: [], movies: [], series: [] },
   syncBusy: false,
+  vodHome: null,
+  vodExpanded: {},
+  detailItem: null,
+  detailKind: "",
+  seasonId: "",
 };
 
 let hls = null;
@@ -531,6 +559,9 @@ let vodScrubbing = false;
 let vodSeeking = false;
 let vodChromeTimer = 0;
 let vodWaitTimer = 0;
+let upNextTimer = 0;
+let upNextLeft = 0;
+let upNextGoing = false;
 let memoryPlayId = "";
 let stallReports = 0;
 
@@ -782,9 +813,14 @@ function formatTime(ts) {
 
 const EPG_HOURS = 8;
 const EPG_PX_HOUR = 210;
-const EPG_CH_W = 196;
+const EPG_CH_W_WIDE = 344;
+const EPG_CH_W_NARROW = 220;
 const EPG_SNAP = 30 * 60;
 let epgWinStart = 0;
+
+function epgChannelWidth() {
+  return window.innerWidth < 720 ? EPG_CH_W_NARROW : EPG_CH_W_WIDE;
+}
 
 function epgWindowStart(nowSec) {
   return Math.floor(nowSec / EPG_SNAP) * EPG_SNAP;
@@ -819,7 +855,7 @@ function tickEpgNow() {
   const needle = itemList.querySelector(".watch-epg-needle");
   const x = Math.max(0, Math.min(epgGridWidth(), epgX(now)));
   if (line) {
-    line.style.left = `${EPG_CH_W + x}px`;
+    line.style.left = `${epgChannelWidth() + x}px`;
     line.hidden = now < epgWinStart || now > epgWinStart + EPG_HOURS * 3600;
   }
   if (needle) {
@@ -852,7 +888,8 @@ function renderLiveEpg(rows) {
       `<span class="watch-epg-tick" style="left:${epgX(t)}px">${esc(formatTime(t))}</span>`
     );
   }
-  const nowLeft = EPG_CH_W + epgX(now);
+  const chW = epgChannelWidth();
+  const nowLeft = chW + epgX(now);
   const needleLeft = epgX(now);
   const body = rows
     .map((item, index) => {
@@ -880,10 +917,10 @@ function renderLiveEpg(rows) {
             })
             .join("")
         : `<span class="watch-epg-empty">No programme info</span>`;
-      return `<div class="watch-epg-row${here}" data-live="${esc(item.stream_id)}"><button type="button" class="watch-epg-ch${here}" data-live="${esc(item.stream_id)}"><span class="watch-num">${esc(num)}</span>${icon}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span></span></button><div class="watch-epg-slots">${slots}</div></div>`;
+      return `<div class="watch-epg-row${here}" data-live="${esc(item.stream_id)}"><button type="button" class="watch-epg-ch${here}" data-live="${esc(item.stream_id)}" title="${esc(item.name)}"><span class="watch-num">${esc(num)}</span>${icon}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span></span></button><div class="watch-epg-slots">${slots}</div></div>`;
     })
     .join("");
-  itemList.innerHTML = `<div class="watch-epg-scroller" style="--epg-ch:${EPG_CH_W}px;--epg-grid:${gridW}px"><div class="watch-epg-inner" style="min-width:${EPG_CH_W + gridW}px"><div class="watch-epg-head"><div class="watch-epg-clock">${esc(formatClock())}</div><div class="watch-epg-times">${ticks.join("")}<span class="watch-epg-needle" style="left:${needleLeft}px"></span></div></div>${body}<div class="watch-epg-now" style="left:${nowLeft}px"></div></div></div>`;
+  itemList.innerHTML = `<div class="watch-epg-scroller" style="--epg-ch:${chW}px;--epg-grid:${gridW}px"><div class="watch-epg-inner" style="min-width:${chW + gridW}px"><div class="watch-epg-head"><div class="watch-epg-clock">${esc(formatClock())}</div><div class="watch-epg-times">${ticks.join("")}<span class="watch-epg-needle" style="left:${needleLeft}px"></span></div></div>${body}<div class="watch-epg-now" style="left:${nowLeft}px"></div></div></div>`;
 }
 
 function parseRuntime(value, { seconds } = {}) {
@@ -991,6 +1028,129 @@ function isVodPlay() {
   return state.playingKind === "movie" || state.playingKind === "series";
 }
 
+function flattenEpisodes(detail) {
+  const grouped = (detail && detail.episodes) || {};
+  const seasons = Object.keys(grouped).sort((a, b) => Number(a) - Number(b));
+  const rows = [];
+  seasons.forEach((season) => {
+    (grouped[season] || []).forEach((ep) => {
+      if (!ep || ep.id == null) {
+        return;
+      }
+      const info = ep.info || {};
+      rows.push({
+        id: String(ep.id),
+        title: ep.title || "",
+        episode_num: ep.episode_num,
+        season,
+        container_extension: ep.container_extension || info.container_extension || "mp4",
+        plot: ep.plot || info.plot || "",
+        duration: ep.duration || info.duration || "",
+        duration_secs: ep.duration_secs || info.duration_secs || "",
+        still: ep.still || info.movie_image || "",
+        rating: ep.rating || info.rating || "",
+        release_date: ep.release_date || info.release_date || info.air_date || "",
+      });
+    });
+  });
+  return rows;
+}
+
+function episodeLabel(episode) {
+  if (!episode) {
+    return "Episode";
+  }
+  const bits = [];
+  if (episode.season != null && episode.season !== "") {
+    bits.push(`S${episode.season}`);
+  }
+  if (episode.episode_num != null && episode.episode_num !== "") {
+    bits.push(`E${episode.episode_num}`);
+  }
+  bits.push(episode.title || `Episode ${episode.episode_num || episode.id || ""}`.trim());
+  return bits.filter(Boolean).join(" · ");
+}
+
+function currentEpisodeOffset(delta) {
+  const queue = state.playingEpisodes || [];
+  const index = Number(state.episodeIndex);
+  if (!queue.length || !Number.isInteger(index) || index < 0) {
+    return null;
+  }
+  return queue[index + delta] || null;
+}
+
+function upNextOpen() {
+  return Boolean(vodUpNext && !vodUpNext.hidden);
+}
+
+function hideUpNext() {
+  if (upNextTimer) {
+    window.clearInterval(upNextTimer);
+    upNextTimer = 0;
+  }
+  upNextLeft = 0;
+  if (vodUpNext) {
+    vodUpNext.hidden = true;
+  }
+}
+
+function paintEpisodeButtons() {
+  const series = state.playingKind === "series";
+  const prev = series ? currentEpisodeOffset(-1) : null;
+  const next = series ? currentEpisodeOffset(1) : null;
+  if (vodEpPrev) {
+    vodEpPrev.hidden = !prev;
+  }
+  if (vodEpNext) {
+    vodEpNext.hidden = !next;
+  }
+}
+
+async function goAdjacentEpisode(delta) {
+  const target = currentEpisodeOffset(delta);
+  if (!target || upNextGoing) {
+    return;
+  }
+  upNextGoing = true;
+  hideUpNext();
+  try {
+    await playEpisode(target, state.seriesName);
+  } finally {
+    upNextGoing = false;
+  }
+}
+
+function showUpNext(next) {
+  if (!next) {
+    return;
+  }
+  hideUpNext();
+  if (!vodUpNext) {
+    goAdjacentEpisode(1).catch(() => {});
+    return;
+  }
+  vodUpNext.hidden = false;
+  if (vodUpNextTitle) {
+    vodUpNextTitle.textContent = episodeLabel(next);
+  }
+  upNextLeft = UP_NEXT_SECS;
+  if (vodUpNextSecs) {
+    vodUpNextSecs.textContent = String(upNextLeft);
+  }
+  showVodChrome();
+  upNextTimer = window.setInterval(() => {
+    upNextLeft -= 1;
+    if (vodUpNextSecs) {
+      vodUpNextSecs.textContent = String(Math.max(0, upNextLeft));
+    }
+    if (upNextLeft <= 0) {
+      hideUpNext();
+      goAdjacentEpisode(1).catch(() => {});
+    }
+  }, 1000);
+}
+
 function vodUsesOverlay() {
   return isVodPlay() && !isTouchIos();
 }
@@ -1022,7 +1182,7 @@ function showVodChrome() {
     videoWrap.classList.remove("is-vod-idle");
   }
   window.clearTimeout(vodChromeTimer);
-  if (video.paused || vodScrubbing) {
+  if (video.paused || vodScrubbing || upNextOpen()) {
     return;
   }
   const dock = vodChrome.querySelector(".watch-vod-dock");
@@ -1030,7 +1190,7 @@ function showVodChrome() {
     return;
   }
   vodChromeTimer = window.setTimeout(() => {
-    if (video.paused || vodScrubbing) {
+    if (video.paused || vodScrubbing || upNextOpen()) {
       return;
     }
     vodChrome.classList.remove("is-on");
@@ -1063,11 +1223,16 @@ function setPlayerChrome() {
     }
     paintVodPlayBtn();
     paintVodMuteBtn();
+    paintEpisodeButtons();
     showVodChrome();
   }
 }
 
 function toggleVodPlay() {
+  if (upNextOpen()) {
+    goAdjacentEpisode(1).catch(() => {});
+    return;
+  }
   if (video.paused || video.ended) {
     const play = video.play();
     if (play && typeof play.catch === "function") {
@@ -1697,6 +1862,7 @@ function stopPlayback() {
   resetStreamInfo();
   paintBufferButtons();
   setPlayerChrome();
+  hideUpNext();
   if (isVodPlay()) {
     paintVodSeek();
   }
@@ -2029,12 +2195,16 @@ async function playSources(kind, streamId, extensions, gen) {
 }
 
 function playLive(item) {
+  setPlayingVod(false);
+  hideVodDetail();
   const gen = ++playGen;
   liveReconnectTries = 0;
   clearVodRuntime();
+  hideUpNext();
   state.playingLiveId = String(item.stream_id);
   state.playingKind = "live";
   state.playingItem = item;
+  state.episodeIndex = -1;
   setPreview(item, { fallback: "Starting…" });
   paintBufferButtons();
   setPlayerChrome();
@@ -2093,14 +2263,20 @@ function playLive(item) {
 }
 
 async function playVod(item) {
+  if (isVodBrowseTab(state.tab)) {
+    hideVodDetail();
+    setPlayingVod(true);
+  }
   const gen = ++playGen;
   vodSeekOffset = 0;
   clearVodRuntime();
+  hideUpNext();
   state.playingLiveId = "";
   state.playingKind = "movie";
   state.playingItem = item;
+  state.episodeIndex = -1;
   const ext = String(item.container_extension || "mp4").replace(/^\./, "");
-  nowTitle.textContent = item.name || `Title ${item.stream_id}`;
+  nowTitle.textContent = vodTitle(item) || `Title ${item.stream_id}`;
   nowEpg.textContent = item.plot || "";
   setProgress(0, 0);
   setVodRuntime(parseRuntime(item.duration_secs, { seconds: true }) || parseRuntime(item.duration));
@@ -2135,18 +2311,34 @@ async function playVod(item) {
 }
 
 async function playEpisode(episode, seriesName) {
+  if (isVodBrowseTab(state.tab)) {
+    hideVodDetail();
+    setPlayingVod(true);
+  }
   const gen = ++playGen;
   vodSeekOffset = 0;
   clearVodRuntime();
+  hideUpNext();
   state.playingLiveId = "";
   state.playingKind = "series";
+  const id = String(episode.id || "");
+  const fromBrowse = state.episodeQueue || [];
+  if (fromBrowse.some((row) => String(row.id) === id)) {
+    state.playingEpisodes = fromBrowse;
+  } else if (!(state.playingEpisodes || []).some((row) => String(row.id) === id)) {
+    state.playingEpisodes = [{ ...episode, id }];
+  }
+  state.episodeIndex = (state.playingEpisodes || []).findIndex((row) => String(row.id) === id);
+  if (seriesName) {
+    state.seriesName = seriesName;
+  }
   state.playingItem = {
     ...episode,
     stream_id: episode.id,
-    name: `${seriesName || "Series"} · ${episode.title || `Episode ${episode.episode_num}`}`,
+    name: `${state.seriesName || "Series"} · ${episode.title || `Episode ${episode.episode_num}`}`,
   };
   const ext = String(episode.container_extension || "mp4").replace(/^\./, "");
-  nowTitle.textContent = `${seriesName || "Series"} · ${episode.title || `Episode ${episode.episode_num}`}`;
+  nowTitle.textContent = `${state.seriesName || "Series"} · ${episode.title || `Episode ${episode.episode_num}`}`;
   nowEpg.textContent = episode.plot || episode.info?.plot || "";
   setProgress(0, 0);
   setVodRuntime(
@@ -2204,6 +2396,578 @@ function catMark(name) {
   return `${words[0][0] || ""}${words[1][0] || ""}`;
 }
 
+function isVodBrowseTab(tab) {
+  return tab === "movies" || tab === "series";
+}
+
+function vodBrowseKind() {
+  return state.tab === "series" ? "series" : "movie";
+}
+
+function vodTitle(item) {
+  return String((item && (item.display_name || item.name)) || "").trim();
+}
+
+function vodPoster(item) {
+  return String((item && (item.poster || item.stream_icon || item.cover || item.cover_big)) || "").trim();
+}
+
+function vodBackdrop(item) {
+  return String((item && (item.backdrop || item.cover_big || vodPoster(item))) || "").trim();
+}
+
+function vodItemId(item, kind) {
+  if (!item) {
+    return "";
+  }
+  return String(kind === "series" ? item.series_id : item.stream_id || "");
+}
+
+function setVodBrowse(on) {
+  if (appPanel) {
+    appPanel.classList.toggle("is-vod-home", on);
+  }
+  closeVodDetail();
+  if (!on) {
+    setPlayingVod(false);
+    return;
+  }
+  setPlayingVod(state.playingKind === "movie" || state.playingKind === "series");
+}
+
+function setPlayingVod(on) {
+  if (appPanel) {
+    appPanel.classList.toggle("is-playing-vod", on);
+  }
+  if (vodPlayerClose) {
+    vodPlayerClose.hidden = !on;
+  }
+}
+
+function hideVodDetail() {
+  if (vodDetail) {
+    vodDetail.hidden = true;
+  }
+  if (vodDetailEps) {
+    vodDetailEps.hidden = true;
+    vodDetailEps.innerHTML = "";
+  }
+  if (vodDetailPeople) {
+    vodDetailPeople.hidden = true;
+    vodDetailPeople.innerHTML = "";
+  }
+}
+
+function seenStoreKey() {
+  return `watch_seen_${state.user || "anon"}`;
+}
+
+function loadSeen() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(seenStoreKey()) || "{}");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function seenRecord(kind, id) {
+  return loadSeen()[`${kind}:${id}`] || null;
+}
+
+function isWatched(kind, id) {
+  const row = seenRecord(kind, id);
+  return Boolean(row && row.watched);
+}
+
+function saveSeen(kind, id, patch) {
+  if (!id) {
+    return;
+  }
+  const all = loadSeen();
+  const key = `${kind}:${id}`;
+  all[key] = { ...(all[key] || {}), ...patch, at: Date.now() };
+  try {
+    localStorage.setItem(seenStoreKey(), JSON.stringify(all));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+let lastSeenWrite = 0;
+
+function markVodProgress() {
+  if (!isVodPlay() || !state.playingItem) {
+    return;
+  }
+  const id = String(state.playingItem.stream_id || "");
+  if (!id) {
+    return;
+  }
+  const dur = Number(video.duration);
+  const pos = Number(video.currentTime);
+  if (!Number.isFinite(dur) || dur <= 0 || !Number.isFinite(pos)) {
+    return;
+  }
+  const watched = pos / dur >= 0.9 || video.ended;
+  const now = Date.now();
+  if (!watched && now - lastSeenWrite < 4000) {
+    return;
+  }
+  lastSeenWrite = now;
+  const kind = state.playingKind === "series" ? "ep" : "movie";
+  saveSeen(kind, id, { pos, dur, watched });
+}
+
+function formatEpRuntime(duration, secs) {
+  const n = Number(secs);
+  if (Number.isFinite(n) && n > 0) {
+    const m = Math.round(n / 60);
+    if (m >= 60) {
+      const hours = Math.floor(m / 60);
+      const mins = m % 60;
+      return mins ? `${hours}h ${mins}m` : `${hours}h`;
+    }
+    return `${m}m`;
+  }
+  const raw = String(duration || "").trim();
+  const hm = raw.match(/^(\d+):(\d+)/);
+  if (hm) {
+    const hours = Number(hm[1]);
+    const mins = Number(hm[2]);
+    return hours >= 2 ? `${hours}h ${mins}m` : `${hours * 60 + mins}m`;
+  }
+  return raw;
+}
+
+function formatEpDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const stamp = Date.parse(raw);
+  if (!Number.isFinite(stamp)) {
+    return raw;
+  }
+  return new Date(stamp).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+function closeVodDetail() {
+  hideVodDetail();
+  state.detailItem = null;
+  state.detailKind = "";
+  state.seasonId = "";
+  if (isVodBrowseTab(state.tab)) {
+    seriesPanel.hidden = true;
+    seriesPanel.innerHTML = "";
+  }
+}
+
+function seriesMount() {
+  if (vodDetail && !vodDetail.hidden && vodDetailEps) {
+    return vodDetailEps;
+  }
+  return seriesPanel;
+}
+
+function findVodItem(kind, id) {
+  const key = kind === "series" ? "series_id" : "stream_id";
+  if (state.detailItem && String(state.detailItem[key] || "") === String(id)) {
+    return state.detailItem;
+  }
+  const home = state.vodHome;
+  if (home) {
+    if (home.featured && String(home.featured[key] || "") === String(id)) {
+      return home.featured;
+    }
+    for (const group of home.groups || []) {
+      const pools = [group.items || [], group.fullItems || []];
+      for (const pool of pools) {
+        const hit = pool.find((row) => String(row[key] || "") === String(id));
+        if (hit) {
+          return hit;
+        }
+      }
+    }
+  }
+  const fromItems = (state.items || []).find((row) => String(row[key] || "") === String(id));
+  if (fromItems) {
+    return fromItems;
+  }
+  return findSearchItem(kind === "series" ? "series" : "movie", id);
+}
+
+function vodMetaLine(item, kind) {
+  const bits = [kind === "series" ? "Show" : "Movie"];
+  if (item?.year) {
+    bits.push(String(item.year));
+  }
+  const rating = item?.tmdb_rating;
+  if (rating != null && rating !== "") {
+    const num = Number(rating);
+    bits.push(`${Number.isFinite(num) ? num.toFixed(1) : rating} TMDB`);
+  }
+  const genres = item?.tmdb?.genres || [];
+  if (genres.length) {
+    bits.push(genres.slice(0, 3).join(" · "));
+  }
+  return bits.join(" · ");
+}
+
+function paintVodDetail(item, kind) {
+  if (!vodDetail) {
+    return;
+  }
+  if (vodDetailTitle) {
+    vodDetailTitle.textContent = vodTitle(item) || "Untitled";
+  }
+  if (vodDetailMeta) {
+    vodDetailMeta.textContent = vodMetaLine(item, kind);
+  }
+  if (vodDetailPlot) {
+    vodDetailPlot.textContent = item.plot || "";
+  }
+  if (vodDetailBackdrop) {
+    const bg = vodBackdrop(item);
+    vodDetailBackdrop.style.backgroundImage = bg ? `url("${bg}")` : "";
+  }
+  paintVodPeople(item);
+}
+
+function paintVodPeople(item) {
+  if (!vodDetailPeople) {
+    return;
+  }
+  const tmdb = (item && item.tmdb) || {};
+  const genres = tmdb.genres || [];
+  const directors = tmdb.directors || [];
+  const writers = tmdb.writers || [];
+  const creators = tmdb.creators || [];
+  const cast = tmdb.cast || [];
+  const countries = tmdb.countries || [];
+  const runtime = tmdb.runtime;
+  const magnumCast = String((item && item.cast) || "").trim();
+  const facts = [];
+  if (genres.length) {
+    facts.push(`<div class="watch-vod-facts-row"><span>Genres</span><strong>${genres.map((name) => esc(name)).join(" · ")}</strong></div>`);
+  }
+  if (directors.length) {
+    facts.push(`<div class="watch-vod-facts-row"><span>Director</span><strong>${directors.map((name) => esc(name)).join(", ")}</strong></div>`);
+  }
+  if (creators.length) {
+    facts.push(`<div class="watch-vod-facts-row"><span>Created by</span><strong>${creators.map((name) => esc(name)).join(", ")}</strong></div>`);
+  }
+  if (writers.length) {
+    facts.push(`<div class="watch-vod-facts-row"><span>Writers</span><strong>${writers.map((name) => esc(name)).join(", ")}</strong></div>`);
+  }
+  if (runtime) {
+    facts.push(`<div class="watch-vod-facts-row"><span>Runtime</span><strong>${esc(formatEpRuntime("", runtime * 60))}</strong></div>`);
+  }
+  if (countries.length) {
+    facts.push(`<div class="watch-vod-facts-row"><span>Country</span><strong>${countries.map((name) => esc(name)).join(", ")}</strong></div>`);
+  }
+  if (tmdb.status) {
+    facts.push(`<div class="watch-vod-facts-row"><span>Status</span><strong>${esc(tmdb.status)}</strong></div>`);
+  }
+  let people = "";
+  if (cast.length) {
+    people = `<div class="watch-cast-row">${cast
+      .map((person) => {
+        const photo = person.photo
+          ? `<img src="${esc(person.photo)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+          : `<span class="watch-cast-fallback">${esc((person.name || "?").slice(0, 1))}</span>`;
+        return `<div class="watch-cast-card">
+          <span class="watch-cast-photo">${photo}</span>
+          <strong>${esc(person.name || "")}</strong>
+          ${person.character ? `<small>${esc(person.character)}</small>` : ""}
+        </div>`;
+      })
+      .join("")}</div>`;
+  } else if (magnumCast) {
+    people = `<p class="watch-cast-fallback-line">${esc(magnumCast)}</p>`;
+  }
+  if (!facts.length && !people) {
+    vodDetailPeople.hidden = true;
+    vodDetailPeople.innerHTML = "";
+    return;
+  }
+  vodDetailPeople.hidden = false;
+  vodDetailPeople.innerHTML = `${facts.length ? `<div class="watch-vod-facts">${facts.join("")}</div>` : ""}${people}`;
+}
+
+async function openVodDetail(item, kind) {
+  if (!item || !vodDetail) {
+    return;
+  }
+  state.detailItem = item;
+  state.detailKind = kind;
+  paintVodDetail(item, kind);
+  vodDetail.hidden = false;
+  if (kind === "series") {
+    state.seasonId = "";
+    if (vodDetailEps) {
+      vodDetailEps.hidden = false;
+      vodDetailEps.innerHTML = `<div class="empty-events">Loading seasons…</div>`;
+    }
+    try {
+      const detail = await api(`/api/player/series/info?series_id=${encodeURIComponent(item.series_id)}`);
+      if (vodItemId(state.detailItem, "series") !== String(item.series_id)) {
+        return;
+      }
+      const info = detail.info || {};
+      const tmdb = detail.tmdb || {};
+      const merged = {
+        ...item,
+        display_name: tmdb.title || info.name || vodTitle(item),
+        plot: tmdb.plot || info.plot || item.plot || "",
+        year: tmdb.year || info.year || item.year,
+        poster: tmdb.poster || item.poster,
+        backdrop: tmdb.backdrop || item.backdrop,
+        tmdb_rating: tmdb.rating != null ? tmdb.rating : item.tmdb_rating,
+        cast: info.cast || item.cast || "",
+        tmdb,
+      };
+      state.detailItem = merged;
+      paintVodDetail(merged, "series");
+      renderSeries(detail, vodTitle(merged));
+    } catch (error) {
+      if (vodDetailEps) {
+        vodDetailEps.innerHTML = `<div class="empty-events">${esc(error.message)}</div>`;
+      }
+      showBanner(error.message, "bad");
+    }
+    return;
+  }
+  if (vodDetailEps) {
+    vodDetailEps.hidden = true;
+    vodDetailEps.innerHTML = "";
+  }
+  seriesPanel.hidden = true;
+  api(`/api/player/vod/info?vod_id=${encodeURIComponent(item.stream_id)}`)
+    .then((data) => {
+      if (vodItemId(state.detailItem, "movie") !== String(item.stream_id)) {
+        return;
+      }
+      const info = data.info || {};
+      const tmdb = data.tmdb || {};
+      const merged = {
+        ...item,
+        display_name: tmdb.title || info.name || vodTitle(item),
+        plot: tmdb.plot || info.plot || item.plot || "",
+        year: tmdb.year || info.year || item.year,
+        poster: tmdb.poster || item.poster,
+        backdrop: tmdb.backdrop || item.backdrop,
+        tmdb_rating: tmdb.rating != null ? tmdb.rating : item.tmdb_rating,
+        duration: info.duration || item.duration,
+        duration_secs: info.duration_secs || item.duration_secs,
+        container_extension: info.container_extension || item.container_extension,
+        cast: info.cast || item.cast || "",
+        tmdb,
+      };
+      state.detailItem = merged;
+      paintVodDetail(merged, "movie");
+    })
+    .catch(() => {});
+}
+
+async function playFromDetail() {
+  const item = state.detailItem;
+  const kind = state.detailKind;
+  if (!item) {
+    return;
+  }
+  hideVodDetail();
+  if (isVodBrowseTab(state.tab)) {
+    setPlayingVod(true);
+  }
+  if (kind === "series") {
+    const first = (state.episodeQueue || [])[0];
+    if (!first) {
+      showBanner("No episodes in this show yet.", "warn");
+      return;
+    }
+    await playEpisode(first, vodTitle(item));
+    return;
+  }
+  await playVod(item);
+}
+
+async function closeVodPlayer() {
+  setPlayingVod(false);
+  stopPlayback();
+  await releaseSlot();
+  if (state.detailItem) {
+    paintVodDetail(state.detailItem, state.detailKind || vodBrowseKind());
+    if (vodDetail) {
+      vodDetail.hidden = false;
+    }
+    if (state.detailKind === "series" && state.seriesDetail) {
+      renderSeries(state.seriesDetail, vodTitle(state.detailItem));
+    }
+  }
+}
+
+function vodMatchesFilter(item, tokens) {
+  if (!tokens.length) {
+    return true;
+  }
+  const hay = `${vodTitle(item)} ${item.name || ""} ${item.plot || ""} ${item.genre || ""}`.toLowerCase();
+  return tokens.every((token) => hay.includes(token));
+}
+
+function posterCard(item, kind) {
+  const id = vodItemId(item, kind);
+  const attr = kind === "series" ? "data-open-series" : "data-open-movie";
+  const title = vodTitle(item);
+  const art = vodPoster(item);
+  const img = art
+    ? `<img src="${esc(art)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+    : `<span class="watch-poster-fallback">${esc((title || "?").slice(0, 1))}</span>`;
+  const year = item.year ? `<span class="watch-poster-year">${esc(item.year)}</span>` : "";
+  return `<button type="button" class="watch-poster" ${attr}="${esc(id)}"><span class="watch-poster-art">${img}</span><span class="watch-poster-copy"><span class="watch-poster-name">${esc(title)}</span>${year}</span></button>`;
+}
+
+function renderVodHome() {
+  const home = state.vodHome;
+  itemList.classList.remove("is-epg");
+  if (watchStage) {
+    watchStage.classList.remove("is-guide");
+  }
+  if (!home) {
+    itemList.innerHTML = `<div class="empty-events">Loading the shelf…</div>`;
+    return;
+  }
+  const kind = home.kind === "series" ? "series" : "movie";
+  const tokens = (searchEl.value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const feat = home.featured;
+  let heroHtml = "";
+  if (feat && vodMatchesFilter(feat, tokens)) {
+    const bg = vodBackdrop(feat);
+    const year = feat.year ? ` · ${esc(feat.year)}` : "";
+    const kicker = kind === "series" ? "Show" : "Movie";
+    const plot = String(feat.plot || "").trim();
+    const attr = kind === "series" ? "data-open-series" : "data-open-movie";
+    heroHtml = `<article class="watch-hero">
+      <div class="watch-hero-bg"${bg ? ` style="background-image:url('${esc(bg)}')"` : ""}></div>
+      <div class="watch-hero-copy">
+        <p class="watch-hero-kicker">${kicker}${year}</p>
+        <h2>${esc(vodTitle(feat))}</h2>
+        ${plot ? `<p class="watch-hero-plot">${esc(plot)}</p>` : ""}
+        <button type="button" class="switch-btn" ${attr}="${esc(vodItemId(feat, kind))}">Play</button>
+      </div>
+    </article>`;
+  }
+  const rows = (home.groups || [])
+    .map((group) => {
+      const expanded = !!state.vodExpanded[group.category_id];
+      const source = expanded && group.fullItems ? group.fullItems : group.items || [];
+      const items = tokens.length ? source.filter((item) => vodMatchesFilter(item, tokens)) : source;
+      if (!items.length) {
+        return "";
+      }
+      const total = group.stream_count || source.length;
+      const canExpand = total > (group.items || []).length;
+      const count = total > items.length ? ` · ${esc(total)}` : "";
+      const allBtn =
+        canExpand || expanded
+          ? `<button type="button" class="watch-row-all" data-vod-all="${esc(group.category_id)}">${
+              expanded ? "Show less" : "View all"
+            }${expanded ? "" : count}</button>`
+          : "";
+      return `<section class="watch-row${expanded ? " is-all" : ""}">
+        <header class="watch-row-head"><h3>${esc(group.category_name)}</h3>${allBtn}</header>
+        <div class="watch-row-frame">
+          <button type="button" class="watch-row-arrow is-prev" data-row-dir="-1" hidden aria-label="Previous">‹</button>
+          <div class="watch-row-scroll">${items.map((item) => posterCard(item, kind)).join("")}</div>
+          <button type="button" class="watch-row-arrow is-next" data-row-dir="1" hidden aria-label="Next">›</button>
+        </div>
+      </section>`;
+    })
+    .join("");
+  const empty = tokens.length ? "No titles match that filter." : "Nothing in the guide yet.";
+  itemList.innerHTML = `<div class="watch-vod-home">${heroHtml}${rows || `<div class="empty-events">${empty}</div>`}</div>`;
+  bindVodRowArrows();
+}
+
+function bindVodRowArrows() {
+  itemList.querySelectorAll(".watch-row").forEach((row) => {
+    const scroller = row.querySelector(".watch-row-scroll");
+    const prev = row.querySelector("[data-row-dir='-1']");
+    const next = row.querySelector("[data-row-dir='1']");
+    if (!scroller || row.classList.contains("is-all")) {
+      if (prev) prev.hidden = true;
+      if (next) next.hidden = true;
+      return;
+    }
+    const paint = () => {
+      const max = scroller.scrollWidth - scroller.clientWidth - 8;
+      const overflow = max > 8;
+      if (prev) prev.hidden = !overflow || scroller.scrollLeft <= 8;
+      if (next) next.hidden = !overflow || scroller.scrollLeft >= max;
+    };
+    scroller.addEventListener("scroll", paint, { passive: true });
+    window.addEventListener("resize", paint, { passive: true });
+    paint();
+    window.requestAnimationFrame(paint);
+  });
+}
+
+function scrollVodRow(button) {
+  const frame = button.closest(".watch-row-frame");
+  const scroller = frame && frame.querySelector(".watch-row-scroll");
+  if (!scroller) {
+    return;
+  }
+  const dir = Number(button.getAttribute("data-row-dir") || 1);
+  const step = Math.max(scroller.clientWidth * 0.86, 420);
+  scroller.scrollBy({ left: dir * step, behavior: "smooth" });
+}
+
+async function loadVodHome() {
+  setVodBrowse(true);
+  searchEl.placeholder = state.tab === "movies" ? "Filter movies…" : "Filter shows…";
+  clearEpgLayout();
+  categoryList.innerHTML = "";
+  seriesPanel.hidden = true;
+  state.vodHome = null;
+  state.vodExpanded = {};
+  renderVodHome();
+  const path = state.tab === "movies" ? "/api/player/vod/home" : "/api/player/series/home";
+  const data = await api(path);
+  if (!isVodBrowseTab(state.tab)) {
+    return;
+  }
+  state.vodHome = data;
+  renderVodHome();
+}
+
+async function expandVodGroup(categoryId) {
+  const home = state.vodHome;
+  if (!home) {
+    return;
+  }
+  const group = (home.groups || []).find((row) => String(row.category_id) === String(categoryId));
+  if (!group) {
+    return;
+  }
+  if (state.vodExpanded[categoryId]) {
+    state.vodExpanded[categoryId] = false;
+    renderVodHome();
+    return;
+  }
+  if (!group.fullItems) {
+    const path =
+      home.kind === "series"
+        ? `/api/player/series/list?category_id=${encodeURIComponent(categoryId)}`
+        : `/api/player/vod/streams?category_id=${encodeURIComponent(categoryId)}`;
+    const data = await api(path);
+    const rows = home.kind === "series" ? data.series || [] : data.streams || [];
+    group.fullItems = rows.slice(0, VOD_VIEW_ALL_CAP);
+  }
+  state.vodExpanded[categoryId] = true;
+  renderVodHome();
+}
+
 function renderCategories() {
   categoryList.innerHTML = state.categories
     .map((cat) => {
@@ -2258,25 +3022,151 @@ function renderItems() {
     .join("");
 }
 
-function renderSeries(detail, seriesName) {
+function seasonIds(detail) {
+  const ids = new Set();
+  const episodes = (detail && detail.episodes) || {};
+  Object.keys(episodes).forEach((id) => {
+    if (id === "0" && !(episodes[id] || []).length) {
+      return;
+    }
+    ids.add(String(id));
+  });
+  ((detail && detail.seasons) || []).forEach((row) => {
+    const id = String((row && (row.season_number ?? row.season)) || "");
+    if (!id || (id === "0" && !(episodes[id] || []).length)) {
+      return;
+    }
+    ids.add(id);
+  });
+  return [...ids].sort((a, b) => Number(a) - Number(b));
+}
+
+function seasonLabel(detail, id) {
+  const rows = (detail && detail.seasons) || [];
+  const hit = rows.find((row) => String(row.season_number ?? row.season) === String(id));
+  if (hit && hit.name) {
+    return hit.name;
+  }
+  return String(id) === "0" ? "Specials" : `Season ${id}`;
+}
+
+function renderSeries(detail, seriesName, opts) {
+  const mount = seriesMount();
   if (!detail) {
-    seriesPanel.hidden = true;
-    seriesPanel.innerHTML = "";
+    mount.hidden = true;
+    mount.innerHTML = "";
+    if (mount !== seriesPanel) {
+      seriesPanel.hidden = true;
+      seriesPanel.innerHTML = "";
+    }
+    state.episodeQueue = [];
     return;
   }
+  state.seriesDetail = detail;
+  state.seriesName = seriesName || "";
+  state.episodeQueue = flattenEpisodes(detail);
   const episodes = detail.episodes || {};
-  const seasons = Object.keys(episodes).sort((a, b) => Number(a) - Number(b));
-  seriesPanel.hidden = false;
-  seriesPanel.innerHTML = seasons
-    .map((season) => {
-      const list = (episodes[season] || [])
-        .map((ep) => {
-          return `<button type="button" class="watch-item" data-episode="${esc(ep.id)}" data-ext="${esc(ep.container_extension || "")}" data-title="${esc(ep.title || "")}" data-plot="${esc(ep.plot || ep.info?.plot || "")}" data-duration="${esc(ep.duration || ep.info?.duration || "")}" data-duration-secs="${esc(ep.duration_secs || ep.info?.duration_secs || "")}" data-series-name="${esc(seriesName)}">E${esc(ep.episode_num ?? ep.id)} ${esc(ep.title || "")}</button>`;
-        })
-        .join("");
-      return `<div class="watch-season"><h3>Season ${esc(season)}</h3><div class="watch-season-eps">${list}</div></div>`;
+  const seasons = seasonIds(detail);
+  if (!seasons.includes(String(state.seasonId))) {
+    state.seasonId = seasons[0] || "";
+  }
+  const season = String(state.seasonId || seasons[0] || "");
+  const list = episodes[season] || [];
+  const pills = seasons
+    .map((id) => {
+      const here = String(id) === season ? " is-here" : "";
+      return `<button type="button" class="watch-season-pill${here}" data-season="${esc(id)}">${esc(seasonLabel(detail, id))}</button>`;
     })
     .join("");
+  const cards = list
+    .map((ep) => {
+      const info = ep.info || {};
+      const still = ep.still || info.movie_image || "";
+      const title = ep.title || info.name || `Episode ${ep.episode_num ?? ep.id}`;
+      const plot = ep.plot || info.plot || "";
+      const runtime = formatEpRuntime(ep.duration || info.duration, ep.duration_secs || info.duration_secs);
+      const rating = ep.rating || info.rating || "";
+      const date = formatEpDate(ep.release_date || info.release_date || info.air_date);
+      const rec = seenRecord("ep", ep.id);
+      const watched = Boolean(rec && rec.watched);
+      const pct = rec && rec.dur > 0 ? Math.min(100, Math.round((rec.pos / rec.dur) * 100)) : 0;
+      const img = still
+        ? `<img src="${esc(still)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+        : `<span class="watch-ep-fallback"></span>`;
+      const tick = watched
+        ? `<span class="watch-ep-tick is-done" title="Watched">✓</span>`
+        : pct > 0
+          ? `<span class="watch-ep-tick is-mid" style="--pct:${pct}" title="${pct}% watched"></span>`
+          : `<span class="watch-ep-tick" title="Unwatched"></span>`;
+      const meta = [runtime, rating !== "" && rating != null ? `${Number(rating).toFixed ? Number(rating).toFixed(1) : rating}` : "", date]
+        .filter(Boolean)
+        .join(" · ");
+      return `<button type="button" class="watch-ep-card${watched ? " is-watched" : ""}" data-episode="${esc(ep.id)}" data-ext="${esc(ep.container_extension || info.container_extension || "")}" data-title="${esc(title)}" data-plot="${esc(plot)}" data-duration="${esc(ep.duration || info.duration || "")}" data-duration-secs="${esc(ep.duration_secs || info.duration_secs || "")}" data-series-name="${esc(seriesName)}">
+        <span class="watch-ep-still">${img}${tick}</span>
+        <span class="watch-ep-kicker">Episode ${esc(ep.episode_num ?? "")}</span>
+        <strong>${esc(title)}</strong>
+        ${plot ? `<small class="watch-ep-plot">${esc(plot)}</small>` : ""}
+        ${meta ? `<span class="watch-ep-meta">${esc(meta)}</span>` : ""}
+      </button>`;
+    })
+    .join("");
+  mount.hidden = false;
+  const empty = list.length
+    ? ""
+    : `<div class="empty-events">This season is not on the panel yet.</div>`;
+  mount.innerHTML = `<div class="watch-season-bar"><div class="watch-season-pills">${pills}</div></div>
+  <div class="watch-ep-grid">${cards || empty}</div>`;
+  if (mount !== seriesPanel) {
+    seriesPanel.hidden = true;
+    seriesPanel.innerHTML = "";
+  }
+  if (!opts?.skipEnrich) {
+    enrichSeasonStills(detail, season).catch(() => {});
+  }
+}
+
+async function enrichSeasonStills(detail, season) {
+  const seriesId = state.detailItem?.series_id || detail?.info?.id || detail?.info?.series_id;
+  if (!seriesId || (!detail?.tmdb?.matched && !detail?.tmdb?.tmdb_id)) {
+    return;
+  }
+  const data = await api(
+    `/api/player/series/season?series_id=${encodeURIComponent(seriesId)}&season=${encodeURIComponent(season)}`
+  );
+  const extra = data.episodes || {};
+  const list = (detail.episodes || {})[season] || [];
+  let changed = false;
+  list.forEach((ep) => {
+    const hit = extra[String(ep.episode_num)];
+    if (!hit) {
+      return;
+    }
+    ep.info = ep.info || {};
+    if (hit.still) {
+      ep.still = hit.still;
+      ep.info.movie_image = hit.still;
+      changed = true;
+    }
+    if (hit.plot && !(ep.plot || ep.info.plot)) {
+      ep.info.plot = hit.plot;
+      changed = true;
+    }
+    if (hit.title && (!ep.title || /^episode\s+\d+/i.test(String(ep.title)))) {
+      ep.title = hit.title;
+      changed = true;
+    }
+    if (hit.rating != null && hit.rating !== "") {
+      ep.info.rating = hit.rating;
+      changed = true;
+    }
+    if (hit.air_date && !(ep.info.release_date || ep.release_date)) {
+      ep.info.release_date = hit.air_date;
+      changed = true;
+    }
+  });
+  if (changed && String(state.seasonId) === String(season) && state.seriesDetail === detail) {
+    renderSeries(detail, state.seriesName, { skipEnrich: true });
+  }
 }
 
 function searchCounts() {
@@ -2321,19 +3211,25 @@ function searchRowLive(item, index) {
 }
 
 function searchRowMovie(item) {
-  const poster = item.stream_icon
-    ? `<img src="${esc(item.stream_icon)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+  const art = vodPoster(item);
+  const poster = art
+    ? `<img src="${esc(art)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
     : "";
-  const meta = item.match || item.category_name || item.genre || "Movie";
-  return `<button type="button" class="watch-item poster" data-vod="${esc(item.stream_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span><small class="watch-item-epg">${esc(meta)}</small></span></button>`;
+  const title = vodTitle(item) || item.name || "";
+  const year = item.year ? ` · ${item.year}` : "";
+  const meta = `${item.match || item.category_name || item.genre || "Movie"}${year}`;
+  return `<button type="button" class="watch-item poster" data-open-movie="${esc(item.stream_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(title)}</span><small class="watch-item-epg">${esc(meta)}</small></span></button>`;
 }
 
 function searchRowSeries(item) {
-  const poster = item.cover
-    ? `<img src="${esc(item.cover)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+  const art = vodPoster(item);
+  const poster = art
+    ? `<img src="${esc(art)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
     : "";
-  const meta = item.match || item.category_name || item.genre || "Show";
-  return `<button type="button" class="watch-item poster" data-series="${esc(item.series_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span><small class="watch-item-epg">${esc(meta)}</small></span></button>`;
+  const title = vodTitle(item) || item.name || "";
+  const year = item.year ? ` · ${item.year}` : "";
+  const meta = `${item.match || item.category_name || item.genre || "Show"}${year}`;
+  return `<button type="button" class="watch-item poster" data-open-series="${esc(item.series_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(title)}</span><small class="watch-item-epg">${esc(meta)}</small></span></button>`;
 }
 
 function renderSearchResults() {
@@ -2422,6 +3318,7 @@ function findSearchItem(kind, id) {
 }
 
 async function loadCategories() {
+  setVodBrowse(false);
   searchEl.placeholder = "Filter this group…";
   clearEpgLayout();
   const kind = state.tab === "movies" ? "vod" : state.tab === "series" ? "series" : "live";
@@ -2711,6 +3608,7 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
     showBanner("");
     seriesPanel.hidden = true;
     if (state.tab === "search") {
+      setVodBrowse(false);
       searchEl.placeholder = "Search live, movies and shows…";
       clearEpgLayout();
       renderSearchNav();
@@ -2722,7 +3620,11 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
       return;
     }
     try {
-      await loadCategories();
+      if (isVodBrowseTab(state.tab)) {
+        await loadVodHome();
+      } else {
+        await loadCategories();
+      }
     } catch (error) {
       showBanner(error.message, "bad");
     }
@@ -2764,36 +3666,47 @@ itemList.addEventListener("click", async (event) => {
     }
     return;
   }
-  const vod = event.target.closest("[data-vod]");
-  if (vod) {
-    const id = vod.getAttribute("data-vod");
-    const item = state.items.find((row) => String(row.stream_id) === String(id)) || findSearchItem("movie", id);
-    if (item) {
-      await playVod(item);
-    }
+  const arrow = event.target.closest("[data-row-dir]");
+  if (arrow) {
+    scrollVodRow(arrow);
     return;
   }
-  const series = event.target.closest("[data-series]");
-  if (series) {
-    const id = series.getAttribute("data-series");
-    const item = state.items.find((row) => String(row.series_id) === String(id)) || findSearchItem("series", id);
+  const viewAll = event.target.closest("[data-vod-all]");
+  if (viewAll) {
     try {
-      const detail = await api(`/api/player/series/info?series_id=${encodeURIComponent(id)}`);
-      renderSeries(detail, item?.name || "");
+      await expandVodGroup(viewAll.getAttribute("data-vod-all") || "");
     } catch (error) {
       showBanner(error.message, "bad");
     }
+    return;
+  }
+  const movieOpen = event.target.closest("[data-open-movie], [data-vod]");
+  if (movieOpen) {
+    const id = movieOpen.getAttribute("data-open-movie") || movieOpen.getAttribute("data-vod");
+    const item = findVodItem("movie", id);
+    if (item) {
+      await openVodDetail(item, "movie");
+    }
+    return;
+  }
+  const seriesOpen = event.target.closest("[data-open-series], [data-series]");
+  if (seriesOpen) {
+    const id = seriesOpen.getAttribute("data-open-series") || seriesOpen.getAttribute("data-series");
+    const item = findVodItem("series", id) || { series_id: id, name: "" };
+    await openVodDetail(item, "series");
   }
 });
 
-seriesPanel.addEventListener("click", async (event) => {
+async function onEpisodeClick(event) {
   const button = event.target.closest("[data-episode]");
   if (!button) {
     return;
   }
+  const id = button.getAttribute("data-episode");
+  const queued = (state.episodeQueue || []).find((row) => String(row.id) === String(id));
   await playEpisode(
-    {
-      id: button.getAttribute("data-episode"),
+    queued || {
+      id,
       title: button.getAttribute("data-title"),
       container_extension: button.getAttribute("data-ext"),
       plot: button.getAttribute("data-plot"),
@@ -2802,11 +3715,53 @@ seriesPanel.addEventListener("click", async (event) => {
     },
     button.getAttribute("data-series-name")
   );
-});
+}
+
+seriesPanel.addEventListener("click", onEpisodeClick);
+if (vodDetailEps) {
+  vodDetailEps.addEventListener("click", (event) => {
+    const pill = event.target.closest("[data-season]");
+    if (pill) {
+      state.seasonId = pill.getAttribute("data-season") || "";
+      if (state.seriesDetail) {
+        renderSeries(state.seriesDetail, state.seriesName);
+      }
+      return;
+    }
+    onEpisodeClick(event);
+  });
+  vodDetailEps.addEventListener("change", (event) => {
+    if (event.target && event.target.id === "vod-season-select") {
+      state.seasonId = event.target.value || "";
+      if (state.seriesDetail) {
+        renderSeries(state.seriesDetail, state.seriesName);
+      }
+    }
+  });
+}
+if (vodDetailPlay) {
+  vodDetailPlay.addEventListener("click", () => {
+    playFromDetail().catch((error) => showBanner(error.message, "bad"));
+  });
+}
+if (vodDetailClose) {
+  vodDetailClose.addEventListener("click", () => {
+    closeVodDetail();
+  });
+}
+if (vodPlayerClose) {
+  vodPlayerClose.addEventListener("click", () => {
+    closeVodPlayer().catch(() => {});
+  });
+}
 
 searchEl.addEventListener("input", () => {
   if (state.tab === "search") {
     queueSearch();
+    return;
+  }
+  if (isVodBrowseTab(state.tab)) {
+    renderVodHome();
     return;
   }
   renderItems();
@@ -2837,7 +3792,12 @@ if (bufferRow) {
   });
 }
 
-video.addEventListener("timeupdate", paintVodRuntime);
+video.addEventListener("timeupdate", () => {
+  paintVodRuntime();
+  if (isVodPlay()) {
+    markVodProgress();
+  }
+});
 video.addEventListener("loadedmetadata", () => {
   captureStreamInfo();
   paintVodRuntime();
@@ -2862,6 +3822,16 @@ video.addEventListener("pause", paintLiveBadge);
 video.addEventListener("ended", () => {
   if (playing && state.playingLiveId && liveMpeg && liveTsUrl) {
     scheduleLiveReconnect(liveTsUrl, playGen);
+    return;
+  }
+  markVodProgress();
+  if (state.playingKind === "series") {
+    const next = currentEpisodeOffset(1);
+    if (next) {
+      showUpNext(next);
+    }
+    paintVodPlayBtn();
+    showVodChrome();
   }
 });
 video.addEventListener("waiting", () => {
@@ -2935,6 +3905,33 @@ if (vodSeekFwd) {
     showVodChrome();
   });
 }
+if (vodEpPrev) {
+  vodEpPrev.addEventListener("click", () => {
+    goAdjacentEpisode(-1).catch(() => {});
+    showVodChrome();
+  });
+}
+if (vodEpNext) {
+  vodEpNext.addEventListener("click", () => {
+    goAdjacentEpisode(1).catch(() => {});
+    showVodChrome();
+  });
+}
+if (vodUpNextPlay) {
+  vodUpNextPlay.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    goAdjacentEpisode(1).catch(() => {});
+  });
+}
+if (vodUpNextCancel) {
+  vodUpNextCancel.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    hideUpNext();
+    showVodChrome();
+  });
+}
 if (vodPlayBtn) {
   vodPlayBtn.addEventListener("click", () => {
     toggleVodPlay();
@@ -2990,6 +3987,9 @@ if (videoWrap) {
 }
 video.addEventListener("play", () => {
   paintVodPlayBtn();
+  if (!upNextGoing) {
+    hideUpNext();
+  }
   if (vodUsesOverlay()) {
     showVodChrome();
   }
@@ -3033,6 +4033,17 @@ document.addEventListener("keydown", (event) => {
   } else if (event.key === "ArrowLeft") {
     event.preventDefault();
     seekVod(vodClock() - 10).catch(() => {});
+    showVodChrome();
+  } else if (event.key === "n" || event.key === "N") {
+    event.preventDefault();
+    goAdjacentEpisode(1).catch(() => {});
+    showVodChrome();
+  } else if (event.key === "p" || event.key === "P") {
+    event.preventDefault();
+    goAdjacentEpisode(-1).catch(() => {});
+    showVodChrome();
+  } else if (event.key === "Escape" && upNextOpen()) {
+    hideUpNext();
     showVodChrome();
   }
 });

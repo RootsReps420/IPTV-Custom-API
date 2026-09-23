@@ -450,6 +450,48 @@ def with_counts(categories: list[dict[str, Any]], by_cat: dict[str, list[dict[st
     return out
 
 
+def _home_feature_score(row: dict[str, Any]) -> float:
+    score = 0.0
+    if row.get("backdrop"):
+        score += 8
+    if row.get("tmdb"):
+        score += 4
+    if row.get("poster"):
+        score += 2
+    added = str(row.get("added") or "")
+    if added.isdigit():
+        score += min(3.0, int(added) / 2_000_000_000)
+    return score
+
+
+def _home_feature_score_raw(row: dict[str, Any], kind: str, store: Any) -> float:
+    """Score a Magnum row using the TMDB cache without copying the whole catalogue."""
+    sid = str(row.get("series_id" if kind == "series" else "stream_id") or "")
+    meta = store.get(kind, sid) if store is not None and sid else None
+    if meta and meta.get("matched"):
+        painted = {
+            "backdrop": meta.get("backdrop") or "",
+            "tmdb": True,
+            "poster": meta.get("poster") or "",
+            "added": row.get("added"),
+        }
+        return _home_feature_score(painted)
+    backdrop = ""
+    raw_bd = row.get("backdrop_path")
+    if isinstance(raw_bd, list) and raw_bd:
+        backdrop = str(raw_bd[0] or "")
+    elif raw_bd:
+        backdrop = str(raw_bd)
+    return _home_feature_score(
+        {
+            "backdrop": backdrop or row.get("cover_big") or "",
+            "tmdb": False,
+            "poster": row.get("stream_icon") or row.get("cover") or "",
+            "added": row.get("added"),
+        }
+    )
+
+
 class WatchGuide:
     """In-memory snapshot of the last successful live + EPG sync."""
 
@@ -463,6 +505,7 @@ class WatchGuide:
         self.library_interval_seconds = 14400
         self.vod = ItemLibrary()
         self.series = ItemLibrary()
+        self.tmdb = None
         self._lock = threading.Lock()
         self.sync_started_at = 0.0
         self.phase = ""
@@ -475,6 +518,9 @@ class WatchGuide:
         self.epg_size = 0
         self._finished_phases: set[str] = set()
         self._last_meta = 0.0
+        from iptv_monitor.player_tmdb import TmdbStore
+
+        self.tmdb = TmdbStore(root)
         self.load_disk()
 
     def paths(self) -> tuple[Path, Path, Path, Path, Path]:
@@ -1091,13 +1137,74 @@ class WatchGuide:
         return self._library_categories(self.vod)
 
     def vod_streams(self, category_id: str) -> list[dict[str, Any]] | None:
-        return self._library_items(self.vod, category_id)
+        rows = self._library_items(self.vod, category_id)
+        if rows is None:
+            return None
+        return [self.paint_library_item(row, "movie") for row in rows]
 
     def series_categories(self) -> list[dict[str, Any]] | None:
         return self._library_categories(self.series)
 
     def series_list(self, category_id: str) -> list[dict[str, Any]] | None:
-        return self._library_items(self.series, category_id)
+        rows = self._library_items(self.series, category_id)
+        if rows is None:
+            return None
+        return [self.paint_library_item(row, "series") for row in rows]
+
+    def paint_library_item(self, item: dict[str, Any], kind: str) -> dict[str, Any]:
+        store = self.tmdb
+        if store is None:
+            out = dict(item)
+            out.setdefault("display_name", out.get("name") or "")
+            out.setdefault(
+                "poster",
+                out.get("stream_icon") or out.get("cover") or out.get("cover_big") or "",
+            )
+            out.setdefault("backdrop", "")
+            return out
+        return store.paint(item, kind)
+
+    def library_home(self, kind: str, *, per_group: int = 24) -> dict[str, Any]:
+        """Featured title plus Magnum groups with a short poster list. Memory only."""
+        series = kind == "series"
+        lib = self.series if series else self.vod
+        id_key = "series_id" if series else "stream_id"
+        paint_kind = "series" if series else "movie"
+        limit = max(1, int(per_group))
+        cats = self._library_categories(lib) or []
+        groups: list[dict[str, Any]] = []
+        featured_raw: dict[str, Any] | None = None
+        featured_score = -1.0
+        store = self.tmdb
+        for cat in cats:
+            cid = str(cat.get("category_id") or "")
+            raw_items = list(lib.by_cat.get(cid, []))
+            preview = [self.paint_library_item(row, paint_kind) for row in raw_items[:limit]]
+            groups.append(
+                {
+                    "category_id": cid,
+                    "category_name": cat.get("category_name") or cid,
+                    "stream_count": len(raw_items),
+                    "items": preview,
+                }
+            )
+            for row in raw_items:
+                score = _home_feature_score_raw(row, paint_kind, store)
+                if score > featured_score:
+                    featured_score = score
+                    featured_raw = row
+        featured = self.paint_library_item(featured_raw, paint_kind) if featured_raw else None
+        if featured is None and groups:
+            for group in groups:
+                if group["items"]:
+                    featured = group["items"][0]
+                    break
+        return {
+            "kind": paint_kind,
+            "featured": featured,
+            "groups": groups,
+            "id_key": id_key,
+        }
 
     def decorate(self, stream: dict[str, Any], *, guide: bool = True) -> dict[str, Any]:
         out = dict(stream)
@@ -1370,11 +1477,16 @@ class WatchGuide:
             )
 
         for item in self.vod.items:
+            painted = self.paint_library_item(item, "movie")
             group = self._group_label(item, vod_names)
-            name = str(item.get("name") or "")
-            plot = str(item.get("plot") or "")[:240]
-            genre = str(item.get("genre") or "")
-            score, why = score_search(text, name, [plot, genre, group, str(item.get("director") or "")])
+            name = str(painted.get("display_name") or painted.get("name") or "")
+            plot = str(painted.get("plot") or "")[:240]
+            genre = str(painted.get("genre") or "")
+            score, why = score_search(
+                text,
+                name,
+                [str(item.get("name") or ""), plot, genre, group, str(item.get("director") or "")],
+            )
             if score <= 0:
                 continue
             sid = str(item.get("stream_id") or "")
@@ -1389,7 +1501,12 @@ class WatchGuide:
                         "kind": "movie",
                         "stream_id": sid,
                         "name": name,
-                        "stream_icon": item.get("stream_icon") or item.get("cover_big") or "",
+                        "display_name": name,
+                        "stream_icon": painted.get("poster") or item.get("stream_icon") or "",
+                        "poster": painted.get("poster") or "",
+                        "backdrop": painted.get("backdrop") or "",
+                        "year": painted.get("year"),
+                        "tmdb_rating": painted.get("tmdb_rating"),
                         "container_extension": item.get("container_extension") or "mp4",
                         "plot": plot,
                         "genre": genre,
@@ -1400,14 +1517,22 @@ class WatchGuide:
             )
 
         for item in self.series.items:
+            painted = self.paint_library_item(item, "series")
             group = self._group_label(item, series_names)
-            name = str(item.get("name") or "")
-            plot = str(item.get("plot") or "")[:240]
-            genre = str(item.get("genre") or "")
+            name = str(painted.get("display_name") or painted.get("name") or "")
+            plot = str(painted.get("plot") or "")[:240]
+            genre = str(painted.get("genre") or "")
             score, why = score_search(
                 text,
                 name,
-                [plot, genre, group, str(item.get("cast") or ""), str(item.get("director") or "")],
+                [
+                    str(item.get("name") or ""),
+                    plot,
+                    genre,
+                    group,
+                    str(item.get("cast") or ""),
+                    str(item.get("director") or ""),
+                ],
             )
             if score <= 0:
                 continue
@@ -1423,7 +1548,12 @@ class WatchGuide:
                         "kind": "series",
                         "series_id": sid,
                         "name": name,
-                        "cover": item.get("cover") or "",
+                        "display_name": name,
+                        "cover": painted.get("poster") or item.get("cover") or "",
+                        "poster": painted.get("poster") or "",
+                        "backdrop": painted.get("backdrop") or "",
+                        "year": painted.get("year"),
+                        "tmdb_rating": painted.get("tmdb_rating"),
                         "plot": plot,
                         "genre": genre,
                         "category_name": group,

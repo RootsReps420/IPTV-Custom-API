@@ -1543,6 +1543,69 @@ tr.row-down td {
   cursor: none;
 }
 
+.watch-upnext {
+  position: absolute;
+  right: 20px;
+  bottom: 88px;
+  z-index: 8;
+  width: min(380px, calc(100% - 32px));
+  padding: 16px 18px 14px;
+  border: 1px solid rgba(125, 255, 195, 0.38);
+  border-radius: 10px;
+  background: rgba(5, 7, 11, 0.94);
+  color: #fff;
+  pointer-events: auto;
+}
+
+.watch-upnext[hidden] {
+  display: none;
+}
+
+.watch-upnext-kicker {
+  margin: 0 0 4px;
+  color: var(--up);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.watch-upnext-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.watch-upnext-timer {
+  margin: 0 0 12px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 13px;
+}
+
+.watch-upnext-timer strong {
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-upnext-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.watch-upnext-actions .switch-btn,
+.watch-upnext-actions .watch-refresh-btn {
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.watch-video-wrap:fullscreen .watch-upnext,
+.watch-video-wrap:-webkit-full-screen .watch-upnext {
+  bottom: 96px;
+  right: 28px;
+}
+
 .watch-live-badge {
   position: absolute;
   top: 10px;
@@ -1881,7 +1944,15 @@ tr.row-down td {
 }
 
 .watch-epg-ch .watch-item-name {
-  font-size: 12px;
+  font-size: 12.5px;
+  line-height: 1.25;
+  white-space: normal;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  word-break: break-word;
 }
 
 .watch-epg-row.is-here .watch-epg-ch::after {
@@ -2109,6 +2180,681 @@ tr.row-down td {
   margin-bottom: 14px;
 }
 
+.watch-app.is-vod-home .watch-shell {
+  grid-template-columns: 210px minmax(0, 1fr);
+}
+
+.watch-app.is-vod-home .watch-cats,
+.watch-app.is-vod-home .watch-series {
+  display: none;
+}
+
+.watch-app.is-vod-home .watch-stage {
+  grid-template-columns: 1fr;
+}
+
+.watch-app.is-vod-home:not(.is-playing-vod) .watch-preview-card {
+  display: none;
+}
+
+.watch-app.is-vod-home .watch-channel-col {
+  padding: 0;
+}
+
+.watch-app.is-vod-home .watch-browse-tools {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding: 10px 20px;
+  background: rgba(5, 7, 11, 0.9);
+  border-bottom: 1px solid rgba(42, 58, 77, 0.45);
+}
+
+.watch-app.is-vod-home .watch-items {
+  overflow: auto;
+  padding: 0 0 64px;
+  max-height: none;
+}
+
+.watch-vod-home {
+  min-height: 100%;
+}
+
+.watch-hero {
+  position: relative;
+  min-height: min(58vh, 560px);
+  margin: 0 0 10px;
+  overflow: hidden;
+  background: #0a0e14;
+}
+
+.watch-hero-bg {
+  position: absolute;
+  inset: 0;
+  background: #0a0e14 center / cover no-repeat;
+}
+
+.watch-hero-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(5, 7, 11, 0.94) 10%, rgba(5, 7, 11, 0.42) 52%, transparent 78%),
+    linear-gradient(180deg, transparent 48%, #05070b 100%);
+}
+
+.watch-hero-copy {
+  position: relative;
+  z-index: 1;
+  max-width: 640px;
+  padding: 72px 28px 40px;
+}
+
+.watch-hero-kicker {
+  margin: 0 0 8px;
+  color: var(--up);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.watch-hero-copy h2 {
+  margin: 0 0 12px;
+  font-size: clamp(32px, 5vw, 56px);
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.watch-hero-plot {
+  margin: 0 0 18px;
+  color: #c8d0da;
+  max-width: 46ch;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.watch-row {
+  padding: 18px 0 8px;
+}
+
+.watch-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  padding: 0 20px 4px;
+}
+
+.watch-row-head h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.watch-row-all {
+  appearance: none;
+  border: 1px solid rgba(125, 255, 195, 0.42);
+  background: rgba(125, 255, 195, 0.12);
+  color: var(--up);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 999px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.watch-row-all:hover,
+.watch-row-all:focus-visible {
+  background: rgba(125, 255, 195, 0.22);
+  border-color: var(--up);
+}
+
+.watch-row-frame {
+  position: relative;
+}
+
+.watch-row-scroll {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 22px 56px 72px 20px;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+.watch-row-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.watch-row.is-all .watch-row-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 10px 24px 12px;
+  background: rgba(5, 7, 11, 0.92);
+}
+
+.watch-row.is-all .watch-row-scroll {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  align-items: start;
+  gap: 40px 18px;
+  overflow: visible;
+  padding: 8px 24px 80px;
+}
+
+.watch-row.is-all .watch-row-arrow {
+  display: none;
+}
+
+.watch-row.is-all .watch-poster {
+  display: flex;
+  flex-direction: column;
+  flex: unset;
+  width: auto;
+  max-width: 220px;
+  height: auto;
+  overflow: visible;
+  transform-origin: center center;
+}
+
+.watch-row.is-all .watch-poster:hover,
+.watch-row.is-all .watch-poster:focus-visible {
+  transform: translateY(-6px);
+}
+
+.watch-row-arrow {
+  position: absolute;
+  top: 22px;
+  bottom: 72px;
+  z-index: 4;
+  width: 52px;
+  appearance: none;
+  border: 0;
+  color: #fff;
+  font-size: 34px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.watch-row-arrow.is-next {
+  right: 0;
+  background: linear-gradient(90deg, transparent, rgba(5, 7, 11, 0.92) 46%);
+}
+
+.watch-row-arrow.is-prev {
+  left: 0;
+  background: linear-gradient(270deg, transparent, rgba(5, 7, 11, 0.92) 46%);
+}
+
+.watch-row-arrow:hover {
+  color: var(--up);
+}
+
+.watch-poster {
+  flex: 0 0 196px;
+  width: 196px;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  scroll-snap-align: start;
+  text-align: left;
+  transform: scale(1);
+  transform-origin: center bottom;
+  transition: transform 0.22s ease, filter 0.22s ease;
+}
+
+.watch-poster-art {
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #121821;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+  transition: box-shadow 0.22s ease;
+}
+
+.watch-poster-art img,
+.watch-poster-fallback {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.watch-poster-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--up);
+  background: #10161f;
+}
+
+.watch-poster-copy {
+  display: block;
+  margin-top: 10px;
+  padding-bottom: 2px;
+  min-height: 3.6em;
+}
+
+.watch-poster-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e8eef4;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.watch-poster-year {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
+.watch-row.is-all .watch-poster-copy {
+  min-height: 4.8em;
+  margin-bottom: 4px;
+}
+
+.watch-row.is-all .watch-poster-name {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.watch-poster:hover,
+.watch-poster:focus-visible {
+  transform: scale(1.08);
+  z-index: 2;
+  filter: brightness(1.06);
+}
+
+.watch-poster:hover .watch-poster-art,
+.watch-poster:focus-visible .watch-poster-art {
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.55);
+}
+
+.watch-vod-detail {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  overflow: auto;
+  background: #05070b;
+}
+
+.watch-vod-detail[hidden] {
+  display: none;
+}
+
+.watch-vod-detail-back,
+.watch-vod-player-close {
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(16, 20, 28, 0.88);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.watch-vod-detail-back {
+  position: absolute;
+  top: 16px;
+  left: 18px;
+  z-index: 3;
+}
+
+.watch-vod-detail-back:hover,
+.watch-vod-player-close:hover {
+  color: var(--up);
+  border-color: rgba(125, 255, 195, 0.4);
+}
+
+.watch-vod-detail-hero {
+  position: relative;
+  min-height: min(72vh, 720px);
+}
+
+.watch-vod-detail-backdrop {
+  position: absolute;
+  inset: 0;
+  background: #0a0e14 center / cover no-repeat;
+}
+
+.watch-vod-detail-backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, #05070b 16%, rgba(5, 7, 11, 0.55) 52%, rgba(5, 7, 11, 0.18)),
+    linear-gradient(180deg, transparent 42%, #05070b 100%);
+}
+
+.watch-vod-detail-copy {
+  position: relative;
+  z-index: 1;
+  max-width: 720px;
+  padding: 88px 28px 32px;
+}
+
+.watch-vod-detail-meta {
+  margin: 0 0 8px;
+  color: var(--up);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.watch-vod-detail-copy h2 {
+  margin: 0 0 14px;
+  font-size: clamp(34px, 5vw, 58px);
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.watch-vod-detail-copy p {
+  margin: 0 0 18px;
+  color: #c8d0da;
+  line-height: 1.5;
+  max-width: 58ch;
+}
+
+.watch-vod-detail-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.watch-vod-people {
+  padding: 8px 24px 8px;
+}
+
+.watch-vod-people[hidden] {
+  display: none;
+}
+
+.watch-vod-facts {
+  display: grid;
+  gap: 8px 28px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin: 0 0 22px;
+}
+
+.watch-vod-facts-row span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+
+.watch-vod-facts-row strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.watch-cast-row {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding: 4px 0 16px;
+  scrollbar-width: none;
+}
+
+.watch-cast-row::-webkit-scrollbar {
+  display: none;
+}
+
+.watch-cast-card {
+  flex: 0 0 104px;
+  width: 104px;
+}
+
+.watch-cast-photo {
+  display: block;
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #121821;
+  margin-bottom: 8px;
+}
+
+.watch-cast-photo img,
+.watch-cast-fallback {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.watch-cast-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--up);
+}
+
+.watch-cast-card strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.watch-cast-card small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.watch-cast-fallback-line {
+  color: #c8d0da;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.watch-vod-detail-eps {
+  padding: 8px 24px 64px;
+}
+
+.watch-season-bar {
+  display: block;
+  margin: 0 0 18px;
+}
+
+.watch-season-pills {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 2px 10px;
+  scrollbar-width: none;
+}
+
+.watch-season-pills::-webkit-scrollbar {
+  display: none;
+}
+
+.watch-season-pill {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(16, 20, 28, 0.88);
+  color: #d5dde6;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.watch-season-pill.is-here,
+.watch-season-pill:hover {
+  background: #fff;
+  color: #05070b;
+  border-color: #fff;
+}
+
+.watch-ep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 18px 14px;
+}
+
+.watch-ep-card {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
+.watch-ep-still {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #121821;
+  margin-bottom: 10px;
+}
+
+.watch-ep-still img,
+.watch-ep-fallback {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.watch-ep-tick {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  background: rgba(5, 7, 11, 0.35);
+}
+
+.watch-ep-tick.is-mid {
+  background: conic-gradient(var(--up) calc(var(--pct) * 1%), rgba(255, 255, 255, 0.2) 0);
+  border-color: transparent;
+}
+
+.watch-ep-tick.is-done {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--up);
+  border-color: var(--up);
+  color: #05070b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.watch-ep-kicker {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.watch-ep-card strong {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.watch-ep-plot {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #c8d0da;
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+.watch-ep-meta {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.watch-ep-card:hover .watch-ep-still,
+.watch-ep-card:focus-visible .watch-ep-still {
+  outline: 2px solid var(--up);
+  outline-offset: 2px;
+}
+
+.watch-app.is-playing-vod .watch-preview-card {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  padding: 56px 20px 24px;
+  border: 0;
+  background: rgba(5, 7, 11, 0.96);
+  overflow: auto;
+}
+
+.watch-vod-player-close {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  z-index: 6;
+}
+
+.watch-app.is-playing-vod .watch-preview-card video {
+  max-width: min(1100px, 100%);
+  max-height: calc(100vh - 210px);
+  margin: 0 auto;
+}
+
+.watch-app.is-playing-vod .watch-now {
+  max-width: 1100px;
+  margin: 12px auto 0;
+}
+
+.watch-app.is-playing-vod .watch-buffer {
+  display: none;
+}
+
 @media (max-width: 980px) {
   .watch-body:has(.watch-app:not([hidden])) {
     height: auto;
@@ -2211,6 +2957,35 @@ tr.row-down td {
   .watch-items {
     max-height: none;
   }
+
+  .watch-app.is-vod-home .watch-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .watch-hero,
+  .watch-vod-detail-hero {
+    min-height: 42vh;
+  }
+
+  .watch-hero-copy,
+  .watch-vod-detail-copy {
+    padding: 48px 18px 28px;
+  }
+
+  .watch-poster {
+    flex-basis: 136px;
+    width: 136px;
+  }
+
+  .watch-row-head {
+    padding-right: 16px;
+  }
+
+  .watch-ep-grid {
+    grid-template-columns: 1fr;
+  }
+}
 }
 
 @media (max-width: 860px) {

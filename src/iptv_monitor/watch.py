@@ -12,6 +12,7 @@ refreshes the live M3U; Strong 8K playlists.yaml is never a Watch source.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, Literal
@@ -45,11 +46,76 @@ from iptv_monitor.player_guide import WatchGuide
 from iptv_monitor.player_presence import PresenceTracker
 from iptv_monitor.player_slots import SlotTracker
 from iptv_monitor.player_sync import queue_watch_force
+from iptv_monitor.player_tmdb import tmdb_api_key
 from iptv_monitor.player_xtream import XtreamCatalogue, load_player_config
 
 logger = logging.getLogger("iptv_monitor.watch")
 
 KINDS = {"live", "movie", "series"}
+
+
+def _merge_tmdb_info(guide: WatchGuide, data: dict[str, Any], kind: str, item_id: str) -> dict[str, Any]:
+    """Overlay cached TMDB plot/art onto Xtream info without exposing the API key."""
+    out = dict(data or {})
+    info = dict(out.get("info") or {})
+    lib = guide.series if kind == "series" else guide.vod
+    cached = (lib.by_id.get(str(item_id)) if lib is not None else None) or {}
+    seed = {
+        **cached,
+        **info,
+        "stream_id": item_id if kind == "movie" else cached.get("stream_id") or "",
+        "series_id": item_id if kind == "series" else cached.get("series_id") or "",
+        "name": info.get("name") or cached.get("name") or "",
+        "plot": info.get("plot") or cached.get("plot") or "",
+    }
+    painted = guide.paint_library_item(seed, kind)
+    if painted.get("plot"):
+        info["plot"] = painted["plot"]
+    if painted.get("display_name"):
+        info["name"] = painted["display_name"]
+    if painted.get("year"):
+        info["year"] = painted["year"]
+    if painted.get("poster"):
+        info["cover"] = painted["poster"]
+        info["cover_big"] = painted.get("backdrop") or painted["poster"]
+        info["stream_icon"] = painted["poster"]
+    out["info"] = info
+    out["tmdb"] = {
+        "matched": bool(painted.get("tmdb")),
+        "tmdb_id": painted.get("tmdb_id"),
+        "title": painted.get("display_name") or "",
+        "year": painted.get("year"),
+        "plot": painted.get("plot") or "",
+        "poster": painted.get("poster") or "",
+        "backdrop": painted.get("backdrop") or "",
+        "rating": painted.get("tmdb_rating"),
+        "genres": [],
+        "runtime": None,
+        "status": "",
+        "countries": [],
+        "cast": [],
+        "directors": [],
+        "writers": [],
+        "creators": [],
+    }
+    return out
+
+
+async def _with_tmdb_people(
+    guide: WatchGuide, data: dict[str, Any], kind: str, item_id: str
+) -> dict[str, Any]:
+    """Fill cast/crew on first open. Cached after that. Never sends the API key."""
+    out = _merge_tmdb_info(guide, data, kind, item_id)
+    store = getattr(guide, "tmdb", None)
+    key = tmdb_api_key()
+    tmdb_id = (out.get("tmdb") or {}).get("tmdb_id")
+    if store is None or not key or not tmdb_id:
+        return out
+    extra = await asyncio.to_thread(store.details_lookup, kind, tmdb_id, key)
+    tmdb = dict(out.get("tmdb") or {})
+    tmdb.update(extra)
+    out["tmdb"] = tmdb
+    return out
 
 
 class SlotBody(BaseModel):
@@ -434,6 +500,24 @@ def register_watch(app: FastAPI, static_dir) -> None:
             raise _panel_error(exc) from exc
         return {"epg": rows}
 
+    @app.get("/api/player/vod/home")
+    async def vod_home(request: Request) -> dict[str, Any]:
+        """Nuvio-style movie shelf: featured + Magnum groups. Memory only."""
+        require_username(request, _root(request))
+        cfg = _svc(request).config()
+        if not cfg.configured:
+            raise HTTPException(status_code=503, detail="Watch player is not configured.")
+        return _svc(request).guide.library_home("movie")
+
+    @app.get("/api/player/series/home")
+    async def series_home(request: Request) -> dict[str, Any]:
+        """Nuvio-style series shelf: featured + Magnum groups. Memory only."""
+        require_username(request, _root(request))
+        cfg = _svc(request).config()
+        if not cfg.configured:
+            raise HTTPException(status_code=503, detail="Watch player is not configured.")
+        return _svc(request).guide.library_home("series")
+
     @app.get("/api/player/vod/streams")
     async def vod_streams(request: Request, category_id: str = "") -> dict[str, Any]:
         require_username(request, _root(request))
@@ -456,7 +540,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
             data = await _svc(request).catalogue.vod_info(cfg, vod_id)
         except Exception as exc:
             raise _panel_error(exc) from exc
-        return data
+        return await _with_tmdb_people(_svc(request).guide, data, "movie", vod_id)
 
     @app.get("/api/player/series/list")
     async def series_list(request: Request, category_id: str = "") -> dict[str, Any]:
@@ -480,7 +564,30 @@ def register_watch(app: FastAPI, static_dir) -> None:
             data = await _svc(request).catalogue.series_info(cfg, series_id)
         except Exception as exc:
             raise _panel_error(exc) from exc
-        return data
+        return await _with_tmdb_people(_svc(request).guide, data, "series", series_id)
+
+    @app.get("/api/player/series/season")
+    async def series_season(
+        request: Request,
+        series_id: str = Query(min_length=1),
+        season: str = Query(min_length=1),
+    ) -> dict[str, Any]:
+        """TMDB episode stills for one season. Empty if the show is not matched yet."""
+        require_username(request, _root(request))
+        cfg = _svc(request).config()
+        if not cfg.configured:
+            raise HTTPException(status_code=503, detail="Watch player is not configured.")
+        guide = _svc(request).guide
+        store = getattr(guide, "tmdb", None)
+        key = tmdb_api_key()
+        if store is None or not key:
+            return {"episodes": {}}
+        painted = guide.paint_library_item({"series_id": series_id}, "series")
+        tmdb_id = painted.get("tmdb_id")
+        if not tmdb_id:
+            return {"episodes": {}}
+        episodes = await asyncio.to_thread(store.season_lookup, tmdb_id, season, key)
+        return {"episodes": episodes}
 
     @app.get("/api/player/media/{kind}/{stream_id}.{ext}")
     async def player_media(

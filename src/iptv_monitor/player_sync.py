@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import logging
+import os
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -264,9 +265,15 @@ class WatchSyncer:
             except TimeoutError:
                 remaining -= chunk
 
+    def _schedule_tmdb(self) -> None:
+        key = os.getenv("TMDB_API_KEY", "").strip()
+        if key and getattr(self.guide, "tmdb", None) is not None:
+            self.guide.tmdb.schedule(self.guide, key)
+
     async def run_forever(self) -> None:
         """Sync live, movies/shows, and EPG on the configured 4-hour cadence."""
         await asyncio.sleep(8)
+        self._schedule_tmdb()
         while True:
             interval = self._interval()
             lib_interval = self._library_interval()
@@ -436,6 +443,7 @@ class WatchSyncer:
                 raise
             finally:
                 self.guide.finish_sync()
+            self._schedule_tmdb()
 
     def _client(self, timeout: httpx.Timeout) -> httpx.Client:
         return httpx.Client(

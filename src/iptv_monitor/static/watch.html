@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=57" />
+  <link rel="stylesheet" href="/static/styles.css?v=65" />
   <link rel="stylesheet" href="/static/dash.css?v=8" />
 </head>
 <body class="watch-body">
@@ -101,7 +101,7 @@
       <div class="watch-sync-bar" aria-hidden="true"><span id="watch-sync-fill"></span></div>
       <div id="watch-sync-detail" class="watch-sync-detail"></div>
     </div>
-    <div class="watch-shell">
+    <div class="watch-shell" id="watch-shell">
       <nav class="watch-rail" aria-label="Library">
         <p class="watch-brand" aria-label="Home">R</p>
         <div class="watch-rail-nav">
@@ -135,7 +135,8 @@
           <div id="item-list" class="watch-items"></div>
           <div id="series-panel" class="watch-series" hidden></div>
         </div>
-        <div class="watch-preview-card">
+        <div class="watch-preview-card" id="watch-preview">
+          <button type="button" id="vod-player-close" class="watch-vod-player-close" hidden>Close player</button>
           <div class="watch-video-wrap" id="watch-video-wrap">
             <video id="player" playsinline webkit-playsinline></video>
             <div id="watch-spinner" class="watch-spinner" hidden><span></span></div>
@@ -157,12 +158,23 @@
                   <button type="button" id="vod-play" class="watch-vod-btn" aria-label="Pause">❚❚</button>
                   <button type="button" id="vod-seek-back" class="watch-vod-btn" title="Back 10 seconds">−10</button>
                   <button type="button" id="vod-seek-fwd" class="watch-vod-btn" title="Forward 30 seconds">+30</button>
+                  <button type="button" id="vod-ep-prev" class="watch-vod-btn" hidden title="Previous episode">Prev</button>
+                  <button type="button" id="vod-ep-next" class="watch-vod-btn" hidden title="Next episode">Next</button>
                   <span id="vod-seek-time" class="watch-vod-time">0:00 / 0:00</span>
                   <span class="watch-vod-grow"></span>
                   <button type="button" id="vod-mute" class="watch-vod-btn" aria-label="Mute">🔊</button>
                   <input id="vod-vol" class="watch-vod-vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" />
                   <button type="button" id="vod-fs" class="watch-vod-btn" title="Full screen" aria-label="Full screen">⛶</button>
                 </div>
+              </div>
+            </div>
+            <div id="vod-upnext" class="watch-upnext" hidden>
+              <p class="watch-upnext-kicker">Next episode</p>
+              <p id="vod-upnext-title" class="watch-upnext-title"></p>
+              <p class="watch-upnext-timer">Starts in <strong id="vod-upnext-secs">8</strong>s</p>
+              <div class="watch-upnext-actions">
+                <button type="button" id="vod-upnext-play" class="switch-btn">Play now</button>
+                <button type="button" id="vod-upnext-cancel" class="watch-refresh-btn">Cancel</button>
               </div>
             </div>
           </div>
@@ -185,10 +197,26 @@
         </div>
       </section>
     </div>
+    <div id="vod-detail" class="watch-vod-detail" hidden>
+      <button type="button" id="vod-detail-close" class="watch-vod-detail-back">← Back</button>
+      <div class="watch-vod-detail-hero">
+        <div id="vod-detail-backdrop" class="watch-vod-detail-backdrop"></div>
+        <div class="watch-vod-detail-copy">
+          <p id="vod-detail-meta" class="watch-vod-detail-meta"></p>
+          <h2 id="vod-detail-title"></h2>
+          <p id="vod-detail-plot"></p>
+          <div class="watch-vod-detail-actions">
+            <button type="button" id="vod-detail-play" class="switch-btn">Play</button>
+          </div>
+        </div>
+      </div>
+      <div id="vod-detail-people" class="watch-vod-people" hidden></div>
+      <div id="vod-detail-episodes" class="watch-vod-detail-eps" hidden></div>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=69"></script>
+  <script src="/static/watch.js?v=76"></script>
 </body>
 </html>

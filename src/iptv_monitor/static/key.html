@@ -63,11 +63,17 @@
         <h2>DOWN</h2>
       </div>
       <p>
-        The portal failed the latest check cycle. One of DNS, TCP, or the MPEG-TS pull did not
-        succeed. The red <code>dns</code> / <code>tcp</code> / <code>mpeg-ts</code> flags show which step
-        broke; <code>reason</code> is the specific code (for example <code>dns_nxdomain</code>,
+        The portal failed the latest check cycle. One of DNS, TCP, or the panel
+        check did not succeed. The red <code>dns</code> / <code>tcp</code> /
+        <code>mpeg-ts</code> (Magnum) or <code>xtream</code> (Strong 8K) flags show
+        which step broke; <code>reason</code> is the specific code (for example
+        <code>dns_nxdomain</code>,
         <code>tcp_timeout</code>, <code>stream_blocked</code>, <code>stream_452</code>,
         <code>stream_no_api</code>).
+        Magnum must yield a real MPEG-TS pull from this VPS because /watch plays
+        from here. Strong 8K is marked up when DNS, TCP, and Xtream
+        <code>player_api</code> accept an account — a live TS pull from a datacentre
+        IP is often HTTP 513/HTML while home players still work.
         <code>stream_452</code> is the panel telling every channel to fail (blocked / DNS-locked).
         A redirect to <code>black.ts</code> is ignored — that placeholder can look “up” while
         real channels return 452.

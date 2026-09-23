@@ -26,8 +26,8 @@ _STREAM_UA = "VLC/3.0.20 LibVLC/3.0.20"
 _SEM = asyncio.Semaphore(8)
 _STREAM_ID_CACHE: dict[str, tuple[float, list[int]]] = {}
 _STREAM_ID_TTL = 600.0
-# Last stream id that returned real MPEG-TS — try it first on the next host.
-_LAST_GOOD_ID: int | None = None
+# Last MPEG-TS stream id that worked, keyed by portal base URL.
+_LAST_GOOD_ID: dict[str, int] = {}
 # MAG / Xtream panel codes. 452/453 = blocked; 456 = geo; 464 = DNS locked.
 _PANEL_DENY_STATUSES = {452, 453, 456, 464}
 _PLACEHOLDER_MARKERS = ("black.ts", "/video/black")
@@ -150,6 +150,8 @@ async def _probe_stream_ids(
     username: str,
     password: str,
     stream_ids: list[int],
+    *,
+    host_key: str,
 ) -> tuple[bool | None, str]:
     """Try /live/.../{id}.ts (and without .ts).
 
@@ -157,7 +159,6 @@ async def _probe_stream_ids(
     False = no usable stream among these ids.
     None = panel returned 452/453/456/464 — treat the host as down immediately.
     """
-    global _LAST_GOOD_ID
     secrets = [username, password]
     last_detail = "no mpegts"
     for stream_id in stream_ids:
@@ -184,7 +185,7 @@ async def _probe_stream_ids(
             if looks_like_mpegts(data) or (
                 status == 200 and "mp2t" in stream_type and data[:1] == bytes([TS_SYNC])
             ):
-                _LAST_GOOD_ID = stream_id
+                _LAST_GOOD_ID[host_key] = stream_id
                 return True, ""
             if status in {401, 403}:
                 last_detail = f"live HTTP {status}"
@@ -202,10 +203,12 @@ async def _try_credentials(
     base: str,
     username: str,
     password: str,
+    *,
+    require_mpegts: bool,
 ) -> tuple[bool | None, str | None, str | None]:
     """One account against one portal.
 
-    True = MPEG-TS arrived.
+    True = portal is usable (MPEG-TS, or player_api when require_mpegts is false).
     False = this host is blocked / broken (counts as down).
     None = this account is not on this panel (try the next account).
     """
@@ -234,12 +237,20 @@ async def _try_credentials(
     if not _auth_ok(payload):
         return None, "stream_auth", "xtream auth failed"
 
+    # Strong 8K: VPS MPEG-TS pulls are often 513/HTML from Cloudflare even when
+    # home players work. player_api auth is the panel-alive signal for that pool.
+    if not require_mpegts:
+        return True, None, None
+
     # Cheap guesses first (last working id, then stream 1) so we skip the full channel list.
     cheap: list[int] = []
-    if _LAST_GOOD_ID is not None:
-        cheap.append(_LAST_GOOD_ID)
+    last_id = _LAST_GOOD_ID.get(base)
+    if last_id is not None:
+        cheap.append(last_id)
     cheap.append(1)
-    ok, detail = await _probe_stream_ids(client, base, username, password, _unique(cheap))
+    ok, detail = await _probe_stream_ids(
+        client, base, username, password, _unique(cheap), host_key=base
+    )
     if ok is True:
         return True, None, None
     if ok is None:
@@ -250,7 +261,9 @@ async def _try_credentials(
     listed = await _stream_ids(client, api, username, password, f"{base}|{username}")
     remaining = [item for item in listed if item not in set(cheap)]
     if remaining:
-        ok, detail = await _probe_stream_ids(client, base, username, password, remaining)
+        ok, detail = await _probe_stream_ids(
+            client, base, username, password, remaining, host_key=base
+        )
         if ok is True:
             return True, None, None
         if ok is None:
@@ -267,8 +280,13 @@ async def check_xtream_mpegts(
     insecure: bool,
     *,
     via_vpn: bool = False,
+    require_mpegts: bool = True,
 ) -> tuple[bool | None, str | None, str | None]:
-    """Probe a portal with each playlist account until one yields MPEG-TS.
+    """Probe a portal with each playlist account.
+
+    Magnum (require_mpegts): DNS/TCP/MPEG-TS from the VPS — /watch is this box.
+    Strong 8K: player_api auth is enough. A datacentre MPEG-TS pull is often
+    blocked (HTTP 513 HTML) while home players still work.
 
     Returns (ok, fail_reason, detail). ok is None only when we had no credentials.
     If every account 404s / fails auth, we still mark the URL down so it is not a swap target.
@@ -290,7 +308,9 @@ async def check_xtream_mpegts(
             **extra,
         ) as client:
             for username, password in credentials:
-                ok, reason, detail = await _try_credentials(client, base, username, password)
+                ok, reason, detail = await _try_credentials(
+                    client, base, username, password, require_mpegts=require_mpegts
+                )
                 if ok is True:
                     return True, None, None
                 if ok is False:

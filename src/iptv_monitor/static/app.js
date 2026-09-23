@@ -262,7 +262,11 @@ function ipRow(ips) {
 
 function card(item) {
   const state = item.healthy ? "up" : "down";
-  const reason = item.fail_reason ? `<span>reason ${esc(item.fail_reason)}</span>` : "";
+  const reason = item.fail_reason
+    ? `<span>reason ${esc(item.fail_reason)}${
+        item.error_detail ? ` · ${esc(String(item.error_detail).slice(0, 80))}` : ""
+      }</span>`
+    : "";
   const playlists = item.playlists?.length ? `<span>playlists ${esc(item.playlists.join(", "))}</span>` : "";
   const check = item.healthy
     ? `check-pass completed: ${item.consecutive_successes || 0}`
@@ -271,6 +275,7 @@ function card(item) {
   const frequent = item.frequent_failure
     ? `<span class="pill frequent" title="${item.down_events_24h || 0} separate downs in 24h">Frequent failure</span>`
     : "";
+  const tsLabel = item.pool === "magnum" ? "mpeg-ts" : "xtream";
   return `
     <article class="card ${state}${item.cloudflare ? " cf" : ""}${item.frequent_failure ? " frequent" : ""}">
       <div class="card-top">
@@ -285,7 +290,7 @@ function card(item) {
       <div class="flags">
         ${flag("dns", item.dns_ok)}
         ${flag("tcp", item.tcp_ok)}
-        ${flag("mpeg-ts", item.stream_ok)}
+        ${flag(tsLabel, item.stream_ok)}
         ${reason}
         ${playlists}
       </div>

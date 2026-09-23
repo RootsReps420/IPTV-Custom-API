@@ -98,6 +98,7 @@ class Secrets(BaseModel):
     discord_webhook_alerts: str
     discord_webhook_status: str | None = None
     epgenius_url: str = "https://epgenius.org/api/public/update_creds"
+    tmdb_api_key: str = ""
 
 
 class Paths(BaseModel):
@@ -236,6 +237,7 @@ def load_secrets(env_path: Path) -> Secrets:
         epgenius_url=os.getenv(
             "EPGENIUS_URL", "https://epgenius.org/api/public/update_creds"
         ).strip(),
+        tmdb_api_key=os.getenv("TMDB_API_KEY", "").strip(),
     )
 
 

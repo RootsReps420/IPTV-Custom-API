@@ -236,6 +236,7 @@ def _url_view(
         "http_ok": result.http_ok if result else None,
         "stream_ok": result.stream_ok if result else None,
         "fail_reason": result.fail_reason if result else "not_checked",
+        "error_detail": result.error_detail if result else None,
         "resolved_ips": list(result.resolved_ips) if result else [],
         "nameserver": result.nameserver if result else None,
         "nameserver_hosts": list(result.nameserver_hosts) if result else [],
@@ -418,6 +419,7 @@ class Monitor:
                 creds or None,
                 skip_stream=skip_stream,
                 via_vpn=(pool == "magnum"),
+                require_mpegts=(pool == "magnum"),
             )
             results.update(batch)
 
@@ -759,11 +761,13 @@ class Monitor:
     ) -> HealthResult:
         """Fresh DNS + TCP + MPEG-TS of a swap target. Updates the in-memory snapshot."""
         creds = self._pool_credentials(cfg, playlist.pool)
+        magnum = normalize_pool(playlist.pool) == "magnum"
         result = await check_url(
             url,
             cfg.settings,
             creds or None,
-            via_vpn=normalize_pool(playlist.pool) == "magnum",
+            via_vpn=magnum,
+            require_mpegts=magnum,
         )
         if cfg.settings.stream_check_enabled and result.healthy and result.stream_ok is not True:
             result.healthy = False
