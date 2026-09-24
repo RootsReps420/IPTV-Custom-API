@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from iptv_monitor.config import resolve_paths
+from iptv_monitor.player_tmdb import clean_title
 from iptv_monitor.player_live_groups import (
     live_group_enabled,
     norm_live_group,
@@ -1423,148 +1424,177 @@ class WatchGuide:
                 break
         return out
 
-    def search(self, query: str, *, per_kind: int = 40) -> dict[str, Any]:
-        """Live + movies + shows. Ranked; does not hit the panel."""
+    def _library_search_fields(
+        self, item: dict[str, Any], kind: str
+    ) -> tuple[list[str], list[str]]:
+        raw = str(item.get("name") or "")
+        cleaned, year = clean_title(raw)
+        sid = str(item.get("series_id" if kind == "series" else "stream_id") or "")
+        meta = self.tmdb.get(kind, sid) if self.tmdb and sid else None
+        names = [raw]
+        if cleaned and cleaned.casefold() != raw.casefold():
+            names.append(cleaned)
+        plot = str(item.get("plot") or "")
+        if meta and meta.get("matched"):
+            title = str(meta.get("title") or "")
+            if title:
+                names.append(title)
+            plot = str(meta.get("plot") or "") or plot
+            if meta.get("year"):
+                year = meta.get("year")
+        extras = [
+            plot[:240],
+            str(item.get("genre") or ""),
+            str(year or ""),
+            str(item.get("director") or ""),
+        ]
+        if kind == "series":
+            extras.append(str(item.get("cast") or ""))
+        return names, extras
+
+    def _best_title_score(self, query: str, names: list[str], extras: list[str]) -> tuple[int, str]:
+        best_s, best_w = 0, ""
+        for name in names:
+            score, why = score_search(query, name, [])
+            if score > best_s:
+                best_s, best_w = score, why
+        if best_s >= 76:
+            return best_s, best_w
+        score, why = score_search(query, names[0] if names else "", extras)
+        if score > best_s:
+            return score, why
+        return best_s, best_w
+
+    def _search_hit_payload(
+        self, item: dict[str, Any], kind: str, names: dict[str, str]
+    ) -> dict[str, Any]:
+        painted = self.paint_library_item(item, kind)
+        group = self._group_label(item, names)
+        title = str(painted.get("display_name") or painted.get("name") or "")
+        plot = str(painted.get("plot") or "")[:240]
+        genre = str(painted.get("genre") or "")
+        poster = painted.get("poster") or ""
+        if kind == "series":
+            return {
+                "kind": "series",
+                "series_id": str(item.get("series_id") or ""),
+                "name": title,
+                "display_name": title,
+                "cover": poster or item.get("cover") or "",
+                "poster": poster,
+                "backdrop": painted.get("backdrop") or "",
+                "year": painted.get("year"),
+                "tmdb_rating": painted.get("tmdb_rating"),
+                "plot": plot,
+                "genre": genre,
+                "category_name": group,
+            }
+        return {
+            "kind": "movie",
+            "stream_id": str(item.get("stream_id") or ""),
+            "name": title,
+            "display_name": title,
+            "stream_icon": poster or item.get("stream_icon") or "",
+            "poster": poster,
+            "backdrop": painted.get("backdrop") or "",
+            "year": painted.get("year"),
+            "tmdb_rating": painted.get("tmdb_rating"),
+            "container_extension": item.get("container_extension") or "mp4",
+            "plot": plot,
+            "genre": genre,
+            "category_name": group,
+        }
+
+    def search(self, query: str, *, per_kind: int = 40, kind: str = "all") -> dict[str, Any]:
+        """Live + movies + shows. Ranked against names first; does not hit the panel."""
         text = (query or "").strip()
-        live_names = self._category_names(self.data.categories)
-        vod_names = self._category_names(self.vod.categories)
-        series_names = self._category_names(self.series.categories)
-        live_hits: list[tuple[int, str, dict[str, Any]]] = []
-        movie_hits: list[tuple[int, str, dict[str, Any]]] = []
-        series_hits: list[tuple[int, str, dict[str, Any]]] = []
+        want = (kind or "all").strip().lower()
+        want_live = want in {"all", "live", "tv"}
+        want_movie = want in {"all", "movie", "movies", "vod"}
+        want_series = want in {"all", "series", "show", "shows"}
+        if want_movie and not want_live and not want_series:
+            per_kind = max(int(per_kind), 80)
+        if want_series and not want_live and not want_movie:
+            per_kind = max(int(per_kind), 80)
         if len(text) < 2:
-            return {"query": text, "live": [], "movies": [], "series": []}
+            return {"query": text, "kind": want, "live": [], "movies": [], "series": []}
 
-        for stream in self.data.streams:
-            group = self._group_label(stream, live_names)
-            if not self.live_group_visible(group):
-                continue
-            decorated = self.decorate(stream, guide=False)
-            score, why = score_search(
-                text,
-                str(decorated.get("name") or ""),
-                [
-                    str(decorated.get("now_title") or ""),
-                    str(decorated.get("next_title") or ""),
-                    group,
-                ],
-            )
-            if score <= 0:
-                continue
-            sid = str(stream.get("stream_id") or "")
-            if why == "Details" and decorated.get("now_title"):
-                match = str(decorated.get("now_title") or "")
-            else:
-                match = group or why
-            live_hits.append(
-                (
-                    score,
-                    str(decorated.get("name") or "").lower(),
-                    {
-                        "kind": "live",
-                        "stream_id": sid,
-                        "name": decorated.get("name") or "",
-                        "stream_icon": decorated.get("stream_icon") or "",
-                        "num": decorated.get("num"),
-                        "now_title": decorated.get("now_title") or "",
-                        "next_title": decorated.get("next_title") or "",
-                        "now_start": decorated.get("now_start"),
-                        "now_stop": decorated.get("now_stop"),
-                        "category_name": group,
-                        "match": match,
-                    },
+        live_hits: list[tuple[int, str, dict[str, Any]]] = []
+        movie_ranked: list[tuple[int, str, dict[str, Any]]] = []
+        series_ranked: list[tuple[int, str, dict[str, Any]]] = []
+
+        if want_live:
+            live_names = self._category_names(self.data.categories)
+            for stream in self.data.streams:
+                group = self._group_label(stream, live_names)
+                if not self.live_group_visible(group):
+                    continue
+                decorated = self.decorate(stream, guide=False)
+                score, why = score_search(
+                    text,
+                    str(decorated.get("name") or ""),
+                    [
+                        str(decorated.get("now_title") or ""),
+                        str(decorated.get("next_title") or ""),
+                    ],
                 )
-            )
-
-        for item in self.vod.items:
-            painted = self.paint_library_item(item, "movie")
-            group = self._group_label(item, vod_names)
-            name = str(painted.get("display_name") or painted.get("name") or "")
-            plot = str(painted.get("plot") or "")[:240]
-            genre = str(painted.get("genre") or "")
-            score, why = score_search(
-                text,
-                name,
-                [str(item.get("name") or ""), plot, genre, group, str(item.get("director") or "")],
-            )
-            if score <= 0:
-                continue
-            sid = str(item.get("stream_id") or "")
-            match = group or genre or why
-            if why == "Details" and plot:
-                match = plot[:90]
-            movie_hits.append(
-                (
-                    score,
-                    name.lower(),
-                    {
-                        "kind": "movie",
-                        "stream_id": sid,
-                        "name": name,
-                        "display_name": name,
-                        "stream_icon": painted.get("poster") or item.get("stream_icon") or "",
-                        "poster": painted.get("poster") or "",
-                        "backdrop": painted.get("backdrop") or "",
-                        "year": painted.get("year"),
-                        "tmdb_rating": painted.get("tmdb_rating"),
-                        "container_extension": item.get("container_extension") or "mp4",
-                        "plot": plot,
-                        "genre": genre,
-                        "category_name": group,
-                        "match": match,
-                    },
+                if score <= 0:
+                    continue
+                sid = str(stream.get("stream_id") or "")
+                if why == "Details" and decorated.get("now_title"):
+                    match = str(decorated.get("now_title") or "")
+                else:
+                    match = group or why
+                live_hits.append(
+                    (
+                        score,
+                        str(decorated.get("name") or "").lower(),
+                        {
+                            "kind": "live",
+                            "stream_id": sid,
+                            "name": decorated.get("name") or "",
+                            "stream_icon": decorated.get("stream_icon") or "",
+                            "num": decorated.get("num"),
+                            "now_title": decorated.get("now_title") or "",
+                            "next_title": decorated.get("next_title") or "",
+                            "now_start": decorated.get("now_start"),
+                            "now_stop": decorated.get("now_stop"),
+                            "category_name": group,
+                            "match": match,
+                        },
+                    )
                 )
-            )
 
-        for item in self.series.items:
-            painted = self.paint_library_item(item, "series")
-            group = self._group_label(item, series_names)
-            name = str(painted.get("display_name") or painted.get("name") or "")
-            plot = str(painted.get("plot") or "")[:240]
-            genre = str(painted.get("genre") or "")
-            score, why = score_search(
-                text,
-                name,
-                [
-                    str(item.get("name") or ""),
-                    plot,
-                    genre,
-                    group,
-                    str(item.get("cast") or ""),
-                    str(item.get("director") or ""),
-                ],
-            )
-            if score <= 0:
-                continue
-            sid = str(item.get("series_id") or "")
-            match = group or genre or why
-            if why == "Details" and plot:
-                match = plot[:90]
-            series_hits.append(
-                (
-                    score,
-                    name.lower(),
-                    {
-                        "kind": "series",
-                        "series_id": sid,
-                        "name": name,
-                        "display_name": name,
-                        "cover": painted.get("poster") or item.get("cover") or "",
-                        "poster": painted.get("poster") or "",
-                        "backdrop": painted.get("backdrop") or "",
-                        "year": painted.get("year"),
-                        "tmdb_rating": painted.get("tmdb_rating"),
-                        "plot": plot,
-                        "genre": genre,
-                        "category_name": group,
-                        "match": match,
-                    },
-                )
-            )
+        if want_movie:
+            for item in self.vod.items:
+                names, extras = self._library_search_fields(item, "movie")
+                score, _why = self._best_title_score(text, names, extras)
+                if score <= 0:
+                    continue
+                movie_ranked.append((score, str(item.get("stream_id") or ""), item))
 
+        if want_series:
+            for item in self.series.items:
+                names, extras = self._library_search_fields(item, "series")
+                score, _why = self._best_title_score(text, names, extras)
+                if score <= 0:
+                    continue
+                series_ranked.append((score, str(item.get("series_id") or ""), item))
+
+        vod_names = self._category_names(self.vod.categories) if want_movie else {}
+        series_names = self._category_names(self.series.categories) if want_series else {}
+        movies = [
+            self._search_hit_payload(item, "movie", vod_names)
+            for item in self._take_hits(movie_ranked, per_kind)
+        ]
+        series = [
+            self._search_hit_payload(item, "series", series_names)
+            for item in self._take_hits(series_ranked, per_kind)
+        ]
         return {
             "query": text,
-            "live": self._take_hits(live_hits, per_kind),
-            "movies": self._take_hits(movie_hits, per_kind),
-            "series": self._take_hits(series_hits, per_kind),
+            "kind": want,
+            "live": self._take_hits(live_hits, per_kind) if want_live else [],
+            "movies": movies,
+            "series": series,
         }

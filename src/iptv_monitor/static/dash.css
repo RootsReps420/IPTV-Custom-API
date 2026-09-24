@@ -499,6 +499,8 @@
 .dash .key-card:nth-child(6) { animation-delay: 0.3s; }
 .dash .key-card:nth-child(7) { animation-delay: 0.35s; }
 .dash .key-card:nth-child(8) { animation-delay: 0.4s; }
+.dash .key-card:nth-child(9) { animation-delay: 0.45s; }
+.dash .key-card:nth-child(10) { animation-delay: 0.5s; }
 
 .dash .pill {
   border-radius: 999px;

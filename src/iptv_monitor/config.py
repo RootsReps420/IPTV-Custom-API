@@ -86,10 +86,15 @@ class Playlist(BaseModel):
 
 
 class PoolUrl(BaseModel):
-    """One standby URL, tagged so Magnum and Strong 8K cannot cross-failover."""
+    """One standby URL, tagged so Magnum and Strong 8K cannot cross-failover.
+
+    Strong 8K `vpn: true` hosts are for players that are on a VPN. Auto failover
+    never picks them. Manual Choose URL can.
+    """
 
     url: str
     pool: str = DEFAULT_POOL
+    vpn: bool = False
 
 
 class Secrets(BaseModel):
@@ -124,9 +129,16 @@ class AppConfig(BaseModel):
     def available_urls(self) -> list[str]:
         return [item.url for item in self.available_pool]
 
-    def urls_in_pool(self, pool: str | None) -> list[str]:
+    def urls_in_pool(self, pool: str | None, *, vpn: bool | None = None) -> list[str]:
         wanted = normalize_pool(pool)
-        return [item.url for item in self.available_pool if normalize_pool(item.pool) == wanted]
+        out: list[str] = []
+        for item in self.available_pool:
+            if normalize_pool(item.pool) != wanted:
+                continue
+            if vpn is not None and bool(item.vpn) != vpn:
+                continue
+            out.append(item.url)
+        return out
 
 
 def _yaml() -> YAML:
@@ -188,23 +200,52 @@ def load_playlists(path: Path) -> list[Playlist]:
     return [Playlist.model_validate(item) for item in raw]
 
 
+def _coerce_bool(value: object) -> bool:
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "vpn"}
+
+
+def _parse_pool_item(item: object, *, vpn_default: bool = False) -> PoolUrl | None:
+    pool = DEFAULT_POOL
+    vpn = vpn_default
+    if isinstance(item, dict):
+        value = str(item.get("url") or item.get("dns") or "").strip()
+        pool = normalize_pool(item.get("pool") or item.get("label"))
+        vpn = vpn_default or _coerce_bool(item.get("vpn"))
+        via = str(item.get("via") or "").strip().lower()
+        if via in {"vpn", "surfshark"}:
+            vpn = True
+    else:
+        value = str(item).strip()
+    if not value:
+        return None
+    if pool == "magnum":
+        vpn = False
+    return PoolUrl(url=value, pool=pool, vpn=vpn)
+
+
 def load_available_pool(path: Path) -> list[PoolUrl]:
     """Standby pool with provider tags. Plain strings default to Strong 8K."""
     data = _safe_yaml().load(path.read_text(encoding="utf-8")) or {}
-    urls = data.get("available") or []
+    urls = list(data.get("available") or [])
+    vpn_extra = list(data.get("vpn") or data.get("vpn_available") or [])
     unique: list[PoolUrl] = []
     seen: set[str] = set()
-    for item in urls:
-        pool = DEFAULT_POOL
-        if isinstance(item, dict):
-            value = str(item.get("url") or item.get("dns") or "").strip()
-            pool = normalize_pool(item.get("pool") or item.get("label"))
-        else:
-            value = str(item).strip()
-        if not value or value in seen:
+    for raw in urls:
+        parsed = _parse_pool_item(raw, vpn_default=False)
+        if parsed is None or parsed.url in seen:
             continue
-        seen.add(value)
-        unique.append(PoolUrl(url=value, pool=pool))
+        seen.add(parsed.url)
+        unique.append(parsed)
+    for raw in vpn_extra:
+        parsed = _parse_pool_item(raw, vpn_default=True)
+        if parsed is None or parsed.url in seen:
+            continue
+        seen.add(parsed.url)
+        unique.append(parsed)
     return unique
 
 

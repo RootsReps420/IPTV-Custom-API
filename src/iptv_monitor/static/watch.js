@@ -558,6 +558,7 @@ let vodSeekOffset = 0;
 let vodScrubbing = false;
 let vodSeeking = false;
 let vodChromeTimer = 0;
+let vodDetailHideTimer = 0;
 let vodWaitTimer = 0;
 let upNextTimer = 0;
 let upNextLeft = 0;
@@ -2263,10 +2264,7 @@ function playLive(item) {
 }
 
 async function playVod(item) {
-  if (isVodBrowseTab(state.tab)) {
-    hideVodDetail();
-    setPlayingVod(true);
-  }
+  presentVodPlayer();
   const gen = ++playGen;
   vodSeekOffset = 0;
   clearVodRuntime();
@@ -2311,10 +2309,7 @@ async function playVod(item) {
 }
 
 async function playEpisode(episode, seriesName) {
-  if (isVodBrowseTab(state.tab)) {
-    hideVodDetail();
-    setPlayingVod(true);
-  }
+  presentVodPlayer();
   const gen = ++playGen;
   vodSeekOffset = 0;
   clearVodRuntime();
@@ -2427,7 +2422,10 @@ function setVodBrowse(on) {
   if (appPanel) {
     appPanel.classList.toggle("is-vod-home", on);
   }
-  closeVodDetail();
+  hideVodDetail();
+  state.detailItem = null;
+  state.detailKind = "";
+  state.seasonId = "";
   if (!on) {
     setPlayingVod(false);
     return;
@@ -2444,10 +2442,50 @@ function setPlayingVod(on) {
   }
 }
 
-function hideVodDetail() {
-  if (vodDetail) {
-    vodDetail.hidden = true;
+function motionOff() {
+  return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+function showVodDetail() {
+  if (!vodDetail) {
+    return;
   }
+  if (vodDetailHideTimer) {
+    clearTimeout(vodDetailHideTimer);
+    vodDetailHideTimer = 0;
+  }
+  vodDetail.hidden = false;
+  vodDetail.inert = false;
+  vodDetail.setAttribute("aria-hidden", "false");
+  vodDetail.classList.remove("is-open");
+  void vodDetail.offsetWidth;
+  vodDetail.classList.add("is-open");
+}
+
+function concealVodDetail() {
+  if (!vodDetail) {
+    return;
+  }
+  vodDetail.classList.remove("is-open");
+  vodDetail.setAttribute("aria-hidden", "true");
+  vodDetail.inert = true;
+  if (vodDetailHideTimer) {
+    clearTimeout(vodDetailHideTimer);
+  }
+  const finish = () => {
+    vodDetailHideTimer = 0;
+    if (vodDetail && !vodDetail.classList.contains("is-open")) {
+      vodDetail.hidden = true;
+    }
+  };
+  if (motionOff() || vodDetail.hidden) {
+    finish();
+    return;
+  }
+  vodDetailHideTimer = window.setTimeout(finish, 220);
+}
+
+function clearVodDetailBody() {
   if (vodDetailEps) {
     vodDetailEps.hidden = true;
     vodDetailEps.innerHTML = "";
@@ -2456,6 +2494,25 @@ function hideVodDetail() {
     vodDetailPeople.hidden = true;
     vodDetailPeople.innerHTML = "";
   }
+}
+
+function hideVodDetail() {
+  if (vodDetailHideTimer) {
+    clearTimeout(vodDetailHideTimer);
+    vodDetailHideTimer = 0;
+  }
+  if (vodDetail) {
+    vodDetail.classList.remove("is-open");
+    vodDetail.hidden = true;
+    vodDetail.inert = true;
+    vodDetail.setAttribute("aria-hidden", "true");
+  }
+  clearVodDetailBody();
+}
+
+function presentVodPlayer() {
+  concealVodDetail();
+  setPlayingVod(true);
 }
 
 function seenStoreKey() {
@@ -2553,18 +2610,27 @@ function formatEpDate(value) {
 }
 
 function closeVodDetail() {
-  hideVodDetail();
-  state.detailItem = null;
-  state.detailKind = "";
-  state.seasonId = "";
-  if (isVodBrowseTab(state.tab)) {
-    seriesPanel.hidden = true;
-    seriesPanel.innerHTML = "";
+  const open = Boolean(vodDetail && (!vodDetail.hidden || vodDetail.classList.contains("is-open")));
+  concealVodDetail();
+  const wrapUp = () => {
+    clearVodDetailBody();
+    state.detailItem = null;
+    state.detailKind = "";
+    state.seasonId = "";
+    if (isVodBrowseTab(state.tab)) {
+      seriesPanel.hidden = true;
+      seriesPanel.innerHTML = "";
+    }
+  };
+  if (!open || motionOff()) {
+    wrapUp();
+    return;
   }
+  window.setTimeout(wrapUp, 220);
 }
 
 function seriesMount() {
-  if (vodDetail && !vodDetail.hidden && vodDetailEps) {
+  if (vodDetail && vodDetailEps && (!vodDetail.hidden || vodDetail.classList.contains("is-open"))) {
     return vodDetailEps;
   }
   return seriesPanel;
@@ -2702,7 +2768,8 @@ async function openVodDetail(item, kind) {
   state.detailItem = item;
   state.detailKind = kind;
   paintVodDetail(item, kind);
-  vodDetail.hidden = false;
+  showVodDetail();
+  vodDetail.scrollTop = 0;
   if (kind === "series") {
     state.seasonId = "";
     if (vodDetailEps) {
@@ -2729,6 +2796,10 @@ async function openVodDetail(item, kind) {
       };
       state.detailItem = merged;
       paintVodDetail(merged, "series");
+      if (appPanel && appPanel.classList.contains("is-playing-vod")) {
+        state.seriesDetail = detail;
+        return;
+      }
       renderSeries(detail, vodTitle(merged));
     } catch (error) {
       if (vodDetailEps) {
@@ -2776,13 +2847,12 @@ async function playFromDetail() {
   if (!item) {
     return;
   }
-  hideVodDetail();
-  if (isVodBrowseTab(state.tab)) {
-    setPlayingVod(true);
-  }
+  presentVodPlayer();
   if (kind === "series") {
     const first = (state.episodeQueue || [])[0];
     if (!first) {
+      setPlayingVod(false);
+      showVodDetail();
       showBanner("No episodes in this show yet.", "warn");
       return;
     }
@@ -2798,21 +2868,11 @@ async function closeVodPlayer() {
   await releaseSlot();
   if (state.detailItem) {
     paintVodDetail(state.detailItem, state.detailKind || vodBrowseKind());
-    if (vodDetail) {
-      vodDetail.hidden = false;
-    }
-    if (state.detailKind === "series" && state.seriesDetail) {
+    if (state.detailKind === "series" && state.seriesDetail && vodDetailEps && !vodDetailEps.querySelector(".watch-ep-card, .watch-season-pills")) {
       renderSeries(state.seriesDetail, vodTitle(state.detailItem));
     }
+    showVodDetail();
   }
-}
-
-function vodMatchesFilter(item, tokens) {
-  if (!tokens.length) {
-    return true;
-  }
-  const hay = `${vodTitle(item)} ${item.name || ""} ${item.plot || ""} ${item.genre || ""}`.toLowerCase();
-  return tokens.every((token) => hay.includes(token));
 }
 
 function posterCard(item, kind) {
@@ -2827,6 +2887,62 @@ function posterCard(item, kind) {
   return `<button type="button" class="watch-poster" ${attr}="${esc(id)}"><span class="watch-poster-art">${img}</span><span class="watch-poster-copy"><span class="watch-poster-name">${esc(title)}</span>${year}</span></button>`;
 }
 
+function vodHomeMount() {
+  return itemList.querySelector(".watch-vod-home");
+}
+
+function vodRowEl(categoryId) {
+  const value = String(categoryId);
+  const safe = window.CSS && CSS.escape ? CSS.escape(value) : value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return itemList.querySelector(`[data-vod-group="${safe}"]`);
+}
+
+function vodGroupSource(group) {
+  const expanded = !!state.vodExpanded[group.category_id];
+  return expanded && group.fullItems ? group.fullItems : group.items || [];
+}
+
+function vodRowMarkup(group, kind) {
+  const items = vodGroupSource(group);
+  if (!items.length) {
+    return "";
+  }
+  const expanded = !!state.vodExpanded[group.category_id];
+  const total = group.stream_count || items.length;
+  const canExpand = total > (group.items || []).length;
+  const count = total > items.length ? ` · ${esc(total)}` : "";
+  const allBtn =
+    canExpand || expanded
+      ? `<button type="button" class="watch-row-all" data-vod-all="${esc(group.category_id)}">${
+          expanded ? "Show less" : "View all"
+        }${expanded ? "" : count}</button>`
+      : "";
+  return `<section class="watch-row${expanded ? " is-all" : ""}" data-vod-group="${esc(group.category_id)}">
+    <header class="watch-row-head"><h3>${esc(group.category_name)}</h3>${allBtn}</header>
+    <div class="watch-row-frame">
+      <button type="button" class="watch-row-arrow is-prev" data-row-dir="-1" hidden aria-label="Previous">‹</button>
+      <div class="watch-row-scroll">${items.map((item) => posterCard(item, kind)).join("")}</div>
+      <button type="button" class="watch-row-arrow is-next" data-row-dir="1" hidden aria-label="Next">›</button>
+    </div>
+  </section>`;
+}
+
+function revealVodImages(root) {
+  const scope = root || itemList;
+  if (!scope || !scope.querySelectorAll) {
+    return;
+  }
+  scope.querySelectorAll(".watch-poster-art img").forEach((img) => {
+    const ready = () => img.classList.add("is-ready");
+    if (img.complete && img.naturalWidth) {
+      ready();
+    } else {
+      img.addEventListener("load", ready, { once: true });
+      img.addEventListener("error", ready, { once: true });
+    }
+  });
+}
+
 function renderVodHome() {
   const home = state.vodHome;
   itemList.classList.remove("is-epg");
@@ -2838,10 +2954,9 @@ function renderVodHome() {
     return;
   }
   const kind = home.kind === "series" ? "series" : "movie";
-  const tokens = (searchEl.value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   const feat = home.featured;
   let heroHtml = "";
-  if (feat && vodMatchesFilter(feat, tokens)) {
+  if (feat) {
     const bg = vodBackdrop(feat);
     const year = feat.year ? ` · ${esc(feat.year)}` : "";
     const kicker = kind === "series" ? "Show" : "Movie";
@@ -2857,58 +2972,103 @@ function renderVodHome() {
       </div>
     </article>`;
   }
-  const rows = (home.groups || [])
-    .map((group) => {
-      const expanded = !!state.vodExpanded[group.category_id];
-      const source = expanded && group.fullItems ? group.fullItems : group.items || [];
-      const items = tokens.length ? source.filter((item) => vodMatchesFilter(item, tokens)) : source;
-      if (!items.length) {
-        return "";
-      }
-      const total = group.stream_count || source.length;
-      const canExpand = total > (group.items || []).length;
-      const count = total > items.length ? ` · ${esc(total)}` : "";
-      const allBtn =
-        canExpand || expanded
-          ? `<button type="button" class="watch-row-all" data-vod-all="${esc(group.category_id)}">${
-              expanded ? "Show less" : "View all"
-            }${expanded ? "" : count}</button>`
-          : "";
-      return `<section class="watch-row${expanded ? " is-all" : ""}">
-        <header class="watch-row-head"><h3>${esc(group.category_name)}</h3>${allBtn}</header>
-        <div class="watch-row-frame">
-          <button type="button" class="watch-row-arrow is-prev" data-row-dir="-1" hidden aria-label="Previous">‹</button>
-          <div class="watch-row-scroll">${items.map((item) => posterCard(item, kind)).join("")}</div>
-          <button type="button" class="watch-row-arrow is-next" data-row-dir="1" hidden aria-label="Next">›</button>
-        </div>
-      </section>`;
-    })
-    .join("");
-  const empty = tokens.length ? "No titles match that filter." : "Nothing in the guide yet.";
-  itemList.innerHTML = `<div class="watch-vod-home">${heroHtml}${rows || `<div class="empty-events">${empty}</div>`}</div>`;
+  const rows = (home.groups || []).map((group) => vodRowMarkup(group, kind)).join("");
+  itemList.innerHTML = `<div class="watch-vod-home">${heroHtml}${rows || `<div class="empty-events">Nothing in the guide yet.</div>`}</div>`;
   bindVodRowArrows();
+  revealVodImages();
 }
 
-function bindVodRowArrows() {
-  itemList.querySelectorAll(".watch-row").forEach((row) => {
-    const scroller = row.querySelector(".watch-row-scroll");
-    const prev = row.querySelector("[data-row-dir='-1']");
-    const next = row.querySelector("[data-row-dir='1']");
-    if (!scroller || row.classList.contains("is-all")) {
-      if (prev) prev.hidden = true;
-      if (next) next.hidden = true;
-      return;
+function updateVodRow(categoryId) {
+  const home = state.vodHome;
+  if (!home || !vodHomeMount()) {
+    renderVodHome();
+    return;
+  }
+  const group = (home.groups || []).find((row) => String(row.category_id) === String(categoryId));
+  if (!group) {
+    return;
+  }
+  const kind = home.kind === "series" ? "series" : "movie";
+  const html = vodRowMarkup(group, kind);
+  const existing = vodRowEl(categoryId);
+  const y = itemList.scrollTop;
+  if (!html) {
+    if (existing) {
+      existing.remove();
     }
-    const paint = () => {
-      const max = scroller.scrollWidth - scroller.clientWidth - 8;
-      const overflow = max > 8;
-      if (prev) prev.hidden = !overflow || scroller.scrollLeft <= 8;
-      if (next) next.hidden = !overflow || scroller.scrollLeft >= max;
-    };
-    scroller.addEventListener("scroll", paint, { passive: true });
-    window.addEventListener("resize", paint, { passive: true });
-    paint();
-    window.requestAnimationFrame(paint);
+    itemList.scrollTop = y;
+    return;
+  }
+  if (!existing) {
+    renderVodHome();
+    return;
+  }
+  const railLeft = existing.classList.contains("is-all")
+    ? 0
+    : existing.querySelector(".watch-row-scroll")?.scrollLeft || 0;
+  existing.insertAdjacentHTML("afterend", html);
+  const next = existing.nextElementSibling;
+  existing.remove();
+  itemList.scrollTop = y;
+  if (next && !next.classList.contains("is-all")) {
+    const scroller = next.querySelector(".watch-row-scroll");
+    if (scroller) {
+      scroller.scrollLeft = railLeft;
+    }
+  }
+  bindVodRowArrows(next);
+  revealVodImages(next);
+}
+
+let vodArrowsBound = false;
+
+function paintRowArrows(row) {
+  if (!row) {
+    return;
+  }
+  const scroller = row.querySelector(".watch-row-scroll");
+  const prev = row.querySelector("[data-row-dir='-1']");
+  const next = row.querySelector("[data-row-dir='1']");
+  if (!scroller || row.classList.contains("is-all")) {
+    if (prev) prev.hidden = true;
+    if (next) next.hidden = true;
+    return;
+  }
+  const max = scroller.scrollWidth - scroller.clientWidth - 8;
+  const overflow = max > 8;
+  if (prev) prev.hidden = !overflow || scroller.scrollLeft <= 8;
+  if (next) next.hidden = !overflow || scroller.scrollLeft >= max;
+}
+
+function bindVodRowArrows(root) {
+  if (!vodArrowsBound && itemList) {
+    vodArrowsBound = true;
+    itemList.addEventListener(
+      "scroll",
+      (event) => {
+        const scroller = event.target;
+        if (!(scroller instanceof HTMLElement) || !scroller.classList.contains("watch-row-scroll")) {
+          return;
+        }
+        paintRowArrows(scroller.closest(".watch-row"));
+      },
+      { passive: true, capture: true }
+    );
+    window.addEventListener(
+      "resize",
+      () => {
+        itemList.querySelectorAll(".watch-row").forEach(paintRowArrows);
+      },
+      { passive: true }
+    );
+  }
+  const rows =
+    root && root.classList && root.classList.contains("watch-row")
+      ? [root]
+      : [...(root || itemList).querySelectorAll(".watch-row")];
+  rows.forEach((row) => {
+    paintRowArrows(row);
+    window.requestAnimationFrame(() => paintRowArrows(row));
   });
 }
 
@@ -2925,19 +3085,27 @@ function scrollVodRow(button) {
 
 async function loadVodHome() {
   setVodBrowse(true);
-  searchEl.placeholder = state.tab === "movies" ? "Filter movies…" : "Filter shows…";
+  searchEl.placeholder = state.tab === "movies" ? "Search movies…" : "Search shows…";
   clearEpgLayout();
   categoryList.innerHTML = "";
   seriesPanel.hidden = true;
   state.vodHome = null;
   state.vodExpanded = {};
-  renderVodHome();
+  const pending = (searchEl.value || "").trim().length >= 2;
+  if (!pending) {
+    renderVodHome();
+  } else {
+    itemList.innerHTML = `<div class="empty-events">Searching…</div>`;
+  }
   const path = state.tab === "movies" ? "/api/player/vod/home" : "/api/player/series/home";
   const data = await api(path);
   if (!isVodBrowseTab(state.tab)) {
     return;
   }
   state.vodHome = data;
+  if ((searchEl.value || "").trim().length >= 2) {
+    return;
+  }
   renderVodHome();
 }
 
@@ -2952,7 +3120,7 @@ async function expandVodGroup(categoryId) {
   }
   if (state.vodExpanded[categoryId]) {
     state.vodExpanded[categoryId] = false;
-    renderVodHome();
+    updateVodRow(categoryId);
     return;
   }
   if (!group.fullItems) {
@@ -2965,7 +3133,7 @@ async function expandVodGroup(categoryId) {
     group.fullItems = rows.slice(0, VOD_VIEW_ALL_CAP);
   }
   state.vodExpanded[categoryId] = true;
-  renderVodHome();
+  updateVodRow(categoryId);
 }
 
 function renderCategories() {
@@ -3169,32 +3337,14 @@ async function enrichSeasonStills(detail, season) {
   }
 }
 
-function searchCounts() {
-  return {
-    live: state.searchHits.live.length,
-    movies: state.searchHits.movies.length,
-    series: state.searchHits.series.length,
-  };
-}
-
-function renderSearchNav() {
-  const counts = searchCounts();
-  const total = counts.live + counts.movies + counts.series;
-  const rows = [
-    ["all", "All", total],
-    ["live", "TV", counts.live],
-    ["movies", "Movies", counts.movies],
-    ["series", "Shows", counts.series],
-  ];
-  categoryList.innerHTML = rows
-    .map(([id, label, count]) => {
-      const here = state.searchKind === id ? " is-here" : "";
-      const extra = state.searchHits.live.length || state.searchHits.movies.length || state.searchHits.series.length
-        ? ` (${esc(count)})`
-        : "";
-      return `<button type="button" class="watch-cat${here}" data-search-kind="${id}"><span class="watch-cat-mark">${esc(label.slice(0, 2))}</span><span class="watch-cat-label">${esc(label)}${extra}</span></button>`;
-    })
-    .join("");
+function searchScope() {
+  if (state.tab === "movies") {
+    return "movie";
+  }
+  if (state.tab === "series") {
+    return "series";
+  }
+  return "all";
 }
 
 function searchRowLive(item, index) {
@@ -3210,78 +3360,120 @@ function searchRowLive(item, index) {
   return `<button type="button" class="watch-item${here}" data-live="${esc(item.stream_id)}"><span class="watch-num">${esc(num)}</span>${icon}<span class="watch-item-body"><span class="watch-item-name">${esc(item.name)}</span>${epg}</span></button>`;
 }
 
-function searchRowMovie(item) {
-  const art = vodPoster(item);
-  const poster = art
-    ? `<img src="${esc(art)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
-    : "";
-  const title = vodTitle(item) || item.name || "";
-  const year = item.year ? ` · ${item.year}` : "";
-  const meta = `${item.match || item.category_name || item.genre || "Movie"}${year}`;
-  return `<button type="button" class="watch-item poster" data-open-movie="${esc(item.stream_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(title)}</span><small class="watch-item-epg">${esc(meta)}</small></span></button>`;
+function searchPosterRow(label, kind, items) {
+  if (!items.length) {
+    return "";
+  }
+  const expanded = items.length > 8;
+  return `<section class="watch-row${expanded ? " is-all" : ""}" data-vod-group="search-${esc(kind)}">
+    <header class="watch-row-head"><h3>${esc(label)}</h3><span class="watch-row-count">${esc(items.length)}</span></header>
+    <div class="watch-row-frame">
+      <button type="button" class="watch-row-arrow is-prev" data-row-dir="-1" hidden aria-label="Previous">‹</button>
+      <div class="watch-row-scroll">${items.map((item) => posterCard(item, kind)).join("")}</div>
+      <button type="button" class="watch-row-arrow is-next" data-row-dir="1" hidden aria-label="Next">›</button>
+    </div>
+  </section>`;
 }
 
-function searchRowSeries(item) {
-  const art = vodPoster(item);
-  const poster = art
-    ? `<img src="${esc(art)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
-    : "";
-  const title = vodTitle(item) || item.name || "";
-  const year = item.year ? ` · ${item.year}` : "";
-  const meta = `${item.match || item.category_name || item.genre || "Show"}${year}`;
-  return `<button type="button" class="watch-item poster" data-open-series="${esc(item.series_id)}">${poster}<span class="watch-item-body"><span class="watch-item-name">${esc(title)}</span><small class="watch-item-epg">${esc(meta)}</small></span></button>`;
+function searchHeroHtml(item, kind) {
+  if (!item) {
+    return "";
+  }
+  const bg = vodBackdrop(item);
+  const year = item.year ? ` · ${esc(item.year)}` : "";
+  const kicker = kind === "series" ? "Show" : "Movie";
+  const plot = String(item.plot || "").trim();
+  const attr = kind === "series" ? "data-open-series" : "data-open-movie";
+  return `<article class="watch-hero">
+    <div class="watch-hero-bg"${bg ? ` style="background-image:url('${esc(bg)}')"` : ""}></div>
+    <div class="watch-hero-copy">
+      <p class="watch-hero-kicker">Search · ${kicker}${year}</p>
+      <h2>${esc(vodTitle(item))}</h2>
+      ${plot ? `<p class="watch-hero-plot">${esc(plot)}</p>` : ""}
+      <button type="button" class="switch-btn" ${attr}="${esc(vodItemId(item, kind))}">More info</button>
+    </div>
+  </article>`;
 }
 
-function renderSearchResults() {
+function renderSearchShelf() {
   clearEpgLayout();
+  categoryList.innerHTML = "";
+  itemList.classList.remove("is-epg");
+  if (watchStage) {
+    watchStage.classList.remove("is-guide");
+  }
   const q = (searchEl.value || "").trim();
   if (q.length < 2) {
-    itemList.innerHTML = `<div class="empty-events">Type at least two letters. Matches live channels, movies, and shows — names, what’s on now, plot, and genre.</div>`;
-    renderSearchNav();
+    if (isVodBrowseTab(state.tab) && state.vodHome) {
+      renderVodHome();
+      return;
+    }
+    const hint =
+      state.tab === "movies"
+        ? "Type at least two letters to search movies."
+        : state.tab === "series"
+          ? "Type at least two letters to search shows."
+          : "Type at least two letters to search movies, shows, and live TV.";
+    itemList.innerHTML = `<div class="watch-vod-home is-search"><div class="empty-events">${hint}</div></div>`;
     return;
   }
-  const kind = state.searchKind;
-  const live = kind === "all" || kind === "live" ? state.searchHits.live : [];
-  const movies = kind === "all" || kind === "movies" ? state.searchHits.movies : [];
-  const series = kind === "all" || kind === "series" ? state.searchHits.series : [];
-  if (!live.length && !movies.length && !series.length) {
-    itemList.innerHTML = `<div class="empty-events">No matches for “${esc(q)}”.</div>`;
-    renderSearchNav();
+  const showLive = state.tab === "search";
+  const showMovies = state.tab === "search" || state.tab === "movies";
+  const showSeries = state.tab === "search" || state.tab === "series";
+  const movies = showMovies ? state.searchHits.movies : [];
+  const series = showSeries ? state.searchHits.series : [];
+  const live = showLive ? state.searchHits.live : [];
+  if (!movies.length && !series.length && !live.length) {
+    itemList.innerHTML = `<div class="watch-vod-home is-search"><div class="empty-events">No matches for “${esc(q)}”.</div></div>`;
     return;
   }
-  const parts = [];
-  if (live.length) {
-    parts.push(`<div class="watch-search-group"><strong>TV</strong><span>${esc(live.length)}</span></div>`);
-    parts.push(live.map((item, index) => searchRowLive(item, index)).join(""));
-  }
-  if (movies.length) {
-    parts.push(`<div class="watch-search-group"><strong>Movies</strong><span>${esc(movies.length)}</span></div>`);
-    parts.push(movies.map((item) => searchRowMovie(item)).join(""));
-  }
-  if (series.length) {
-    parts.push(`<div class="watch-search-group"><strong>Shows</strong><span>${esc(series.length)}</span></div>`);
-    parts.push(series.map((item) => searchRowSeries(item)).join(""));
-  }
-  itemList.innerHTML = parts.join("");
-  renderSearchNav();
+  const featKind = movies.length ? "movie" : series.length ? "series" : "";
+  const feat = featKind === "movie" ? movies[0] : featKind === "series" ? series[0] : null;
+  const liveRow = live.length
+    ? `<section class="watch-row" data-vod-group="search-live">
+        <header class="watch-row-head"><h3>TV</h3><span class="watch-row-count">${esc(live.length)}</span></header>
+        <div class="watch-row-frame">
+          <button type="button" class="watch-row-arrow is-prev" data-row-dir="-1" hidden aria-label="Previous">‹</button>
+          <div class="watch-row-scroll watch-search-live">${live
+            .map((item, index) => searchRowLive(item, index))
+            .join("")}</div>
+          <button type="button" class="watch-row-arrow is-next" data-row-dir="1" hidden aria-label="Next">›</button>
+        </div>
+      </section>`
+    : "";
+  const rows = [
+    searchPosterRow("Movies", "movie", movies),
+    searchPosterRow("Shows", "series", series),
+    liveRow,
+  ].join("");
+  itemList.innerHTML = `<div class="watch-vod-home is-search">${searchHeroHtml(feat, featKind)}${rows}</div>`;
+  bindVodRowArrows();
+  revealVodImages();
 }
 
 async function runSearch() {
-  if (state.tab !== "search") {
+  if (state.tab === "live") {
     return;
   }
   const q = (searchEl.value || "").trim();
+  const tab = state.tab;
   const gen = ++searchGen;
   seriesPanel.hidden = true;
   if (q.length < 2) {
     state.searchHits = { live: [], movies: [], series: [] };
-    renderSearchResults();
+    renderSearchShelf();
     return;
   }
-  itemList.innerHTML = `<div class="empty-events">Searching…</div>`;
+  if (!itemList.querySelector(".watch-vod-home.is-search")) {
+    itemList.innerHTML = `<div class="empty-events">Searching…</div>`;
+  }
   try {
-    const data = await api(`/api/player/search?q=${encodeURIComponent(q)}`);
-    if (gen !== searchGen || state.tab !== "search") {
+    const kind = searchScope();
+    const limit = kind === "all" ? 40 : 80;
+    const data = await api(
+      `/api/player/search?q=${encodeURIComponent(q)}&kind=${encodeURIComponent(kind)}&limit=${limit}`
+    );
+    if (gen !== searchGen || state.tab !== tab) {
       return;
     }
     state.searchHits = {
@@ -3289,7 +3481,7 @@ async function runSearch() {
       movies: data.movies || [],
       series: data.series || [],
     };
-    renderSearchResults();
+    renderSearchShelf();
   } catch (error) {
     if (gen !== searchGen) {
       return;
@@ -3304,7 +3496,7 @@ function queueSearch() {
   }
   searchTimer = setTimeout(() => {
     runSearch().catch(() => {});
-  }, 220);
+  }, 280);
 }
 
 function findSearchItem(kind, id) {
@@ -3608,20 +3800,20 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
     showBanner("");
     seriesPanel.hidden = true;
     if (state.tab === "search") {
-      setVodBrowse(false);
-      searchEl.placeholder = "Search live, movies and shows…";
+      setVodBrowse(true);
+      searchEl.placeholder = "Search movies, shows, and TV…";
       clearEpgLayout();
-      renderSearchNav();
-      renderSearchResults();
+      categoryList.innerHTML = "";
       searchEl.focus();
-      if ((searchEl.value || "").trim().length >= 2) {
-        await runSearch();
-      }
+      await runSearch();
       return;
     }
     try {
       if (isVodBrowseTab(state.tab)) {
         await loadVodHome();
+        if ((searchEl.value || "").trim().length >= 2) {
+          await runSearch();
+        }
       } else {
         await loadCategories();
       }
@@ -3634,8 +3826,6 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 categoryList.addEventListener("click", async (event) => {
   const kindBtn = event.target.closest("[data-search-kind]");
   if (kindBtn) {
-    state.searchKind = kindBtn.getAttribute("data-search-kind") || "all";
-    renderSearchResults();
     return;
   }
   const button = event.target.closest("[data-cat]");
@@ -3659,9 +3849,18 @@ itemList.addEventListener("click", async (event) => {
     if (item) {
       localStorage.setItem("watch_last_live", String(id));
       state.playingLiveId = String(id);
-      itemList.querySelectorAll("[data-live]").forEach((el) => {
-        el.classList.toggle("is-here", el.getAttribute("data-live") === String(id));
-      });
+      if (state.tab !== "live") {
+        state.tab = "live";
+        document.querySelectorAll("[data-tab]").forEach((btn) => {
+          btn.classList.toggle("is-here", btn.getAttribute("data-tab") === "live");
+        });
+        setVodBrowse(false);
+        loadCategories().catch(() => {});
+      } else {
+        itemList.querySelectorAll("[data-live]").forEach((el) => {
+          el.classList.toggle("is-here", el.getAttribute("data-live") === String(id));
+        });
+      }
       playLive(item);
     }
     return;
@@ -3756,19 +3955,15 @@ if (vodPlayerClose) {
 }
 
 searchEl.addEventListener("input", () => {
-  if (state.tab === "search") {
+  if (state.tab === "search" || isVodBrowseTab(state.tab)) {
     queueSearch();
-    return;
-  }
-  if (isVodBrowseTab(state.tab)) {
-    renderVodHome();
     return;
   }
   renderItems();
 });
 
 searchEl.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && state.tab === "search") {
+  if (event.key === "Enter" && (state.tab === "search" || isVodBrowseTab(state.tab))) {
     event.preventDefault();
     if (searchTimer) {
       clearTimeout(searchTimer);

@@ -243,9 +243,20 @@ function nsBadge(item) {
   return `<span class="${cls}" title="${esc(title)}">${esc(label)}</span>`;
 }
 
+function poolLane(item) {
+  if (item.pool === "magnum") {
+    return "magnum";
+  }
+  if (item.vpn) {
+    return "strong8k-vpn";
+  }
+  return "strong8k";
+}
+
 function poolBadge(item) {
-  const label = item.pool_label || (item.pool === "magnum" ? "Magnum" : "Strong 8K");
-  const cls = item.pool === "magnum" ? "pill magnum" : "pill strong8k";
+  const vpn = Boolean(item.vpn) && item.pool !== "magnum";
+  const label = item.pool_label || (item.pool === "magnum" ? "Magnum" : vpn ? "Strong 8K VPN" : "Strong 8K");
+  const cls = item.pool === "magnum" ? "pill magnum" : vpn ? "pill vpn-dns" : "pill strong8k";
   return `<span class="${cls}">${esc(label)}</span>`;
 }
 
@@ -277,7 +288,7 @@ function card(item) {
     : "";
   const tsLabel = item.pool === "magnum" ? "mpeg-ts" : "xtream";
   return `
-    <article class="card ${state}${item.cloudflare ? " cf" : ""}${item.frequent_failure ? " frequent" : ""}">
+    <article class="card ${state}${item.cloudflare ? " cf" : ""}${item.frequent_failure ? " frequent" : ""}${item.vpn && item.pool !== "magnum" ? " vpn-lane" : ""}">
       <div class="card-top">
         <div class="url">${esc(item.url)}</div>
         <div class="pills">
@@ -306,50 +317,78 @@ const CF_GROUPS = [
   { id: "other", title: "Other" },
 ];
 
-function renderGrouped(el, countEl, items, emptyText, grid) {
-  const up = items.filter((item) => item.healthy).length;
-  countEl.textContent = items.length ? `${up}/${items.length} up` : "none";
+const POOL_TABS = [
+  { id: "all", title: "All" },
+  { id: "strong8k", title: "Strong 8K" },
+  { id: "strong8k-vpn", title: "Strong 8K VPN" },
+  { id: "magnum", title: "Magnum" },
+];
+
+const poolView = {
+  avail: "all",
+  live: "all",
+};
+
+function poolTabsMarkup(tabKey, items) {
+  return `
+    <div class="pool-tabs" role="tablist">
+      ${POOL_TABS.map((tab) => {
+        const rows = tab.id === "all" ? items : items.filter((item) => poolLane(item) === tab.id);
+        const up = rows.filter((item) => item.healthy).length;
+        const here = poolView[tabKey] === tab.id ? " is-here" : "";
+        return `<button type="button" class="sort-btn${here}" data-pool-tab="${tab.id}" data-pool-for="${tabKey}">${esc(tab.title)} <span class="count">${rows.length ? `${up}/${rows.length}` : "0"}</span></button>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function groupBlock(title, rows, listClass) {
+  if (!rows.length) {
+    return "";
+  }
+  const groupUp = rows.filter((item) => item.healthy).length;
+  return `
+    <div class="url-group">
+      <div class="url-group-head">
+        <h3>${esc(title)}</h3>
+        <span class="count">${groupUp}/${rows.length} up</span>
+      </div>
+      <div class="${listClass}">${rows.map(card).join("")}</div>
+    </div>
+  `;
+}
+
+function renderGrouped(el, countEl, items, emptyText, grid, tabKey) {
+  const view = poolView[tabKey] || "all";
+  const filtered = view === "all" ? items : items.filter((item) => poolLane(item) === view);
+  const up = filtered.filter((item) => item.healthy).length;
+  countEl.textContent = items.length ? `${up}/${filtered.length} up` : "none";
+  const tabs = poolTabsMarkup(tabKey, items);
   if (!items.length) {
-    el.innerHTML = `<div class="empty">${emptyText}</div>`;
+    el.innerHTML = `${tabs}<div class="empty">${emptyText}</div>`;
     return;
   }
-  const magnum = items.filter((item) => item.pool === "magnum");
-  const rest = items.filter((item) => item.pool !== "magnum");
+  if (!filtered.length) {
+    const emptyLane =
+      view === "strong8k-vpn"
+        ? "No Strong 8K VPN DNS in urls.yaml yet. Add hosts under vpn:."
+        : emptyText;
+    el.innerHTML = `${tabs}<div class="empty">${emptyLane}</div>`;
+    return;
+  }
+  const magnum = filtered.filter((item) => item.pool === "magnum");
+  const vpn = filtered.filter((item) => item.vpn && item.pool !== "magnum");
+  const rest = filtered.filter((item) => item.pool !== "magnum" && !item.vpn);
   const buckets = {
     proxy: rest.filter((item) => item.cloudflare_proxied),
     ns: rest.filter((item) => item.cloudflare && !item.cloudflare_proxied),
     other: rest.filter((item) => !item.cloudflare),
   };
   const listClass = grid ? "cards cards-grid" : "cards";
-  const magnumBlock = magnum.length
-    ? `
-      <div class="url-group">
-        <div class="url-group-head">
-          <h3>Magnum</h3>
-          <span class="count">${magnum.filter((item) => item.healthy).length}/${magnum.length} up</span>
-        </div>
-        <div class="${listClass}">${magnum.map(card).join("")}</div>
-      </div>
-    `
-    : "";
-  el.innerHTML =
-    magnumBlock +
-    CF_GROUPS.map((group) => {
-    const rows = buckets[group.id];
-    if (!rows.length) {
-      return "";
-    }
-    const groupUp = rows.filter((item) => item.healthy).length;
-    return `
-      <div class="url-group">
-        <div class="url-group-head">
-          <h3>${esc(group.title)}</h3>
-          <span class="count">${groupUp}/${rows.length} up</span>
-        </div>
-        <div class="${listClass}">${rows.map(card).join("")}</div>
-      </div>
-    `;
-  }).join("");
+  const vpnBlock = groupBlock("Strong 8K VPN", vpn, listClass);
+  const magnumBlock = groupBlock("Magnum", magnum, listClass);
+  const cfBlocks = CF_GROUPS.map((group) => groupBlock(group.title, buckets[group.id], listClass)).join("");
+  el.innerHTML = tabs + magnumBlock + vpnBlock + cfBlocks;
 }
 
 const switching = new Set();
@@ -427,20 +466,27 @@ function pickerMarkup(item, id, dryRun, busy) {
   if (!choices.length) {
     return `<div class="switch-picker"><span class="muted">No other URLs in the pool.</span></div>`;
   }
-  const options = choices
-    .map((row) => {
-      const selected = pickValue === row.url ? " selected" : "";
-      const disabled = row.healthy ? "" : " disabled";
-      const kind = row.cloudflare_proxied
+  const optionLine = (row) => {
+    const selected = pickValue === row.url ? " selected" : "";
+    const disabled = row.healthy ? "" : " disabled";
+    const kind = row.vpn
+      ? "VPN"
+      : row.cloudflare_proxied
         ? "CF proxy"
         : row.cloudflare
           ? "CF NS"
           : "origin";
-      const state = row.healthy ? "up" : "down";
-      const frequent = row.frequent_failure ? " · frequent" : "";
-      return `<option value="${esc(row.url)}"${selected}${disabled}>${esc(hostOf(row.url))} · ${state} · ${kind}${frequent}</option>`;
-    })
-    .join("");
+    const state = row.healthy ? "up" : "down";
+    const frequent = row.frequent_failure ? " · frequent" : "";
+    const prefix = row.vpn ? "VPN · " : "";
+    return `<option value="${esc(row.url)}"${selected}${disabled}>${prefix}${esc(hostOf(row.url))} · ${state} · ${kind}${frequent}</option>`;
+  };
+  const publicRows = choices.filter((row) => !row.vpn);
+  const vpnRows = choices.filter((row) => row.vpn);
+  const options =
+    vpnRows.length && publicRows.length
+      ? `<optgroup label="Strong 8K">${publicRows.map(optionLine).join("")}</optgroup><optgroup label="Strong 8K VPN">${vpnRows.map(optionLine).join("")}</optgroup>`
+      : choices.map(optionLine).join("");
   const selectedHealthy = choices.some((row) => row.url === pickValue && row.healthy);
   const canGo = selectedHealthy && !dryRun && !busy;
   return `
@@ -486,13 +532,18 @@ function renderPlaylists(items, { force = false } = {}) {
       const target = item.next_standby;
       const canSwitch = Boolean(target) && !dryRun;
       const magnum = item.pool === "magnum";
+      const onVpn = Boolean(item.vpn);
       const title = target
         ? magnum
           ? `Switch to ${hostOf(target)} (Magnum pool only). Fresh MPEG-TS check first. Watch follows this DNS.`
-          : `Switch to ${hostOf(target)} (fresh MPEG-TS check first)`
+          : onVpn
+            ? `Switch to ${hostOf(target)} (Strong 8K VPN lane). Fresh check first.`
+            : `Switch to ${hostOf(target)} (public Strong 8K). Auto never picks a VPN host.`
         : magnum
           ? "No healthy Magnum standby right now"
-          : "No healthy standby right now";
+          : onVpn
+            ? "No healthy Strong 8K VPN standby. Use Choose URL to pick a public host if the player is off VPN."
+            : "No healthy public Strong 8K standby. Use Choose URL to pick a VPN host if the player is on a VPN.";
       const btnLabel = busy ? "Switching…" : "Switch";
       const revertTo = item.revert_dns;
       const canRevert = Boolean(revertTo) && !dryRun;
@@ -506,7 +557,7 @@ function renderPlaylists(items, { force = false } = {}) {
         <tr>
           <td>${esc(item.name)}${
             item.pool_label
-              ? ` <span class="pill ${item.pool === "magnum" ? "magnum" : "strong8k"}">${esc(item.pool_label)}</span>`
+              ? ` <span class="pill ${item.pool === "magnum" ? "magnum" : item.vpn ? "vpn-dns" : "strong8k"}">${esc(item.pool_label)}</span>`
               : ""
           }</td>
           <td>${esc(item.playlist_id)}</td>
@@ -532,7 +583,7 @@ function renderPlaylists(items, { force = false } = {}) {
                 type="button"
                 class="switch-btn choose${chooseOpen ? " is-here" : ""}"
                 data-choose="${esc(id)}"
-                title="Pick a specific URL from this playlist's pool"
+                title="Pick a URL from this playlist's pool. VPN hosts only work if the player is on a VPN."
                 ${dryRun || busy ? "disabled" : ""}
               >${chooseLabel}</button>
               ${
@@ -955,6 +1006,31 @@ document.querySelectorAll("[data-groups-view]").forEach((button) => {
   });
 });
 
+function onPoolTabClick(event) {
+  const button = event.target.closest("[data-pool-tab]");
+  if (!button) {
+    return;
+  }
+  const tabKey = button.getAttribute("data-pool-for");
+  const tabId = button.getAttribute("data-pool-tab");
+  if (!tabKey || !tabId || !latest) {
+    return;
+  }
+  poolView[tabKey] = tabId;
+  if (tabKey === "avail") {
+    renderGrouped(availList, availCount, latest.available || [], "No standby URLs in urls.yaml.", true, "avail");
+  } else if (tabKey === "live") {
+    renderGrouped(liveList, liveCount, latest.live || [], "No live portal URLs yet.", false, "live");
+  }
+}
+
+if (availList) {
+  availList.addEventListener("click", onPoolTabClick);
+}
+if (liveList) {
+  liveList.addEventListener("click", onPoolTabClick);
+}
+
 function renderEvents(items) {
   if (!items || !items.length) {
     eventList.innerHTML = `<li class="empty-events">No events yet this process. Downs, recoveries, and swaps show up here.</li>`;
@@ -1126,9 +1202,9 @@ async function refresh() {
     modePill.hidden = !data.dry_run;
     tickCountdown();
     renderAlerts(data.alerts, data.error);
-    renderGrouped(availList, availCount, data.available || [], "No standby URLs in urls.yaml.", true);
+    renderGrouped(availList, availCount, data.available || [], "No standby URLs in urls.yaml.", true, "avail");
     if (signedIn) {
-      renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false);
+      renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false, "live");
       renderPlaylists(data.playlists || []);
       renderWatchers(data.watch);
       renderVpn(data.vpn);

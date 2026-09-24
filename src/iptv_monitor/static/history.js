@@ -22,6 +22,9 @@ function esc(value) {
 }
 
 function typeLabel(row) {
+  if (row.vpn) {
+    return "VPN DNS";
+  }
   if (row.cloudflare_proxied) {
     return "CF proxy";
   }
@@ -80,7 +83,7 @@ function render() {
     if (!query) {
       return true;
     }
-    const hay = `${row.host || ""} ${row.url || ""} ${typeLabel(row)}`.toLowerCase();
+    const hay = `${row.host || ""} ${row.url || ""} ${typeLabel(row)} ${row.pool_label || ""}`.toLowerCase();
     return hay.includes(query);
   });
   historyCount.textContent = `${visible.length} shown`;

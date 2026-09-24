@@ -8,3 +8,9 @@ available:
   - "http://your-standby-2.example"
   # - url: "http://magnum-standby.example"
   #   pool: magnum
+
+# Strong 8K hosts that work when the player is on a VPN.
+# Heartbeated through Surfshark. Auto failover never picks these.
+# Keep them out of available: — a host listed in both is treated as public.
+vpn:
+  # - "http://your-strong-vpn-1.example"

@@ -13,8 +13,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=55" />
-  <link rel="stylesheet" href="/static/dash.css?v=9" />
+  <link rel="stylesheet" href="/static/styles.css?v=57" />
+  <link rel="stylesheet" href="/static/dash.css?v=11" />
 </head>
 <body class="dash">
   <div class="dash-sky" aria-hidden="true">
@@ -81,7 +81,7 @@
         <h2>Playlists</h2>
         <span id="playlist-count" class="count"></span>
       </div>
-      <p class="history-note">Strong 8K and Magnum use separate URL pools so credentials never cross. Magnum playlists auto-failover via EPGenius like Strong 8K, but only onto Magnum-tagged URLs. Switch / Choose URL / Switch back still work. After a Magnum swap, Watch DNS on the VPS (<code>player.yaml</code>) follows the new host and /watch refreshes the live list.</p>
+      <p class="history-note">Strong 8K and Magnum use separate URL pools so credentials never cross. Strong 8K VPN DNS is a separate lane — auto failover never picks those hosts (a player off VPN cannot use them). Switch stays on the current lane. Choose URL can pick a VPN host when the player is on a VPN. Magnum playlists auto-failover via EPGenius like Strong 8K, but only onto Magnum-tagged URLs. After a Magnum swap, Watch DNS on the VPS (<code>player.yaml</code>) follows the new host and /watch refreshes the live list.</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -129,7 +129,7 @@
         <h2>Watch VPN</h2>
         <span id="vpn-pill" class="pill">—</span>
       </div>
-      <p class="history-note">/watch Magnum live/VOD and Magnum MPEG-TS health stay on the public NIC (the panel rejects stream URLs from Surfshark). Magnum DNS health uses the VPN. Strong 8K, EPGenius, Discord, Android, SSH, and Caddy stay on the public NIC. Speed test runs 5 parallel downloads on the public NIC and compares the VPN if it is up.</p>
+      <p class="history-note">/watch Magnum live/VOD and Magnum MPEG-TS health stay on the public NIC (the panel rejects stream URLs from Surfshark). Magnum DNS health uses the VPN. Strong 8K public hosts stay on the public NIC. Strong 8K VPN-allowlist hosts are heartbeated through the VPN (DNS + player_api). EPGenius, Discord, Android, SSH, and Caddy stay on the public NIC. Speed test runs 5 parallel downloads on the public NIC and compares the VPN if it is up.</p>
       <div id="vpn-grid" class="vpn-grid"></div>
       <div class="vpn-actions">
         <button type="button" class="switch-btn" id="vpn-speed-btn">Test 5 streams</button>
@@ -182,6 +182,6 @@
       <ol id="event-list" class="event-list"></ol>
     </section>
   </div>
-  <script src="/static/app.js?v=46"></script>
+  <script src="/static/app.js?v=48"></script>
 </body>
 </html>

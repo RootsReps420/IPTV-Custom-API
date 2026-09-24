@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=55" />
-  <link rel="stylesheet" href="/static/dash.css?v=9" />
+  <link rel="stylesheet" href="/static/styles.css?v=57" />
+  <link rel="stylesheet" href="/static/dash.css?v=11" />
 </head>
 <body class="dash">
   <div class="dash-sky" aria-hidden="true">
@@ -154,8 +154,10 @@
         best healthy standby (same preference as auto failover: origin, then Cloudflare NS,
         then Cloudflare proxy; frequent-failure standbys are skipped while anything else is up).
         Magnum playlists only list Magnum-tagged URLs; Strong 8K only lists Strong 8K.
+        <strong>Switch</strong> stays on the current lane (public or VPN).
         <strong>Choose URL</strong> opens a dropdown of that pool so you can pick a specific
-        host instead. Down URLs are listed but cannot be selected. Immediately before
+        host, including a Strong 8K VPN host when the player is on a VPN.
+        Down URLs are listed but cannot be selected. Immediately before
         EPGenius runs, that host is probed again (DNS, TCP, and MPEG-TS). Auto-failover
         and <strong>Switch</strong> try the next ranked standby if it fails;
         <strong>Choose URL</strong> aborts and leaves you on the current DNS.
@@ -208,6 +210,27 @@
         /watch live/VOD stay on the VPS public IP because Magnum rejects stream
         URLs from the VPN exit. Strong 8K, Android, SSH, Caddy, and Discord stay
         on the public address.
+      </p>
+    </article>
+
+    <article class="key-card">
+      <div class="key-card-top">
+        <span class="pill vpn-dns">Strong 8K VPN</span>
+        <h2>Strong 8K VPN DNS</h2>
+      </div>
+      <p>
+        Strong 8K now rejects VPN clients on the normal public DNS hosts. The
+        <code>vpn:</code> list in <code>urls.yaml</code> is a separate allowlist of
+        hosts that work when the player is on a VPN. Those cards have a blue
+        badge and their own tab. Heartbeats resolve DNS and call
+        <code>player_api</code> through Surfshark.
+      </p>
+      <p>
+        <strong>Auto failover never picks a VPN host</strong>, and it will not
+        move a playlist that is already on a VPN host onto a public host.
+        A device off VPN cannot use a VPN DNS, and a device on VPN cannot use
+        a public Strong 8K DNS. Use <strong>Choose URL</strong> when you
+        deliberately want to match the player’s VPN state.
       </p>
     </article>
   </section>

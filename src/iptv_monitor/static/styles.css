@@ -379,6 +379,50 @@ h2 {
   color: var(--muted);
 }
 
+.pill.vpn-dns {
+  color: #7dd3fc;
+  border-color: #0284c7;
+}
+
+.card.vpn-lane {
+  border-color: rgba(14, 165, 233, 0.45);
+}
+
+.pool-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.pool-tabs .count {
+  margin-left: 6px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.pill.vpn-dns {
+  color: #7dd3fc;
+  border-color: #0284c7;
+}
+
+.card.vpn-lane {
+  border-color: rgba(14, 165, 233, 0.45);
+}
+
+.pool-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.pool-tabs .count {
+  margin-left: 6px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
 .status-warn {
   color: var(--warn);
 }
@@ -2067,6 +2111,33 @@ tr.row-down td {
   letter-spacing: 0.04em;
 }
 
+.watch-row-count {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.watch-vod-home.is-search .watch-hero {
+  min-height: min(46vh, 440px);
+}
+
+.watch-search-live {
+  align-items: stretch;
+}
+
+.watch-search-live .watch-item {
+  flex: 0 0 260px;
+  width: 260px;
+  appearance: none;
+  border: 0;
+  background: #10161f;
+  color: inherit;
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
 .watch-item {
   display: grid;
   grid-template-columns: 32px 40px minmax(0, 1fr);
@@ -2194,7 +2265,19 @@ tr.row-down td {
 }
 
 .watch-app.is-vod-home:not(.is-playing-vod) .watch-preview-card {
-  display: none;
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  padding: 56px 20px 24px;
+  border: 0;
+  background: rgba(5, 7, 11, 0.96);
+  overflow: auto;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(16px);
+  transition: opacity 0.22s ease, transform 0.22s ease, visibility 0.22s ease;
 }
 
 .watch-app.is-vod-home .watch-channel-col {
@@ -2368,9 +2451,8 @@ tr.row-down td {
   transform-origin: center center;
 }
 
-.watch-row.is-all .watch-poster:hover,
-.watch-row.is-all .watch-poster:focus-visible {
-  transform: translateY(-6px);
+.watch-row.is-all .watch-poster-art {
+  transform-origin: center center;
 }
 
 .watch-row-arrow {
@@ -2413,9 +2495,7 @@ tr.row-down td {
   cursor: pointer;
   scroll-snap-align: start;
   text-align: left;
-  transform: scale(1);
-  transform-origin: center bottom;
-  transition: transform 0.22s ease, filter 0.22s ease;
+  overflow: visible;
 }
 
 .watch-poster-art {
@@ -2424,7 +2504,9 @@ tr.row-down td {
   overflow: hidden;
   background: #121821;
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
-  transition: box-shadow 0.22s ease;
+  transform: scale(1);
+  transform-origin: center bottom;
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
 }
 
 .watch-poster-art img,
@@ -2433,6 +2515,15 @@ tr.row-down td {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.watch-poster-art img {
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.watch-poster-art img.is-ready {
+  opacity: 1;
 }
 
 .watch-poster-fallback {
@@ -2485,13 +2576,12 @@ tr.row-down td {
 
 .watch-poster:hover,
 .watch-poster:focus-visible {
-  transform: scale(1.08);
   z-index: 2;
-  filter: brightness(1.06);
 }
 
 .watch-poster:hover .watch-poster-art,
 .watch-poster:focus-visible .watch-poster-art {
+  transform: scale(1.04);
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.55);
 }
 
@@ -2501,6 +2591,16 @@ tr.row-down td {
   z-index: 45;
   overflow: auto;
   background: #05070b;
+  opacity: 0;
+  transform: translateY(18px);
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.watch-vod-detail.is-open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .watch-vod-detail[hidden] {
@@ -2826,11 +2926,16 @@ tr.row-down td {
   display: block;
   position: fixed;
   inset: 0;
-  z-index: 55;
+  z-index: 80;
   padding: 56px 20px 24px;
   border: 0;
   background: rgba(5, 7, 11, 0.96);
   overflow: auto;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition: opacity 0.22s ease, transform 0.22s ease, visibility 0.22s ease;
 }
 
 .watch-vod-player-close {
@@ -2853,6 +2958,21 @@ tr.row-down td {
 
 .watch-app.is-playing-vod .watch-buffer {
   display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .watch-vod-detail,
+  .watch-app.is-vod-home .watch-preview-card,
+  .watch-app.is-playing-vod .watch-preview-card,
+  .watch-poster-art,
+  .watch-poster-art img {
+    transition: none;
+  }
+
+  .watch-poster:hover .watch-poster-art,
+  .watch-poster:focus-visible .watch-poster-art {
+    transform: none;
+  }
 }
 
 @media (max-width: 980px) {

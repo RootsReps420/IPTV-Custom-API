@@ -10,8 +10,9 @@ Switch back share `_swap_lock` with auto failover so they cannot race.
 This module never auto-swaps a playlist with failover: false.
 Manual Switch / Choose URL / Switch back still work, only onto URLs in the same
 provider pool. Strong 8K and Magnum credentials are never mixed on health checks
-or failovers. Magnum swaps call EPGenius like Strong 8K, then point /watch at the
-new DNS.
+or failovers. Strong 8K VPN-allowlist hosts are heartbeated but never auto-picked;
+Choose URL can select them. Magnum swaps call EPGenius like Strong 8K, then point
+/watch at the new DNS.
 """
 
 from __future__ import annotations
@@ -172,6 +173,49 @@ def _public_event(item: dict[str, Any]) -> bool:
     return not (message.startswith("live ") or message.startswith("both "))
 
 
+def _url_is_vpn(cfg: AppConfig, url: str) -> bool:
+    """True when urls.yaml tagged this host as Strong 8K VPN-only."""
+    try:
+        key = normalize_url(url)
+    except ValueError:
+        return False
+    for item in cfg.available_pool:
+        try:
+            if normalize_url(item.url) == key:
+                return bool(item.vpn)
+        except ValueError:
+            continue
+    return False
+
+
+def _standby_keys(
+    cfg: AppConfig,
+    playlist: Playlist,
+    *,
+    auto: bool = False,
+    current: str | None = None,
+) -> list[str]:
+    """Standbys eligible for a pick.
+
+    Auto failover never includes Strong VPN hosts, and never runs when the live
+    DNS is already a VPN host (public ↔ VPN mismatch). Manual Switch stays on
+    the same lane. Choose URL uses the full pool separately.
+    """
+    wanted = normalize_pool(playlist.pool)
+    try:
+        live = current or normalize_url(playlist.current_dns)
+    except ValueError:
+        live = str(playlist.current_dns).strip()
+    live_vpn = _url_is_vpn(cfg, live) and wanted != "magnum"
+    if wanted == "magnum":
+        return [normalize_url(url) for url in cfg.urls_in_pool(wanted)]
+    if auto:
+        if live_vpn:
+            return []
+        return [normalize_url(url) for url in cfg.urls_in_pool(wanted, vpn=False)]
+    return [normalize_url(url) for url in cfg.urls_in_pool(wanted, vpn=live_vpn)]
+
+
 def _pool_for_url(cfg: AppConfig, url: str) -> str:
     """Provider pool for a host: urls.yaml tag, else the playlist that currently lives there."""
     try:
@@ -221,15 +265,18 @@ def _url_view(
     *,
     frequent_threshold: int = 3,
     pool: str = DEFAULT_POOL,
+    vpn: bool = False,
 ) -> dict[str, Any]:
     proxied, any_cf = _cloudflare_flag(result)
     down_events = len(stats.down_at)
     tagged = normalize_pool(pool)
+    vpn_lane = bool(vpn) and tagged != "magnum"
     return {
         "url": url,
         "role": role,
         "pool": tagged,
-        "pool_label": pool_label(tagged),
+        "pool_label": "Strong 8K VPN" if vpn_lane else pool_label(tagged),
+        "vpn": vpn_lane,
         "healthy": bool(result.healthy) if result else False,
         "dns_ok": bool(result.dns_ok) if result else False,
         "tcp_ok": bool(result.tcp_ok) if result else False,
@@ -369,28 +416,32 @@ class Monitor:
 
         live_keys = [normalize_url(item.current_dns) for item in cfg.playlists]
         available_keys = [normalize_url(url) for url in cfg.available_urls]
-        grouped: dict[str, list[str]] = {}
-        claimed: dict[str, str] = {}
+        grouped: dict[tuple[str, bool], list[str]] = {}
+        claimed: dict[str, tuple[str, bool]] = {}
         for playlist in cfg.playlists:
             key = normalize_url(playlist.current_dns)
             pool = normalize_pool(playlist.pool)
-            grouped.setdefault(pool, [])
+            vpn = _url_is_vpn(cfg, key)
+            lane = (pool, vpn)
+            grouped.setdefault(lane, [])
             if key not in claimed:
-                claimed[key] = pool
-                grouped[pool].append(key)
+                claimed[key] = lane
+                grouped[lane].append(key)
         for item in cfg.available_pool:
             key = normalize_url(item.url)
             pool = normalize_pool(item.pool)
-            grouped.setdefault(pool, [])
+            vpn = bool(item.vpn) and pool != "magnum"
+            lane = (pool, vpn)
+            grouped.setdefault(lane, [])
             if key not in claimed:
-                claimed[key] = pool
-                grouped[pool].append(key)
-            elif claimed[key] != pool:
+                claimed[key] = lane
+                grouped[lane].append(key)
+            elif claimed[key] != lane:
                 logger.warning(
                     "URL %s is tagged %s and %s; health-checking as %s",
                     key,
                     claimed[key],
-                    pool,
+                    lane,
                     claimed[key],
                 )
         magnum_busy = False
@@ -406,20 +457,22 @@ class Monitor:
             )
 
         results: dict[str, HealthResult] = {}
-        for pool, urls in grouped.items():
+        for (pool, vpn), urls in grouped.items():
             creds = [
                 (item.username, item.password)
                 for item in cfg.playlists
                 if normalize_pool(item.pool) == pool and item.username and item.password
             ]
-            skip_stream = magnum_busy and pool == "magnum"
+            magnum = pool == "magnum"
+            skip_stream = magnum_busy and magnum
             batch = await check_urls(
                 urls,
                 settings,
                 creds or None,
                 skip_stream=skip_stream,
-                via_vpn=(pool == "magnum"),
-                require_mpegts=(pool == "magnum"),
+                via_vpn=magnum or vpn,
+                require_mpegts=magnum,
+                xtream_via_vpn=vpn and not magnum,
             )
             results.update(batch)
 
@@ -537,9 +590,13 @@ class Monitor:
             ]
             if not affected:
                 continue
-            pool_keys = [
-                normalize_url(url) for url in cfg.urls_in_pool(affected[0].pool)
-            ]
+            if _url_is_vpn(cfg, live_url):
+                logger.info(
+                    "Skipping auto failover for VPN live URL %s (Choose URL only)",
+                    live_url,
+                )
+                continue
+            pool_keys = _standby_keys(cfg, affected[0], auto=True, current=live_url)
             candidate = self._pick_candidate(
                 pool_keys,
                 live_url,
@@ -629,6 +686,7 @@ class Monitor:
                         affected[0],
                         preferred=plan.candidate,
                         allow_fallback=True,
+                        auto=True,
                     )
                 if not chosen:
                     logger.warning("No healthy standby for failed live URL %s", plan.failed_url)
@@ -738,7 +796,7 @@ class Monitor:
         if not self._last_results:
             return None
         current = normalize_url(playlist.current_dns)
-        pool_keys = [normalize_url(url) for url in cfg.urls_in_pool(playlist.pool)]
+        pool_keys = _standby_keys(cfg, playlist, auto=False, current=current)
         return self._pick_candidate(
             pool_keys,
             current,
@@ -762,12 +820,14 @@ class Monitor:
         """Fresh DNS + TCP + MPEG-TS of a swap target. Updates the in-memory snapshot."""
         creds = self._pool_credentials(cfg, playlist.pool)
         magnum = normalize_pool(playlist.pool) == "magnum"
+        vpn = _url_is_vpn(cfg, url) and not magnum
         result = await check_url(
             url,
             cfg.settings,
             creds or None,
-            via_vpn=magnum,
+            via_vpn=magnum or vpn,
             require_mpegts=magnum,
+            xtream_via_vpn=vpn,
         )
         if cfg.settings.stream_check_enabled and result.healthy and result.stream_ok is not True:
             result.healthy = False
@@ -801,15 +861,18 @@ class Monitor:
         *,
         preferred: str | None = None,
         allow_fallback: bool = True,
+        auto: bool = False,
     ) -> tuple[str | None, str | None]:
         """Re-probe the chosen host before EPGenius.
 
         Auto / Switch fall through to the next ranked standby if it fails.
         Choose URL does not. Returns (url, None) or (None, last fail reason).
+        Auto fallback stays on public Strong 8K hosts. Switch stays on the
+        current lane (public or VPN).
         """
         skipped: set[str] = set()
         current = normalize_url(playlist.current_dns)
-        pool_keys = [normalize_url(url) for url in cfg.urls_in_pool(playlist.pool)]
+        pool_keys = _standby_keys(cfg, playlist, auto=auto, current=current)
         min_successes = cfg.settings.min_consecutive_successes_for_swap
         frequent_threshold = max(2, int(cfg.settings.frequent_failure_down_events))
         next_url = preferred
@@ -1138,6 +1201,7 @@ class Monitor:
                     names_by_url.get(url, []),
                     frequent_threshold=threshold,
                     pool=_pool_for_url(cfg, url),
+                    vpn=_url_is_vpn(cfg, url),
                 )
             )
         available_rows = []
@@ -1152,6 +1216,7 @@ class Monitor:
                     names_by_url.get(key, []),
                     frequent_threshold=threshold,
                     pool=item.pool,
+                    vpn=bool(item.vpn),
                 )
             )
 
@@ -1163,6 +1228,7 @@ class Monitor:
             dns_key = normalize_url(playlist.current_dns)
             result = results.get(dns_key)
             proxied, any_cf = _cloudflare_flag(result)
+            current_vpn = _url_is_vpn(cfg, dns_key) and normalize_pool(playlist.pool) != "magnum"
             revert_dns = None
             if playlist.manual_from_dns:
                 try:
@@ -1183,7 +1249,8 @@ class Monitor:
                     "cloudflare": any_cf,
                     "failover": bool(playlist.failover),
                     "pool": normalize_pool(playlist.pool),
-                    "pool_label": pool_label(playlist.pool),
+                    "pool_label": "Strong 8K VPN" if current_vpn else pool_label(playlist.pool),
+                    "vpn": current_vpn,
                     "next_standby": self._candidate_for(cfg, playlist),
                     "revert_dns": revert_dns,
                 }

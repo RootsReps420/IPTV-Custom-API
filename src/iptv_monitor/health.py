@@ -187,14 +187,16 @@ async def check_url(
     skip_stream: bool = False,
     via_vpn: bool = False,
     require_mpegts: bool = True,
+    xtream_via_vpn: bool = False,
 ) -> HealthResult:
     """Run enabled checks in order. First failure becomes fail_reason; later checks are skipped.
 
     Nameserver lookup runs in parallel and never fails the URL.
     Magnum (via_vpn) resolves DNS through Surfshark. TCP, HTTP, and MPEG-TS
     stay on the public NIC — Magnum rejects live stream URLs from the VPN.
-    Strong 8K is NIC-only. Magnum requires a real MPEG-TS pull; Strong 8K is
-    up once Xtream player_api accepts an account (VPS TS pulls are often blocked).
+    Strong 8K public hosts are NIC-only. Strong 8K VPN-allowlist hosts send
+    player_api through the VPN (xtream_via_vpn). Magnum requires a real MPEG-TS
+    pull; Strong 8K is up once Xtream player_api accepts an account.
     """
     try:
         url, host, port = parse_endpoint(raw_url)
@@ -234,11 +236,13 @@ async def check_url(
         if fail_reason is not None:
             tcp_ok = False
         elif settings.tcp_check_enabled:
+            tcp_bind = bind_ip() if xtream_via_vpn else ""
             tcp_ok, tcp_reason, tcp_detail = await _check_tcp(
                 resolved_ips,
                 host,
                 port,
                 settings.tcp_timeout_seconds,
+                local_ip=tcp_bind or None,
             )
             if not tcp_ok:
                 fail_reason = tcp_reason
@@ -265,7 +269,7 @@ async def check_url(
                 credentials,
                 settings.stream_timeout_seconds,
                 settings.allow_insecure_tls,
-                via_vpn=False,
+                via_vpn=xtream_via_vpn,
                 require_mpegts=require_mpegts,
             )
             if stream_ok is False:
@@ -313,6 +317,7 @@ async def check_urls(
     skip_stream: bool = False,
     via_vpn: bool = False,
     require_mpegts: bool = True,
+    xtream_via_vpn: bool = False,
 ) -> dict[str, HealthResult]:
     """Probe unique URLs in parallel. Keyed by normalised URL."""
     unique: list[str] = []
@@ -335,6 +340,7 @@ async def check_urls(
                 skip_stream=skip_stream,
                 via_vpn=via_vpn,
                 require_mpegts=require_mpegts,
+                xtream_via_vpn=xtream_via_vpn,
             )
             for url in unique
         ),

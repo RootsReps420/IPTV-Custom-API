@@ -135,6 +135,7 @@ Standby URLs and playlists are tagged with a **pool**. Default is `strong8k`. Ma
 - Health checks use only credentials from playlists in that pool.
 - Failover, Switch, and Choose URL only move a playlist onto a URL in the **same** pool.
 - The two providers never share logins or swap targets.
+- Strong 8K VPN-allowlist hosts live under `vpn:` in `urls.yaml` (or `vpn: true` on a row). They are heartbeated through Surfshark. Auto failover never picks them, and it will not move a playlist that is already on a VPN host onto a public host. Switch stays on the current lane. Choose URL can pick a VPN host when the player is on a VPN.
 
 ---
 
@@ -145,7 +146,7 @@ Standby URLs and playlists are tagged with a **pool**. Default is `strong8k`. Ma
 When a **live** host is down:
 
 - Failures **1 and 2**: wait. Discord “down” on the first healthy→down edge.
-- Failure **3** (~30s at a 10s interval): pick a standby that is healthy **this cycle**, same pool, not the failed URL.
+- Failure **3** (~30s at a 10s interval): pick a standby that is healthy **this cycle**, same pool, not the failed URL, and never a Strong 8K VPN host. If the live DNS is already a VPN host, auto does nothing.
 
 Pick order:
 
@@ -243,7 +244,7 @@ Do not put the status webhook in the swaps channel.
 |------|---------|--------|
 | `.env` | **No** | EPGenius key, Discord webhooks. Copy from `.env.example`. |
 | `config/playlists.yaml` | **No** | Accounts, `current_dns` (rewritten on swap). |
-| `config/urls.yaml` | **No** | Standby pool. Magnum rows need `pool: magnum`. |
+| `config/urls.yaml` | **No** | Standby pool. Magnum rows need `pool: magnum`. Strong 8K VPN hosts go under `vpn:`. |
 | `config/player.yaml` | **No** | Watch portal + optional live M3U. |
 | `config/watch_users.yaml` | **No** | Watch site logins (hashes only). |
 | `config/settings.yaml` | Yes | Intervals, checks, dashboard bind. Production must keep `dashboard_host: 127.0.0.1`. |
