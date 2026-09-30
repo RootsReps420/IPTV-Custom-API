@@ -112,19 +112,21 @@ The stream probe (from the machine running the monitor):
 3. Reads about three MPEG-TS packets from `/live/{user}/{pass}/{id}.ts` and hangs up.
 4. Ignores placeholder `black.ts` redirects.
 
-So “mpeg-ts ok” means: **this account authenticated on this hostname, and one live id returned a few packets within 10 seconds, from the VPS.** It is not a guarantee that every channel will play on every ISP. That is why swaps **re-probe the chosen host immediately before EPGenius**.
+So “mpeg-ts ok” (Magnum) means: **this account authenticated on this hostname, and one live id returned a few packets within 10 seconds, from the VPS.** Strong 8K does not require that — datacentre MPEG-TS and even `player_api.php` are often blocked while home players work.
 
 | `fail_reason` | Meaning |
 |---------------|---------|
 | `dns_nxdomain` / `dns_timeout` / `dns_no_records` | Name did not resolve in time |
 | `tcp_timeout` / `tcp_refused` | Port closed or unreachable |
-| `stream_no_api` | `player_api.php` returned 404 |
-| `stream_blocked` | 401/403, Cloudflare challenge, or non-JSON HTML |
-| `stream_452` | Panel 452/453/456/464 — blocked, geo, or DNS-locked |
-| `stream_auth` | JSON came back but Xtream `auth` was not 1 |
-| `stream_no_mpegts` | Logged in, but the live path was not MPEG-TS |
-| `stream_timeout` / `stream_error` | Network timeout or request error |
-| `stream_not_verified` | Pre-swap recheck: DNS/TCP passed but MPEG-TS did not |
+| `stream_no_api` | Magnum: `player_api.php` returned 404 from this VPS |
+| `stream_blocked` | Magnum: 401/403, Cloudflare challenge, or non-JSON HTML |
+| `stream_452` | Panel 452/453/456/464 — blocked, geo, or DNS-locked (real down for players) |
+| `stream_auth` | JSON came back but Xtream `auth` was not 1 (wrong panel / expired) |
+| `stream_no_mpegts` | Magnum logged in, but the live path was not MPEG-TS |
+| `stream_timeout` / `stream_error` | Network timeout or request error (Magnum down; Strong not) |
+| `stream_not_verified` | Magnum pre-swap recheck: DNS/TCP passed but MPEG-TS did not |
+
+Strong 8K cards stay **up** when DNS and TCP pass even if Xtream is `vps-blind` (404/challenge from this box). They still go **down** for DNS/TCP failure, `stream_452`, or `stream_auth`.
 
 ---
 

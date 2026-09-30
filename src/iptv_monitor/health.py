@@ -196,7 +196,9 @@ async def check_url(
     stay on the public NIC — Magnum rejects live stream URLs from the VPN.
     Strong 8K public hosts are NIC-only. Strong 8K VPN-allowlist hosts send
     player_api through the VPN (xtream_via_vpn). Magnum requires a real MPEG-TS
-    pull; Strong 8K is up once Xtream player_api accepts an account.
+    pull. Strong 8K is up when DNS and TCP pass, unless the panel explicitly
+    rejects the host (452) or Xtream JSON says this account is not authorised.
+    A player_api 404/challenge from this VPS is not a Strong down.
     """
     try:
         url, host, port = parse_endpoint(raw_url)
@@ -274,6 +276,8 @@ async def check_url(
             )
             if stream_ok is False:
                 fail_reason = stream_reason
+                error_detail = stream_detail
+            elif stream_ok is None and stream_detail:
                 error_detail = stream_detail
     finally:
         # Always reap the NS task so a later exception does not leak it.

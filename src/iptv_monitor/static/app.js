@@ -209,10 +209,11 @@ function secondsUntilNext(iso, interval) {
   return Math.max(0, Math.ceil((due - Date.now()) / 1000));
 }
 
-function flag(label, ok) {
-  // stream_ok is null when the MPEG-TS check was skipped (no creds, or an earlier check failed).
+function flag(label, ok, item) {
+  // stream_ok is null when the check was skipped, or Strong 8K is not visible from the VPS.
   if (ok === null || ok === undefined) {
-    return `<span class="flag">${label} skip</span>`;
+    const vpsBlind = Boolean(item && item.healthy && label === "xtream");
+    return `<span class="flag">${label} ${vpsBlind ? "vps-blind" : "skip"}</span>`;
   }
   const cls = ok ? "ok" : "bad";
   const value = ok ? "ok" : "fail";
@@ -301,7 +302,7 @@ function card(item) {
       <div class="flags">
         ${flag("dns", item.dns_ok)}
         ${flag("tcp", item.tcp_ok)}
-        ${flag(tsLabel, item.stream_ok)}
+        ${flag(tsLabel, item.stream_ok, item)}
         ${reason}
         ${playlists}
       </div>

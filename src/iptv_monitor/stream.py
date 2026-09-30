@@ -4,8 +4,9 @@ Multicast UDP cannot be aimed at these portal hostnames. Players request
   GET {dns}/live/{user}/{pass}/{stream_id}.ts
 and receive MPEG-TS over HTTP (content-type video/mp2t, packets start with 0x47).
 
-We authenticate with player_api.php first, then read a few hundred bytes of a
-live stream and stop. Failures here count toward failover.
+We authenticate with player_api.php first, then (Magnum only) read a few hundred
+bytes of a live stream and stop. Failures here count toward failover except
+Strong 8K VPS-blind results (404/CF/401 from this datacentre).
 """
 
 from __future__ import annotations
@@ -32,6 +33,19 @@ _LAST_GOOD_ID: dict[str, int] = {}
 _PANEL_DENY_STATUSES = {452, 453, 456, 464}
 _PLACEHOLDER_MARKERS = ("black.ts", "/video/black")
 _STREAM_BLOCK_MARKERS = ("cloudflare-terms-of-service-abuse",)
+_API_PATHS = ("/player_api.php", "/panel_api.php")
+_ALT_UA = "Lavf/60.16.100"
+# Strong 8K: the VPS often cannot see Xtream (CF 404/challenge/401) while TVs still play.
+# These are not downs. Magnum still treats them as down because /watch is this box.
+STRONG_INCONCLUSIVE = frozenset(
+    {
+        "stream_no_api",
+        "stream_unverified",
+        "stream_blocked",
+        "stream_timeout",
+        "stream_error",
+    }
+)
 
 Credentials = list[tuple[str, str]]
 
@@ -78,6 +92,15 @@ def _deny_status(hops: list[int]) -> int | None:
         if status in _PANEL_DENY_STATUSES:
             return status
     return None
+
+
+def _hops(response: httpx.Response) -> list[int]:
+    return [item.status_code for item in response.history] + [response.status_code]
+
+
+def _is_challenge(text: str) -> bool:
+    low = text.lower()
+    return "<html" in low and ("just a moment" in low or "challenge-platform" in low)
 
 
 async def _read_prefix(client: httpx.AsyncClient, url: str, nbytes: int) -> tuple[int, str, bytes, str, list[int]]:
@@ -198,6 +221,73 @@ async def _probe_stream_ids(
     return False, last_detail
 
 
+async def _get_php_is_m3u(
+    client: httpx.AsyncClient,
+    base: str,
+    username: str,
+    password: str,
+) -> tuple[bool | None, str | None, str | None]:
+    """True if get.php looks like an Xtream M3U. None = not visible. False = panel lock."""
+    url = f"{base}/get.php"
+    params = {
+        "username": username,
+        "password": password,
+        "type": "m3u_plus",
+        "output": "ts",
+    }
+    try:
+        async with client.stream("GET", url, params=params, headers={"Connection": "close"}) as response:
+            hops = _hops(response)
+            denied = _deny_status(hops)
+            if denied is not None:
+                return False, "stream_452", f"get.php HTTP {denied}"
+            chunks = b""
+            async for chunk in response.aiter_bytes():
+                chunks += chunk
+                if len(chunks) >= 512:
+                    break
+            status = response.status_code
+    except httpx.TimeoutException:
+        return None, "stream_timeout", "get.php"
+    except httpx.RequestError as exc:
+        return None, "stream_error", _redact(str(exc), [username, password])[:180]
+
+    preview = chunks.decode("utf-8", errors="replace")
+    if "#EXTM3U" in preview or "#EXTINF" in preview:
+        return True, None, None
+    if status in _PANEL_DENY_STATUSES:
+        return False, "stream_452", f"get.php HTTP {status}"
+    return None, "stream_unverified", f"get.php HTTP {status}"
+
+
+async def _player_api_payload(
+    client: httpx.AsyncClient,
+    url: str,
+    username: str,
+    password: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, object | None, str, list[int], str | None]:
+    """GET an Xtream API path. Returns status, json-or-None, text prefix, hops, network-fail."""
+    try:
+        response = await client.get(
+            url,
+            params={"username": username, "password": password},
+            headers=headers,
+        )
+    except httpx.TimeoutException:
+        return 0, None, "", [], "stream_timeout"
+    except httpx.RequestError as exc:
+        return 0, None, _redact(str(exc), [username, password])[:180], [], "stream_error"
+
+    text = response.text[:800]
+    try:
+        payload: object | None = response.json()
+    except Exception:
+        payload = None
+    return response.status_code, payload, text, _hops(response), None
+
+
 async def _try_credentials(
     client: httpx.AsyncClient,
     base: str,
@@ -208,41 +298,83 @@ async def _try_credentials(
 ) -> tuple[bool | None, str | None, str | None]:
     """One account against one portal.
 
-    True = portal is usable (MPEG-TS, or player_api when require_mpegts is false).
-    False = this host is blocked / broken (counts as down).
-    None = this account is not on this panel (try the next account).
+    True = portal is usable (MPEG-TS, or a confirmed Xtream login for Strong 8K).
+    False = host is actually unusable (panel 452, Magnum stream fail).
+    None = try the next account, or VPS-blind for Strong 8K.
     """
-    api = f"{base}/player_api.php"
-    try:
-        response = await client.get(api, params={"username": username, "password": password})
-    except httpx.TimeoutException:
-        return False, "stream_timeout", "player_api"
-    except httpx.RequestError as exc:
-        return False, "stream_error", _redact(str(exc), [username, password])[:180]
+    last_blind: tuple[str, str] = ("stream_unverified", "no xtream from vps")
+    api_url = f"{base}/player_api.php"
+    found_api = False
+    for path in _API_PATHS:
+        url = f"{base}{path}"
+        status, payload, text, hops, net_fail = await _player_api_payload(
+            client, url, username, password
+        )
+        if net_fail:
+            last_blind = (net_fail, text or path)
+            if require_mpegts:
+                return False, net_fail, text or path
+            continue
+        denied = _deny_status(hops) or (status if status in _PANEL_DENY_STATUSES else None)
+        if denied is not None:
+            return False, "stream_452", f"{path} HTTP {denied}"
+        if _is_challenge(text):
+            alt_status, alt_payload, alt_text, alt_hops, alt_net = await _player_api_payload(
+                client,
+                url,
+                username,
+                password,
+                headers={"User-Agent": _ALT_UA, "Accept": "application/json"},
+            )
+            if not alt_net:
+                status, payload, text, hops = alt_status, alt_payload, alt_text, alt_hops
+                denied = _deny_status(hops) or (
+                    status if status in _PANEL_DENY_STATUSES else None
+                )
+                if denied is not None:
+                    return False, "stream_452", f"{path} HTTP {denied}"
+            if _is_challenge(text):
+                last_blind = ("stream_blocked", "cloudflare-challenge")
+                if require_mpegts:
+                    return False, "stream_blocked", "cloudflare-challenge"
+                continue
+        if status in {401, 403}:
+            last_blind = ("stream_blocked", f"{path} HTTP {status}")
+            if require_mpegts:
+                return False, "stream_blocked", f"{path} HTTP {status}"
+            continue
+        if status == 404 or payload is None:
+            last_blind = (
+                "stream_no_api" if status == 404 else "stream_blocked",
+                f"{path} HTTP {status}",
+            )
+            if require_mpegts and status != 404:
+                return False, "stream_blocked", f"{path} HTTP {status}"
+            continue
+        if not _auth_ok(payload):
+            return None, "stream_auth", "xtream auth failed"
+        api_url = url
+        found_api = True
+        break
 
-    if response.status_code in {401, 403}:
-        return False, "stream_blocked", f"player_api HTTP {response.status_code}"
-    if response.status_code in _PANEL_DENY_STATUSES:
-        return False, "stream_452", f"player_api HTTP {response.status_code}"
-    if response.status_code == 404:
-        return None, "stream_no_api", "player_api HTTP 404"
-    ctype = (response.headers.get("content-type") or "").split(";")[0]
-    text = response.text[:500].lower()
-    if "<html" in text and ("just a moment" in text or "challenge-platform" in text):
-        return False, "stream_blocked", "cloudflare-challenge"
-    try:
-        payload = response.json()
-    except Exception:
-        return False, "stream_blocked", ctype or f"HTTP {response.status_code}"
-    if not _auth_ok(payload):
-        return None, "stream_auth", "xtream auth failed"
+    if not found_api:
+        m3u_ok, m3u_reason, m3u_detail = await _get_php_is_m3u(
+            client, base, username, password
+        )
+        if m3u_ok is True:
+            if not require_mpegts:
+                return True, None, None
+        elif m3u_ok is False:
+            return False, m3u_reason, m3u_detail
+        else:
+            last_blind = (m3u_reason or last_blind[0], m3u_detail or last_blind[1])
+        if require_mpegts:
+            return False, last_blind[0], last_blind[1]
+        return None, last_blind[0], last_blind[1]
 
-    # Strong 8K: VPS MPEG-TS pulls are often 513/HTML from Cloudflare even when
-    # home players work. player_api auth is the panel-alive signal for that pool.
     if not require_mpegts:
         return True, None, None
 
-    # Cheap guesses first (last working id, then stream 1) so we skip the full channel list.
     cheap: list[int] = []
     last_id = _LAST_GOOD_ID.get(base)
     if last_id is not None:
@@ -258,7 +390,7 @@ async def _try_credentials(
     if detail == "cloudflare-stream-block":
         return False, "stream_blocked", detail
 
-    listed = await _stream_ids(client, api, username, password, f"{base}|{username}")
+    listed = await _stream_ids(client, api_url, username, password, f"{base}|{username}")
     remaining = [item for item in listed if item not in set(cheap)]
     if remaining:
         ok, detail = await _probe_stream_ids(
@@ -285,12 +417,12 @@ async def check_xtream_mpegts(
     """Probe a portal with each playlist account.
 
     Magnum (require_mpegts): DNS/TCP/MPEG-TS from the VPS — /watch is this box.
-    Strong 8K: player_api auth is enough. A datacentre MPEG-TS pull is often
-    blocked (HTTP 513 HTML) while home players still work.
+    Strong 8K: confirmed Xtream login or M3U is up. 404/CF/401 from this
+    datacentre is not a down — home players often still work. Panel 452 and
+    JSON auth-fail still count as down.
 
-    Returns (ok, fail_reason, detail). ok is None only when we had no credentials.
-    If every account 404s / fails auth, we still mark the URL down so it is not a swap target.
-    Magnum MPEG-TS always uses the public NIC. Magnum live URLs 401 from Surfshark.
+    Returns (ok, fail_reason, detail). ok is None when we had no credentials,
+    or when Strong 8K is VPS-blind (caller must not treat that as down).
     """
     if not credentials:
         return None, None, None
@@ -320,5 +452,7 @@ async def check_xtream_mpegts(
     if last_fail:
         return False, last_fail[0], last_fail[1]
     if last_skip[0]:
+        if not require_mpegts and last_skip[0] in STRONG_INCONCLUSIVE:
+            return None, last_skip[0], last_skip[1]
         return False, last_skip[0], last_skip[1]
     return None, None, None

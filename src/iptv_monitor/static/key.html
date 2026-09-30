@@ -46,9 +46,13 @@
         <h2>UP</h2>
       </div>
       <p>
-        The portal passed the latest check cycle (every 10 seconds by default). That means DNS resolved,
-        TCP connected to the portal port, and a short HTTP MPEG-TS pull succeeded — the same kind of
-        stream request an IPTV player makes.
+        The portal passed the latest check cycle (every 10 seconds by default).
+        DNS resolved and TCP connected to the portal port. Magnum also needs a
+        short HTTP MPEG-TS pull from this VPS (/watch plays from here). Strong 8K
+        does not: a datacentre often gets HTTP 404/challenge on
+        <code>player_api.php</code> while TVs still play. Those cards stay
+        <strong>UP</strong> with <code>xtream vps-blind</code>. If the VPS
+        <em>can</em> log in to Xtream, the xtream flag is ok.
       </p>
       <p>
         <strong>Use it.</strong> A card marked UP is currently working for playback.
@@ -63,17 +67,18 @@
         <h2>DOWN</h2>
       </div>
       <p>
-        The portal failed the latest check cycle. One of DNS, TCP, or the panel
-        check did not succeed. The red <code>dns</code> / <code>tcp</code> /
+        The portal failed the latest check cycle. DNS or TCP failed, or the panel
+        explicitly rejected the host. The red <code>dns</code> / <code>tcp</code> /
         <code>mpeg-ts</code> (Magnum) or <code>xtream</code> (Strong 8K) flags show
         which step broke; <code>reason</code> is the specific code (for example
         <code>dns_nxdomain</code>,
-        <code>tcp_timeout</code>, <code>stream_blocked</code>, <code>stream_452</code>,
-        <code>stream_no_api</code>).
+        <code>tcp_timeout</code>, <code>stream_452</code>,
+        <code>stream_auth</code>).
         Magnum must yield a real MPEG-TS pull from this VPS because /watch plays
-        from here. Strong 8K is marked up when DNS, TCP, and Xtream
-        <code>player_api</code> accept an account — a live TS pull from a datacentre
-        IP is often HTTP 513/HTML while home players still work.
+        from here. Strong 8K is marked down for DNS/TCP failure, panel codes
+        452/453/456/464 (blocked / DNS-locked), or Xtream JSON that refuses the
+        account. A <code>player_api</code> 404 or Cloudflare challenge from the
+        VPS is <em>not</em> a Strong down — home players often still work.
         <code>stream_452</code> is the panel telling every channel to fail (blocked / DNS-locked).
         A redirect to <code>black.ts</code> is ignored — that placeholder can look “up” while
         real channels return 452.

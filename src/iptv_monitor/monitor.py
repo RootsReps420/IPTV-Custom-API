@@ -829,7 +829,7 @@ class Monitor:
             require_mpegts=magnum,
             xtream_via_vpn=vpn,
         )
-        if cfg.settings.stream_check_enabled and result.healthy and result.stream_ok is not True:
+        if magnum and cfg.settings.stream_check_enabled and result.healthy and result.stream_ok is not True:
             result.healthy = False
             result.fail_reason = result.fail_reason or "stream_not_verified"
             result.stream_ok = False
