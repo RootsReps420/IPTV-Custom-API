@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=67" />
+  <link rel="stylesheet" href="/static/styles.css?v=71" />
   <link rel="stylesheet" href="/static/dash.css?v=8" />
 </head>
 <body class="watch-body">
@@ -143,6 +143,7 @@
             <span id="live-badge" class="watch-live-badge" hidden>LIVE</span>
             <div id="vod-chrome" class="watch-vod-chrome" hidden>
               <button type="button" id="vod-hit" class="watch-vod-hit" aria-label="Play or pause"></button>
+              <button type="button" id="vod-skip-intro" class="watch-vod-skip" hidden>Skip intro</button>
               <div class="watch-vod-dock">
                 <input
                   id="vod-seek-range"
@@ -156,12 +157,14 @@
                 />
                 <div class="watch-vod-row">
                   <button type="button" id="vod-play" class="watch-vod-btn" aria-label="Pause">❚❚</button>
+                  <button type="button" id="vod-restart" class="watch-vod-btn" title="Start from beginning">↻</button>
                   <button type="button" id="vod-seek-back" class="watch-vod-btn" title="Back 10 seconds">−10</button>
                   <button type="button" id="vod-seek-fwd" class="watch-vod-btn" title="Forward 30 seconds">+30</button>
                   <button type="button" id="vod-ep-prev" class="watch-vod-btn" hidden title="Previous episode">Prev</button>
                   <button type="button" id="vod-ep-next" class="watch-vod-btn" hidden title="Next episode">Next</button>
                   <span id="vod-seek-time" class="watch-vod-time">0:00 / 0:00</span>
                   <span class="watch-vod-grow"></span>
+                  <button type="button" id="vod-rate" class="watch-vod-btn" title="Playback speed">1×</button>
                   <button type="button" id="vod-mute" class="watch-vod-btn" aria-label="Mute">🔊</button>
                   <input id="vod-vol" class="watch-vod-vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" />
                   <button type="button" id="vod-fs" class="watch-vod-btn" title="Full screen" aria-label="Full screen">⛶</button>
@@ -217,6 +220,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=78"></script>
+  <script src="/static/watch.js?v=83"></script>
 </body>
 </html>

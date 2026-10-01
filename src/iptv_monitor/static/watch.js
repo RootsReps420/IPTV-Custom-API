@@ -46,6 +46,9 @@ const vodPlayBtn = document.getElementById("vod-play");
 const vodMuteBtn = document.getElementById("vod-mute");
 const vodVol = document.getElementById("vod-vol");
 const vodFsBtn = document.getElementById("vod-fs");
+const vodRestartBtn = document.getElementById("vod-restart");
+const vodSkipIntro = document.getElementById("vod-skip-intro");
+const vodRateBtn = document.getElementById("vod-rate");
 const vodEpPrev = document.getElementById("vod-ep-prev");
 const vodEpNext = document.getElementById("vod-ep-next");
 const vodUpNext = document.getElementById("vod-upnext");
@@ -87,6 +90,8 @@ const BUFFER_PROFILES = {
 };
 const UP_NEXT_SECS = 8;
 const VOD_VIEW_ALL_CAP = 400;
+const VOD_RATES = [1, 1.25, 1.5, 2, 0.75];
+const SKIP_INTRO_SEC = 90;
 
 function playId() {
   // One UUID per tab so two tabs from the same friend consume two panel slots.
@@ -557,6 +562,7 @@ let vodRuntimeSec = null;
 let vodSeekOffset = 0;
 let vodScrubbing = false;
 let vodSeeking = false;
+let vodHoldActive = false;
 let vodChromeTimer = 0;
 let vodDetailHideTimer = 0;
 let vodWaitTimer = 0;
@@ -987,36 +993,123 @@ function vodClock() {
   return Math.max(0, vodSeekOffset + (Number(video.currentTime) || 0));
 }
 
-function vodBufferedEnd() {
-  if (!video.buffered || !video.buffered.length) {
-    return 0;
-  }
-  try {
-    return video.buffered.end(video.buffered.length - 1);
-  } catch {
-    return 0;
-  }
-}
-
-function vodCanNativeSeek(at) {
-  const local = at - vodSeekOffset;
-  if (!Number.isFinite(local) || local < 0) {
-    return false;
-  }
-  if (hls && video.seekable && video.seekable.length) {
-    for (let i = 0; i < video.seekable.length; i += 1) {
-      if (local >= video.seekable.start(i) && local <= video.seekable.end(i)) {
-        return true;
-      }
-    }
-  }
-  const end = vodBufferedEnd();
-  return end > 0.5 && local <= Math.max(0, end - 0.35);
-}
-
 function waitMs(ms) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
+  });
+}
+
+function setVodHold(on) {
+  vodHoldActive = Boolean(on);
+  if (videoWrap) {
+    videoWrap.classList.toggle("is-vod-hold", vodHoldActive);
+  }
+  if (vodHoldActive) {
+    video.muted = true;
+    video.volume = 0;
+    video.playbackRate = 1;
+  }
+}
+
+function vodDecodedFrames() {
+  const quality = video.getVideoPlaybackQuality?.();
+  if (quality && Number.isFinite(quality.totalVideoFrames)) {
+    return quality.totalVideoFrames;
+  }
+  const webkit = Number(video.webkitDecodedFrameCount);
+  return Number.isFinite(webkit) ? webkit : 0;
+}
+
+function waitForVodSteady(gen, timeoutMs) {
+  // Remuxed fMP4 often has audio ready first. Playing unmute'd lets the audio
+  // clock run while video is still a smear / catch-up dump. Stay dark+silent
+  // until presented fps is movie-rate and the playhead is 1x with buffer.
+  const limit = Math.max(4000, Number(timeoutMs) || 20000);
+  return new Promise((resolve) => {
+    let settled = false;
+    let poll = 0;
+    let rvfc = 0;
+    let presented = 0;
+    let prevPresented = 0;
+    let prevFrames = vodDecodedFrames();
+    let prevMedia = Number(video.currentTime) || 0;
+    let prevAt = 0;
+    let smoothMs = 0;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timer);
+      window.clearInterval(poll);
+      if (rvfc && video.cancelVideoFrameCallback) {
+        try {
+          video.cancelVideoFrameCallback(rvfc);
+        } catch {
+          /* ignore */
+        }
+      }
+      resolve();
+    };
+    const onFrame = () => {
+      presented += 1;
+      if (!settled && video.requestVideoFrameCallback) {
+        rvfc = video.requestVideoFrameCallback(onFrame);
+      }
+    };
+    if (video.requestVideoFrameCallback) {
+      rvfc = video.requestVideoFrameCallback(onFrame);
+    }
+    const timer = window.setTimeout(finish, limit);
+    const tick = () => {
+      if (settled) {
+        return;
+      }
+      if (gen != null && gen !== playGen) {
+        finish();
+        return;
+      }
+      const now = performance.now();
+      if (!prevAt) {
+        prevAt = now;
+        prevFrames = vodDecodedFrames();
+        prevPresented = presented;
+        prevMedia = Number(video.currentTime) || 0;
+        return;
+      }
+      const dt = now - prevAt;
+      if (dt < 280) {
+        return;
+      }
+      const frames = vodDecodedFrames();
+      const media = Number(video.currentTime) || 0;
+      const decodedFps = (frames - prevFrames) / (dt / 1000);
+      const presentedFps = (presented - prevPresented) / (dt / 1000);
+      const clockRate = (media - prevMedia) / (dt / 1000);
+      const fps = presentedFps >= 8 ? presentedFps : decodedFps;
+      prevFrames = frames;
+      prevPresented = presented;
+      prevMedia = media;
+      prevAt = now;
+      const picture = video.videoWidth >= 16 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+      const realtime =
+        picture &&
+        !video.paused &&
+        fps >= 18 &&
+        fps <= 40 &&
+        clockRate >= 0.9 &&
+        clockRate <= 1.12 &&
+        bufferedAhead() >= 0.75;
+      if (realtime) {
+        smoothMs += dt;
+      } else {
+        smoothMs = 0;
+      }
+      if (smoothMs >= 1100) {
+        finish();
+      }
+    };
+    poll = window.setInterval(tick, 100);
   });
 }
 
@@ -1174,6 +1267,57 @@ function paintVodMuteBtn() {
   vodMuteBtn.setAttribute("aria-label", muted ? "Unmute" : "Mute");
 }
 
+function storedVodRate() {
+  const n = Number(localStorage.getItem("watch_vod_rate"));
+  return VOD_RATES.includes(n) ? n : 1;
+}
+
+function paintVodRateBtn() {
+  if (!vodRateBtn) {
+    return;
+  }
+  const rate = Number(video.playbackRate) || storedVodRate();
+  const label = `${rate}×`;
+  vodRateBtn.textContent = label;
+  vodRateBtn.title = `Playback speed ${label}`;
+}
+
+function applyVodRate(rate, persist) {
+  const next = VOD_RATES.includes(rate) ? rate : 1;
+  video.playbackRate = next;
+  try {
+    video.preservesPitch = true;
+  } catch {
+    /* ignore */
+  }
+  if (persist !== false) {
+    localStorage.setItem("watch_vod_rate", String(next));
+  }
+  paintVodRateBtn();
+}
+
+function cycleVodRate() {
+  const cur = Number(video.playbackRate) || storedVodRate();
+  const idx = VOD_RATES.indexOf(cur);
+  applyVodRate(VOD_RATES[(idx + 1) % VOD_RATES.length], true);
+  showVodChrome();
+}
+
+function paintSkipIntro() {
+  if (!vodSkipIntro) {
+    return;
+  }
+  const length = vodLength();
+  const pos = vodClock();
+  const show =
+    isVodPlay() &&
+    vodUsesOverlay() &&
+    length >= 10 * 60 &&
+    pos < 6 * 60 &&
+    pos + SKIP_INTRO_SEC < length - 30;
+  vodSkipIntro.hidden = !show;
+}
+
 function showVodChrome() {
   if (!vodChrome || vodChrome.hidden) {
     return;
@@ -1213,7 +1357,7 @@ function setPlayerChrome() {
   if (videoWrap) {
     videoWrap.classList.toggle("is-vod-idle", false);
   }
-  if (overlay) {
+  if (overlay && !vodHoldActive) {
     const stored = Number(localStorage.getItem("watch_volume"));
     if (Number.isFinite(stored) && stored >= 0 && stored <= 1) {
       video.volume = stored;
@@ -1225,6 +1369,7 @@ function setPlayerChrome() {
     paintVodPlayBtn();
     paintVodMuteBtn();
     paintEpisodeButtons();
+    paintVodRateBtn();
     showVodChrome();
   }
 }
@@ -1247,6 +1392,9 @@ function toggleVodPlay() {
 }
 
 function toggleVodMute() {
+  if (vodHoldActive) {
+    return;
+  }
   video.muted = !video.muted;
   if (!video.muted && video.volume === 0) {
     video.volume = 0.5;
@@ -1261,17 +1409,53 @@ function toggleVodMute() {
   showVodChrome();
 }
 
-function toggleVodFs() {
-  const node = videoWrap || video;
-  if (document.fullscreenElement) {
-    document.exitFullscreen?.().catch(() => {});
-    return;
+function fullscreenNode() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function syncVodFsClass() {
+  const fs = fullscreenNode();
+  const on = Boolean(fs && (fs === videoWrap || fs === video || (videoWrap && videoWrap.contains(fs))));
+  if (videoWrap) {
+    videoWrap.classList.toggle("is-fs", on);
+  }
+  if (vodFsBtn) {
+    vodFsBtn.setAttribute("aria-label", on ? "Exit full screen" : "Full screen");
+    vodFsBtn.title = on ? "Exit full screen" : "Full screen";
+  }
+}
+
+function requestNodeFullscreen(node) {
+  if (!node) {
+    return Promise.reject(new Error("no node"));
   }
   if (node.requestFullscreen) {
-    node.requestFullscreen().catch(() => {});
+    return node.requestFullscreen({ navigationUI: "hide" }).catch(() => node.requestFullscreen());
+  }
+  if (node.webkitRequestFullscreen) {
+    node.webkitRequestFullscreen();
+    return Promise.resolve();
+  }
+  return Promise.reject(new Error("no fullscreen"));
+}
+
+function toggleVodFs() {
+  const node = videoWrap || video;
+  if (fullscreenNode()) {
+    if (document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.webkitExitFullscreen?.();
+    }
     return;
   }
-  video.webkitEnterFullscreen?.();
+  requestNodeFullscreen(node).catch(() => {
+    if (video.webkitEnterFullscreen) {
+      video.webkitEnterFullscreen();
+      return;
+    }
+    requestNodeFullscreen(video).catch(() => {});
+  });
 }
 
 function paintVodSeek(at) {
@@ -1296,6 +1480,7 @@ function paintVodSeek(at) {
     }
   }
   paintVodPlayBtn();
+  paintSkipIntro();
 }
 
 function rangeToVodTime() {
@@ -1308,7 +1493,7 @@ function rangeToVodTime() {
 }
 
 async function seekVod(seconds) {
-  if (state.playingLiveId || vodSeeking) {
+  if (state.playingLiveId) {
     return;
   }
   const length = vodLength();
@@ -1316,18 +1501,9 @@ async function seekVod(seconds) {
     return;
   }
   const target = Math.max(0, Math.min(length - 0.25, Number(seconds) || 0));
-  if (Math.abs(target - vodClock()) < 0.4) {
+  if (Math.abs(target - vodClock()) < 0.4 && !vodSeeking) {
     paintVodSeek(target);
     return;
-  }
-  if (vodCanNativeSeek(target)) {
-    try {
-      video.currentTime = Math.max(0, target - vodSeekOffset);
-      paintVodSeek(target);
-      return;
-    } catch {
-      /* remux restart below */
-    }
   }
   const item = state.playingItem;
   const kind = state.playingKind;
@@ -1341,7 +1517,8 @@ async function seekVod(seconds) {
   destroyPlayers();
   vodSeekOffset = target;
   paintVodSeek(target);
-  await waitMs(400);
+  paintSkipIntro();
+  await waitMs(250);
   if (gen !== playGen) {
     vodSeeking = false;
     return;
@@ -1408,7 +1585,9 @@ function clearVodRuntime() {
   }
   if (videoWrap) {
     videoWrap.classList.remove("is-vod-idle");
+    videoWrap.classList.remove("is-vod-hold");
   }
+  vodHoldActive = false;
 }
 
 function progressPct(start, stop) {
@@ -1977,14 +2156,20 @@ function attachHls(url) {
 }
 
 function playNow() {
-  if (!vodUsesOverlay()) {
+  if (vodHoldActive) {
+    video.muted = true;
+    video.volume = 0;
+    video.playbackRate = 1;
+  } else if (!vodUsesOverlay()) {
     video.muted = false;
     video.defaultMuted = false;
     if (!Number.isFinite(video.volume) || video.volume === 0) {
       video.volume = 1;
     }
   }
-  if (!liveHold && video.playbackRate !== 1) {
+  if (!vodHoldActive && vodUsesOverlay()) {
+    applyVodRate(storedVodRate(), false);
+  } else if (!vodHoldActive && !liveHold && video.playbackRate !== 1) {
     video.playbackRate = 1;
   }
   const p = video.play();
@@ -2031,8 +2216,8 @@ function attachMpegTs(url, gen, live) {
       autoCleanupMinBackwardDuration: live ? 10 : 15,
       lazyLoad: false,
       deferLoadAfterSourceOpen: false,
-      accurateSeek: false,
-      fixAudioTimestampGap: !live,
+      accurateSeek: !live,
+      fixAudioTimestampGap: true,
     }
   );
   if (window.mpegts.Events) {
@@ -2161,7 +2346,13 @@ async function playSources(kind, streamId, extensions, gen) {
         if (kind !== "live") {
           showWatchSpinner(true);
         }
+        const holdAudio = kind !== "live" && vodUsesOverlay();
+        const wasMuted = video.muted;
+        const wasVolume = Number.isFinite(video.volume) ? video.volume : 1;
         try {
+          if (holdAudio) {
+            setVodHold(true);
+          }
           playNow();
           if (kind !== "live") {
             await video.play().catch((error) => {
@@ -2170,8 +2361,18 @@ async function playSources(kind, streamId, extensions, gen) {
               }
               throw error;
             });
+            await waitForVodSteady(gen, 20000);
           }
         } finally {
+          if (holdAudio && (gen == null || gen === playGen)) {
+            setVodHold(false);
+            video.volume = wasVolume;
+            video.muted = wasMuted;
+            applyVodRate(storedVodRate(), false);
+            paintVodMuteBtn();
+          } else if (holdAudio) {
+            setVodHold(false);
+          }
           if (kind !== "live") {
             showWatchSpinner(false);
           }
@@ -2280,6 +2481,7 @@ async function playVod(item) {
   setVodRuntime(parseRuntime(item.duration_secs, { seconds: true }) || parseRuntime(item.duration));
   paintBufferButtons();
   setPlayerChrome();
+  vodSeekOffset = vodResumeSeconds("movie", item.stream_id);
   paintVodSeek();
   if (!vodRuntimeSec && nowNext && !vodUsesOverlay()) {
     nowNext.textContent = "Runtime…";
@@ -2342,6 +2544,7 @@ async function playEpisode(episode, seriesName) {
   );
   paintBufferButtons();
   setPlayerChrome();
+  vodSeekOffset = vodResumeSeconds("series", episode.id);
   paintVodSeek();
   if (!vodRuntimeSec && nowNext && !vodUsesOverlay()) {
     nowNext.textContent = "Runtime…";
@@ -2418,6 +2621,17 @@ function vodItemId(item, kind) {
   return String(kind === "series" ? item.series_id : item.stream_id || "");
 }
 
+function tearDownVodPlayer() {
+  playGen += 1;
+  lastSeenWrite = 0;
+  markVodProgress();
+  setPlayingVod(false);
+  stopPlayback();
+  state.playingKind = "";
+  state.playingItem = null;
+  clearVodRuntime();
+}
+
 function setVodBrowse(on) {
   if (appPanel) {
     appPanel.classList.toggle("is-vod-home", on);
@@ -2426,11 +2640,14 @@ function setVodBrowse(on) {
   state.detailItem = null;
   state.detailKind = "";
   state.seasonId = "";
-  if (!on) {
+  // Catalog tabs must stay on the grid. Re-applying is-playing-vod from
+  // leftover playingKind made Close pop the player back open on Movies/Series.
+  if (appPanel && appPanel.classList.contains("is-playing-vod")) {
+    tearDownVodPlayer();
+    releaseSlot().catch(() => {});
+  } else {
     setPlayingVod(false);
-    return;
   }
-  setPlayingVod(state.playingKind === "movie" || state.playingKind === "series");
 }
 
 function setPlayingVod(on) {
@@ -2544,6 +2761,15 @@ function saveSeen(kind, id, patch) {
   const all = loadSeen();
   const key = `${kind}:${id}`;
   all[key] = { ...(all[key] || {}), ...patch, at: Date.now() };
+  const keys = Object.keys(all);
+  if (keys.length > 120) {
+    keys
+      .sort((a, b) => Number((all[a] && all[a].at) || 0) - Number((all[b] && all[b].at) || 0))
+      .slice(0, keys.length - 100)
+      .forEach((drop) => {
+        delete all[drop];
+      });
+  }
   try {
     localStorage.setItem(seenStoreKey(), JSON.stringify(all));
   } catch {
@@ -2557,23 +2783,211 @@ function markVodProgress() {
   if (!isVodPlay() || !state.playingItem) {
     return;
   }
-  const id = String(state.playingItem.stream_id || "");
+  const item = state.playingItem;
+  const id = String(item.stream_id || item.id || "");
   if (!id) {
     return;
   }
-  const dur = Number(video.duration);
-  const pos = Number(video.currentTime);
-  if (!Number.isFinite(dur) || dur <= 0 || !Number.isFinite(pos)) {
+  const dur = vodLength();
+  const pos = vodClock();
+  if (!Number.isFinite(pos) || pos < 2) {
     return;
   }
-  const watched = pos / dur >= 0.9 || video.ended;
+  const watched = (dur > 0 && pos / dur >= 0.9) || video.ended;
   const now = Date.now();
   if (!watched && now - lastSeenWrite < 4000) {
     return;
   }
   lastSeenWrite = now;
   const kind = state.playingKind === "series" ? "ep" : "movie";
-  saveSeen(kind, id, { pos, dur, watched });
+  saveSeen(kind, id, {
+    pos,
+    dur,
+    watched,
+    title: item.name || item.title || "",
+    poster: vodPoster(item) || item.still || "",
+    seriesName: state.seriesName || "",
+    seriesId: String(state.detailItem?.series_id || item.series_id || ""),
+    season: item.season || "",
+    episode_num: item.episode_num || "",
+    ext: String(item.container_extension || "mp4").replace(/^\./, ""),
+    plot: item.plot || "",
+  });
+}
+
+function vodResumeSeconds(kind, id) {
+  const rec = seenRecord(kind === "series" ? "ep" : "movie", id);
+  if (!rec || rec.watched) {
+    return 0;
+  }
+  const pos = Number(rec.pos);
+  const dur = Number(rec.dur) || 0;
+  if (!Number.isFinite(pos) || pos < 20) {
+    return 0;
+  }
+  if (dur > 0 && pos / dur >= 0.9) {
+    return 0;
+  }
+  return pos;
+}
+
+function seriesPlayTarget() {
+  const queue = state.episodeQueue || state.playingEpisodes || [];
+  if (!queue.length) {
+    return null;
+  }
+  let best = null;
+  queue.forEach((ep) => {
+    const rec = seenRecord("ep", ep.id);
+    if (rec && !rec.watched && Number(rec.pos) > 20) {
+      if (!best || Number(rec.at) > Number(best.at)) {
+        best = { ep, at: rec.at };
+      }
+    }
+  });
+  if (best) {
+    return best.ep;
+  }
+  return queue.find((ep) => !isWatched("ep", ep.id)) || queue[0];
+}
+
+function paintVodDetailPlay() {
+  if (!vodDetailPlay) {
+    return;
+  }
+  const kind = state.detailKind;
+  const item = state.detailItem;
+  if (!item) {
+    vodDetailPlay.textContent = "Play";
+    return;
+  }
+  if (kind === "series") {
+    const ep = seriesPlayTarget();
+    if (!ep) {
+      vodDetailPlay.textContent = "Play";
+      return;
+    }
+    const rec = seenRecord("ep", ep.id);
+    if (rec && !rec.watched && Number(rec.pos) > 20) {
+      vodDetailPlay.textContent = `Resume ${episodeLabel(ep)}`;
+      return;
+    }
+    vodDetailPlay.textContent = `Play ${episodeLabel(ep)}`;
+    return;
+  }
+  const rec = seenRecord("movie", vodItemId(item, "movie"));
+  if (rec && !rec.watched && Number(rec.pos) > 20) {
+    vodDetailPlay.textContent = `Resume ${formatRuntime(rec.pos)}`;
+    return;
+  }
+  vodDetailPlay.textContent = "Play";
+}
+
+function continueRows(tabKind) {
+  const want = tabKind === "series" ? "ep" : "movie";
+  const all = loadSeen();
+  return Object.keys(all)
+    .map((key) => {
+      const split = key.indexOf(":");
+      if (split < 1) {
+        return null;
+      }
+      const kind = key.slice(0, split);
+      const id = key.slice(split + 1);
+      const rec = all[key];
+      if (kind !== want || !rec || rec.watched || !id) {
+        return null;
+      }
+      const pos = Number(rec.pos);
+      const dur = Number(rec.dur) || 0;
+      if (!Number.isFinite(pos) || pos < 20) {
+        return null;
+      }
+      if (dur > 0 && pos / dur >= 0.9) {
+        return null;
+      }
+      const pct = dur > 0 ? Math.max(4, Math.min(96, Math.round((pos / dur) * 100))) : 8;
+      return { kind, id, rec, pos, dur, pct, at: Number(rec.at) || 0 };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 16);
+}
+
+function continueCard(row) {
+  const rec = row.rec || {};
+  const title =
+    row.kind === "ep"
+      ? `${rec.seriesName || "Show"} · ${rec.title || `Episode ${rec.episode_num || row.id}`}`
+      : rec.title || `Title ${row.id}`;
+  const art = rec.poster || "";
+  const img = art
+    ? `<img src="${esc(art)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" />`
+    : `<span class="watch-poster-fallback">${esc((title || "?").slice(0, 1))}</span>`;
+  const attr = row.kind === "ep" ? `data-continue-ep="${esc(row.id)}"` : `data-continue-movie="${esc(row.id)}"`;
+  const sub = formatRuntime(row.pos) + (row.dur ? ` / ${formatRuntime(row.dur)}` : "");
+  return `<button type="button" class="watch-poster" ${attr}><span class="watch-poster-art">${img}<span class="watch-poster-bar" style="--pct:${row.pct}%"><i></i></span></span><span class="watch-poster-copy"><span class="watch-poster-name">${esc(title)}</span><span class="watch-poster-year">${esc(sub)}</span></span></button>`;
+}
+
+function continueWatchingRow(tabKind) {
+  const rows = continueRows(tabKind);
+  if (!rows.length) {
+    return "";
+  }
+  return `<section class="watch-row" data-vod-group="continue">
+    <header class="watch-row-head"><h3>Continue watching</h3></header>
+    <div class="watch-row-frame">
+      <button type="button" class="watch-row-arrow is-prev" data-row-dir="-1" hidden aria-label="Previous">‹</button>
+      <div class="watch-row-scroll">${rows.map(continueCard).join("")}</div>
+      <button type="button" class="watch-row-arrow is-next" data-row-dir="1" hidden aria-label="Next">›</button>
+    </div>
+  </section>`;
+}
+
+async function playContinueMovie(id) {
+  const rec = seenRecord("movie", id) || {};
+  const item = findVodItem("movie", id) || {
+    stream_id: id,
+    name: rec.title || `Title ${id}`,
+    poster: rec.poster || "",
+    plot: rec.plot || "",
+    container_extension: rec.ext || "mp4",
+    duration_secs: rec.dur || "",
+  };
+  await playVod(item);
+}
+
+async function playContinueEpisode(id) {
+  const rec = seenRecord("ep", id) || {};
+  if (rec.seriesId) {
+    try {
+      const detail = await api(`/api/player/series/info?series_id=${encodeURIComponent(rec.seriesId)}`);
+      state.seriesDetail = detail;
+      state.seriesName = rec.seriesName || vodTitle(detail.info) || state.seriesName;
+      state.episodeQueue = flattenEpisodes(detail);
+      state.playingEpisodes = state.episodeQueue;
+      const hit = (state.episodeQueue || []).find((row) => String(row.id) === String(id));
+      if (hit) {
+        await playEpisode(hit, state.seriesName);
+        return;
+      }
+    } catch {
+      /* play the stub below */
+    }
+  }
+  await playEpisode(
+    {
+      id,
+      title: rec.title || "",
+      container_extension: rec.ext || "mp4",
+      plot: rec.plot || "",
+      duration_secs: rec.dur || "",
+      season: rec.season,
+      episode_num: rec.episode_num,
+      still: rec.poster || "",
+    },
+    rec.seriesName || ""
+  );
 }
 
 function formatEpRuntime(duration, secs) {
@@ -2698,6 +3112,7 @@ function paintVodDetail(item, kind) {
     vodDetailBackdrop.style.backgroundImage = bg ? `url("${bg}")` : "";
   }
   paintVodPeople(item);
+  paintVodDetailPlay();
 }
 
 function paintVodPeople(item) {
@@ -2849,27 +3264,32 @@ async function playFromDetail() {
   }
   presentVodPlayer();
   if (kind === "series") {
-    const first = (state.episodeQueue || [])[0];
-    if (!first) {
+    const target = seriesPlayTarget() || (state.episodeQueue || [])[0];
+    if (!target) {
       setPlayingVod(false);
       showVodDetail();
       showBanner("No episodes in this show yet.", "warn");
       return;
     }
-    await playEpisode(first, vodTitle(item));
+    await playEpisode(target, vodTitle(item));
     return;
   }
   await playVod(item);
 }
 
 async function closeVodPlayer() {
-  setPlayingVod(false);
-  stopPlayback();
+  const detail = state.detailItem;
+  const detailKind = state.detailKind || vodBrowseKind();
+  const seriesDetail = state.seriesDetail;
+  tearDownVodPlayer();
   await releaseSlot();
-  if (state.detailItem) {
-    paintVodDetail(state.detailItem, state.detailKind || vodBrowseKind());
-    if (state.detailKind === "series" && state.seriesDetail && vodDetailEps && !vodDetailEps.querySelector(".watch-ep-card, .watch-season-pills")) {
-      renderSeries(state.seriesDetail, vodTitle(state.detailItem));
+  if (detail) {
+    state.detailItem = detail;
+    state.detailKind = detailKind;
+    paintVodDetail(detail, detailKind);
+    if (detailKind === "series" && seriesDetail && vodDetailEps && !vodDetailEps.querySelector(".watch-ep-card, .watch-season-pills")) {
+      state.seriesDetail = seriesDetail;
+      renderSeries(seriesDetail, vodTitle(detail));
     }
     showVodDetail();
   }
@@ -2950,7 +3370,13 @@ function renderVodHome() {
     watchStage.classList.remove("is-guide");
   }
   if (!home) {
-    itemList.innerHTML = `<div class="empty-events">Loading the shelf…</div>`;
+    const kind = state.tab === "series" ? "series" : "movie";
+    const cont = continueWatchingRow(kind);
+    itemList.innerHTML = `<div class="watch-vod-home">${cont}<div class="empty-events">Loading the shelf…</div></div>`;
+    if (cont) {
+      bindVodRowArrows();
+      revealVodImages();
+    }
     return;
   }
   const kind = home.kind === "series" ? "series" : "movie";
@@ -2968,12 +3394,15 @@ function renderVodHome() {
         <p class="watch-hero-kicker">${kicker}${year}</p>
         <h2>${esc(vodTitle(feat))}</h2>
         ${plot ? `<p class="watch-hero-plot">${esc(plot)}</p>` : ""}
-        <button type="button" class="switch-btn" ${attr}="${esc(vodItemId(feat, kind))}">Play</button>
+        <div class="watch-hero-actions">
+          <button type="button" class="switch-btn" ${kind === "series" ? "data-play-series" : "data-play-movie"}="${esc(vodItemId(feat, kind))}">Play</button>
+          <button type="button" class="watch-refresh-btn" ${attr}="${esc(vodItemId(feat, kind))}">More info</button>
+        </div>
       </div>
     </article>`;
   }
   const rows = (home.groups || []).map((group) => vodRowMarkup(group, kind)).join("");
-  itemList.innerHTML = `<div class="watch-vod-home">${heroHtml}${rows || `<div class="empty-events">Nothing in the guide yet.</div>`}</div>`;
+  itemList.innerHTML = `<div class="watch-vod-home">${heroHtml}${continueWatchingRow(kind)}${rows || `<div class="empty-events">Nothing in the guide yet.</div>`}</div>`;
   bindVodRowArrows();
   revealVodImages();
 }
@@ -3291,6 +3720,7 @@ function renderSeries(detail, seriesName, opts) {
   if (!opts?.skipEnrich) {
     enrichSeasonStills(detail, season).catch(() => {});
   }
+  paintVodDetailPlay();
 }
 
 async function enrichSeasonStills(detail, season) {
@@ -3879,6 +4309,38 @@ itemList.addEventListener("click", async (event) => {
     }
     return;
   }
+  const continueMovie = event.target.closest("[data-continue-movie]");
+  if (continueMovie) {
+    playContinueMovie(continueMovie.getAttribute("data-continue-movie") || "").catch((error) => {
+      showBanner(error.message, "bad");
+    });
+    return;
+  }
+  const continueEp = event.target.closest("[data-continue-ep]");
+  if (continueEp) {
+    playContinueEpisode(continueEp.getAttribute("data-continue-ep") || "").catch((error) => {
+      showBanner(error.message, "bad");
+    });
+    return;
+  }
+  const playMovie = event.target.closest("[data-play-movie]");
+  if (playMovie) {
+    const id = playMovie.getAttribute("data-play-movie");
+    const item = findVodItem("movie", id);
+    if (item) {
+      playVod(item).catch((error) => showBanner(error.message, "bad"));
+    }
+    return;
+  }
+  const playSeries = event.target.closest("[data-play-series]");
+  if (playSeries) {
+    const id = playSeries.getAttribute("data-play-series");
+    const item = findVodItem("series", id) || { series_id: id, name: "" };
+    openVodDetail(item, "series")
+      .then(() => playFromDetail())
+      .catch((error) => showBanner(error.message, "bad"));
+    return;
+  }
   const movieOpen = event.target.closest("[data-open-movie], [data-vod]");
   if (movieOpen) {
     const id = movieOpen.getAttribute("data-open-movie") || movieOpen.getAttribute("data-vod");
@@ -4100,6 +4562,25 @@ if (vodSeekFwd) {
     showVodChrome();
   });
 }
+if (vodRestartBtn) {
+  vodRestartBtn.addEventListener("click", () => {
+    seekVod(0).catch(() => {});
+    showVodChrome();
+  });
+}
+if (vodSkipIntro) {
+  vodSkipIntro.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    seekVod(vodClock() + SKIP_INTRO_SEC).catch(() => {});
+    showVodChrome();
+  });
+}
+if (vodRateBtn) {
+  vodRateBtn.addEventListener("click", () => {
+    cycleVodRate();
+  });
+}
 if (vodEpPrev) {
   vodEpPrev.addEventListener("click", () => {
     goAdjacentEpisode(-1).catch(() => {});
@@ -4141,6 +4622,9 @@ if (vodVol) {
   vodVol.addEventListener("input", () => {
     const level = Number(vodVol.value);
     if (!Number.isFinite(level)) {
+      return;
+    }
+    if (vodHoldActive) {
       return;
     }
     video.volume = Math.max(0, Math.min(1, level));
@@ -4196,14 +4680,8 @@ video.addEventListener("pause", () => {
   }
 });
 video.addEventListener("volumechange", paintVodMuteBtn);
-document.addEventListener("fullscreenchange", () => {
-  if (!vodFsBtn) {
-    return;
-  }
-  const on = Boolean(document.fullscreenElement);
-  vodFsBtn.setAttribute("aria-label", on ? "Exit full screen" : "Full screen");
-  vodFsBtn.title = on ? "Exit full screen" : "Full screen";
-});
+document.addEventListener("fullscreenchange", syncVodFsClass);
+document.addEventListener("webkitfullscreenchange", syncVodFsClass);
 document.addEventListener("keydown", (event) => {
   if (!vodUsesOverlay()) {
     return;
@@ -4223,12 +4701,45 @@ document.addEventListener("keydown", (event) => {
     toggleVodMute();
   } else if (event.key === "ArrowRight") {
     event.preventDefault();
-    seekVod(vodClock() + 30).catch(() => {});
+    seekVod(vodClock() + (event.shiftKey ? 10 : 30)).catch(() => {});
     showVodChrome();
   } else if (event.key === "ArrowLeft") {
     event.preventDefault();
-    seekVod(vodClock() - 10).catch(() => {});
+    seekVod(vodClock() - (event.shiftKey ? 5 : 10)).catch(() => {});
     showVodChrome();
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    video.volume = Math.min(1, (Number(video.volume) || 0) + 0.05);
+    video.muted = false;
+    localStorage.setItem("watch_volume", String(video.volume));
+    if (vodVol) {
+      vodVol.value = String(video.volume);
+    }
+    paintVodMuteBtn();
+    showVodChrome();
+  } else if (event.key === "ArrowDown") {
+    event.preventDefault();
+    video.volume = Math.max(0, (Number(video.volume) || 0) - 0.05);
+    video.muted = video.volume === 0;
+    localStorage.setItem("watch_volume", String(video.volume));
+    if (vodVol) {
+      vodVol.value = String(video.muted ? 0 : video.volume);
+    }
+    paintVodMuteBtn();
+    showVodChrome();
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    seekVod(0).catch(() => {});
+    showVodChrome();
+  } else if (event.key === "s" || event.key === "S") {
+    if (vodSkipIntro && !vodSkipIntro.hidden) {
+      event.preventDefault();
+      seekVod(vodClock() + SKIP_INTRO_SEC).catch(() => {});
+      showVodChrome();
+    }
+  } else if (event.key === ">" || event.key === "." || event.key === "<" || event.key === ",") {
+    event.preventDefault();
+    cycleVodRate();
   } else if (event.key === "n" || event.key === "N") {
     event.preventDefault();
     goAdjacentEpisode(1).catch(() => {});
@@ -4244,6 +4755,8 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("pagehide", () => {
+  lastSeenWrite = 0;
+  markVodProgress();
   if (playing) {
     navigator.sendBeacon?.(
       "/api/player/slot/release",

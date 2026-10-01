@@ -98,7 +98,7 @@ A host is healthy when this cycle’s probe returns **no** `fail_reason`. Checks
 
 | Step | Default | Pass if |
 |------|---------|---------|
-| DNS | on (5s) | A/AAAA exists (or the host is already an IP) |
+| DNS | on (5s) | A record exists (or the host is already an IPv4) |
 | TCP | on (5s) | Something accepts a connection on the portal port |
 | HTTP `GET /` | **off** | Xtream homepages lie; leave this off |
 | MPEG-TS | on (10s) | Xtream auth works **and** a short live-TS prefix looks like real MPEG-TS |
@@ -137,7 +137,7 @@ Standby URLs and playlists are tagged with a **pool**. Default is `strong8k`. Ma
 - Health checks use only credentials from playlists in that pool.
 - Failover, Switch, and Choose URL only move a playlist onto a URL in the **same** pool.
 - The two providers never share logins or swap targets.
-- Strong 8K VPN-allowlist hosts live under `vpn:` in `urls.yaml` (or `vpn: true` on a row). They are heartbeated through Surfshark. Auto failover never picks them, and it will not move a playlist that is already on a VPN host onto a public host. Switch stays on the current lane. Choose URL can pick a VPN host when the player is on a VPN.
+- Strong 8K VPN-allowlist hosts live under `vpn:` in `urls.yaml` (or `vpn: true` on a row). Auto failover never picks them, and it will not move a playlist that is already on a VPN host onto a public host. Switch stays on the current lane. Choose URL can pick a VPN host when the player is on a VPN.
 
 ---
 

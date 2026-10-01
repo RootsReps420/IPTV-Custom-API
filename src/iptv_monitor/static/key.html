@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=57" />
-  <link rel="stylesheet" href="/static/dash.css?v=11" />
+  <link rel="stylesheet" href="/static/styles.css?v=58" />
+  <link rel="stylesheet" href="/static/dash.css?v=12" />
 </head>
 <body class="dash">
   <div class="dash-sky" aria-hidden="true">
@@ -206,29 +206,14 @@
 
     <article class="key-card">
       <div class="key-card-top">
-        <span class="pill magnum">vpn</span>
-        <h2>Watch VPN</h2>
-      </div>
-      <p>
-        Owner Playlists shows whether Surfshark WireGuard is up, the city, and a
-        five-stream speed test. Magnum DNS health checks go through the VPN.
-        /watch live/VOD stay on the VPS public IP because Magnum rejects stream
-        URLs from the VPN exit. Strong 8K, Android, SSH, Caddy, and Discord stay
-        on the public address.
-      </p>
-    </article>
-
-    <article class="key-card">
-      <div class="key-card-top">
         <span class="pill vpn-dns">Strong 8K VPN</span>
         <h2>Strong 8K VPN DNS</h2>
       </div>
       <p>
         Strong 8K now rejects VPN clients on the normal public DNS hosts. The
         <code>vpn:</code> list in <code>urls.yaml</code> is a separate allowlist of
-        hosts that work when the player is on a VPN. Those cards have a blue
-        badge and their own tab. Heartbeats resolve DNS and call
-        <code>player_api</code> through Surfshark.
+        hosts that work when the <em>player</em> is on a VPN. Those cards have a blue
+        badge and their own tab. Health checks use the VPS public NIC.
       </p>
       <p>
         <strong>Auto failover never picks a VPN host</strong>, and it will not

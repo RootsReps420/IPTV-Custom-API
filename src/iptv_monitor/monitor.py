@@ -470,9 +470,7 @@ class Monitor:
                 settings,
                 creds or None,
                 skip_stream=skip_stream,
-                via_vpn=magnum or vpn,
                 require_mpegts=magnum,
-                xtream_via_vpn=vpn and not magnum,
             )
             results.update(batch)
 
@@ -820,14 +818,11 @@ class Monitor:
         """Fresh DNS + TCP + MPEG-TS of a swap target. Updates the in-memory snapshot."""
         creds = self._pool_credentials(cfg, playlist.pool)
         magnum = normalize_pool(playlist.pool) == "magnum"
-        vpn = _url_is_vpn(cfg, url) and not magnum
         result = await check_url(
             url,
             cfg.settings,
             creds or None,
-            via_vpn=magnum or vpn,
             require_mpegts=magnum,
-            xtream_via_vpn=vpn,
         )
         if magnum and cfg.settings.stream_check_enabled and result.healthy and result.stream_ok is not True:
             result.healthy = False

@@ -24,7 +24,6 @@ import httpx
 from iptv_monitor.config import Settings
 from iptv_monitor.nameserver import classify_ns_hosts, ip_is_cloudflare, lookup_ns_hosts
 from iptv_monitor.stream import Credentials, check_xtream_mpegts
-from iptv_monitor.vpn import bind_ip
 
 logger = logging.getLogger("iptv_monitor.health")
 
@@ -80,42 +79,42 @@ def _is_ip(host: str) -> bool:
         return False
 
 
-def _prefer_ipv4(ips: list[str]) -> list[str]:
-    v4 = [ip for ip in ips if ":" not in ip]
-    v6 = [ip for ip in ips if ":" in ip]
-    return v4 + v6
+def _ipv4_only(ips: list[str]) -> list[str]:
+    out: list[str] = []
+    for ip in ips:
+        try:
+            if ipaddress.ip_address(ip).version == 4:
+                out.append(ip)
+        except ValueError:
+            continue
+    return out
 
 
-async def _resolve_dns(
-    host: str, timeout: float, *, source: str | None = None
-) -> tuple[bool, list[str], str | None, str | None]:
+async def _resolve_dns(host: str, timeout: float) -> tuple[bool, list[str], str | None, str | None]:
     if _is_ip(host):
-        return True, [host], None, None
+        ips = _ipv4_only([host])
+        if not ips:
+            return False, [], "dns_no_records", "ipv6 ignored"
+        return True, ips, None, None
 
     resolver = dns.asyncresolver.Resolver()
     resolver.lifetime = timeout
     resolver.timeout = timeout
-    if source:
-        resolver.source = source
-        # Query public resolvers through the VPN so Magnum names match /watch, not the DC ISP.
-        resolver.nameservers = ["1.1.1.1", "8.8.8.8"]
     ips: list[str] = []
     try:
-        for rdtype in ("A", "AAAA"):
-            try:
-                answer = await resolver.resolve(host, rdtype)
-                ips.extend(str(item) for item in answer)
-            except dns.resolver.NoAnswer:
-                continue
-            except dns.resolver.NXDOMAIN:
-                return False, [], "dns_nxdomain", None
-            except dns.exception.Timeout:
-                if ips:
-                    continue
-                return False, [], "dns_timeout", None
+        try:
+            answer = await resolver.resolve(host, "A")
+            ips.extend(str(item) for item in answer)
+        except dns.resolver.NoAnswer:
+            pass
+        except dns.resolver.NXDOMAIN:
+            return False, [], "dns_nxdomain", None
+        except dns.exception.Timeout:
+            return False, [], "dns_timeout", None
+        ips = _ipv4_only(ips)
         if not ips:
             return False, [], "dns_no_records", None
-        return True, _prefer_ipv4(ips), None, None
+        return True, ips, None, None
     except dns.exception.Timeout:
         return False, [], "dns_timeout", None
     except dns.resolver.NXDOMAIN:
@@ -132,16 +131,15 @@ async def _check_tcp(
     host: str,
     port: int,
     timeout: float,
-    *,
-    local_ip: str | None = None,
 ) -> tuple[bool, str | None, str | None]:
-    targets = ips or [host]
+    targets = _ipv4_only(ips) or _ipv4_only([host])
+    if not targets:
+        return False, "tcp_error", "no ipv4"
     last_reason = "tcp_error"
     last_detail: str | None = None
-    extra = {"local_addr": (local_ip, 0)} if local_ip else {}
     for target in targets:
         try:
-            conn = asyncio.open_connection(target, port, **extra)
+            conn = asyncio.open_connection(target, port)
             _reader, writer = await asyncio.wait_for(conn, timeout=timeout)
             writer.close()
             try:
@@ -185,20 +183,16 @@ async def check_url(
     credentials: Credentials | None = None,
     *,
     skip_stream: bool = False,
-    via_vpn: bool = False,
     require_mpegts: bool = True,
-    xtream_via_vpn: bool = False,
 ) -> HealthResult:
     """Run enabled checks in order. First failure becomes fail_reason; later checks are skipped.
 
     Nameserver lookup runs in parallel and never fails the URL.
-    Magnum (via_vpn) resolves DNS through Surfshark. TCP, HTTP, and MPEG-TS
-    stay on the public NIC — Magnum rejects live stream URLs from the VPN.
-    Strong 8K public hosts are NIC-only. Strong 8K VPN-allowlist hosts send
-    player_api through the VPN (xtream_via_vpn). Magnum requires a real MPEG-TS
-    pull. Strong 8K is up when DNS and TCP pass, unless the panel explicitly
-    rejects the host (452) or Xtream JSON says this account is not authorised.
-    A player_api 404/challenge from this VPS is not a Strong down.
+    All probes use the public NIC and IPv4 only (no AAAA).
+    Magnum requires a real MPEG-TS pull. Strong 8K is up when DNS and TCP pass,
+    unless the panel explicitly rejects the host (452) or Xtream JSON says this
+    account is not authorised. A player_api 404/challenge from this VPS is not
+    a Strong down.
     """
     try:
         url, host, port = parse_endpoint(raw_url)
@@ -222,7 +216,6 @@ async def check_url(
     resolved_ips: list[str] = []
     fail_reason: str | None = None
     error_detail: str | None = None
-    dns_source = bind_ip() if via_vpn else ""
     ns_task = None
     if host and not _is_ip(host):
         ns_task = asyncio.create_task(lookup_ns_hosts(host, settings.dns_timeout_seconds))
@@ -230,21 +223,19 @@ async def check_url(
     try:
         if settings.dns_check_enabled:
             dns_ok, resolved_ips, fail_reason, error_detail = await _resolve_dns(
-                host, settings.dns_timeout_seconds, source=dns_source or None
+                host, settings.dns_timeout_seconds
             )
         elif _is_ip(host):
-            resolved_ips = [host]
+            resolved_ips = _ipv4_only([host])
 
         if fail_reason is not None:
             tcp_ok = False
         elif settings.tcp_check_enabled:
-            tcp_bind = bind_ip() if xtream_via_vpn else ""
             tcp_ok, tcp_reason, tcp_detail = await _check_tcp(
                 resolved_ips,
                 host,
                 port,
                 settings.tcp_timeout_seconds,
-                local_ip=tcp_bind or None,
             )
             if not tcp_ok:
                 fail_reason = tcp_reason
@@ -271,7 +262,6 @@ async def check_url(
                 credentials,
                 settings.stream_timeout_seconds,
                 settings.allow_insecure_tls,
-                via_vpn=xtream_via_vpn,
                 require_mpegts=require_mpegts,
             )
             if stream_ok is False:
@@ -319,9 +309,7 @@ async def check_urls(
     credentials: Credentials | None = None,
     *,
     skip_stream: bool = False,
-    via_vpn: bool = False,
     require_mpegts: bool = True,
-    xtream_via_vpn: bool = False,
 ) -> dict[str, HealthResult]:
     """Probe unique URLs in parallel. Keyed by normalised URL."""
     unique: list[str] = []
@@ -342,9 +330,7 @@ async def check_urls(
                 settings,
                 credentials,
                 skip_stream=skip_stream,
-                via_vpn=via_vpn,
                 require_mpegts=require_mpegts,
-                xtream_via_vpn=xtream_via_vpn,
             )
             for url in unique
         ),

@@ -17,8 +17,6 @@ from typing import Iterable
 
 import httpx
 
-from iptv_monitor.vpn import magnum_client_kwargs
-
 # MPEG-TS packets are 188 bytes; the sync byte is always 0x47.
 TS_SYNC = 0x47
 TS_PACKET = 188
@@ -411,12 +409,11 @@ async def check_xtream_mpegts(
     timeout: float,
     insecure: bool,
     *,
-    via_vpn: bool = False,
     require_mpegts: bool = True,
 ) -> tuple[bool | None, str | None, str | None]:
     """Probe a portal with each playlist account.
 
-    Magnum (require_mpegts): DNS/TCP/MPEG-TS from the VPS — /watch is this box.
+    Magnum (require_mpegts): DNS/TCP/MPEG-TS from the VPS public NIC — /watch is this box.
     Strong 8K: confirmed Xtream login or M3U is up. 404/CF/401 from this
     datacentre is not a down — home players often still work. Panel 452 and
     JSON auth-fail still count as down.
@@ -430,14 +427,12 @@ async def check_xtream_mpegts(
     timeout_cfg = httpx.Timeout(timeout, connect=min(5.0, timeout))
     last_skip: tuple[str | None, str | None] = (None, None)
     last_fail: tuple[str | None, str | None] | None = None
-    extra = magnum_client_kwargs() if via_vpn else {}
     async with _SEM:
         async with httpx.AsyncClient(
             verify=not insecure,
             follow_redirects=True,
             timeout=timeout_cfg,
             headers={"User-Agent": _STREAM_UA, "Accept": "*/*"},
-            **extra,
         ) as client:
             for username, password in credentials:
                 ok, reason, detail = await _try_credentials(

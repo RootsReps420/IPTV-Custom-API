@@ -58,7 +58,7 @@ _CODEC_MARKERS = (
 def http_client() -> httpx.AsyncClient:
     """Keepalive pool so zapping a channel does not redo TLS to the panel every time.
 
-    Magnum live/VOD leave the public NIC. The panel rejects stream URLs from Surfshark.
+    Magnum live/VOD leave the public NIC.
     """
     global _HTTP
     if _HTTP is None or _HTTP.is_closed:
@@ -286,6 +286,8 @@ def _vod_ffmpeg_args(
 ) -> list[str]:
     # Skip: one -ss before -i (HTTP Range). A second -ss after -i made Magnum
     # re-read from the start while the first remux was still open.
+    # -noaccurate_seek keeps video-copy and AAC on the same keyframe; default
+    # accurate -ss cuts audio at T while video copies from T-GOP (lips desync).
     args = [
         binary,
         "-hide_banner",
@@ -312,7 +314,7 @@ def _vod_ffmpeg_args(
         if source.startswith("https://"):
             args.extend(["-tls_verify", "0"])
     if start_sec >= 1.0:
-        args.extend(["-ss", f"{start_sec:.3f}"])
+        args.extend(["-noaccurate_seek", "-ss", f"{start_sec:.3f}"])
     args.extend(
         [
             "-probesize",
@@ -383,10 +385,18 @@ def _vod_ffmpeg_args(
             "48000",
             "-b:a",
             "160k",
+            "-af",
+            "aresample=async=1",
             "-max_muxing_queue_size",
-            "1024",
+            "4096",
+            "-max_interleave_delta",
+            "20000000",
             "-flush_packets",
-            "1",
+            "0",
+            "-muxpreload",
+            "1.5",
+            "-muxdelay",
+            "1.5",
             "-avoid_negative_ts",
             "make_zero",
         ]
@@ -397,7 +407,10 @@ def _vod_ffmpeg_args(
         args.extend(
             [
                 "-movflags",
-                "frag_keyframe+empty_moov+default_base_moof",
+                "frag_keyframe+empty_moov+default_base_moof+negative_cts_offsets",
+                # GOP-only fragments were 4–5s on 4K; Chrome then stalled every GOP.
+                "-frag_duration",
+                "1000000",
                 "-f",
                 "mp4",
                 "pipe:1",
