@@ -43,6 +43,8 @@ _HTTP: httpx.AsyncClient | None = None
 _ALWAYS_COPY_VIDEO = frozenset({"h264", "av1", "vp8", "vp9"})
 _vod_run = asyncio.Lock()
 _vod_procs: set[asyncio.subprocess.Process] = set()
+# Live cast remuxes. _stop_all_vod sweeps every other ffmpeg, never these.
+_live_procs: set[asyncio.subprocess.Process] = set()
 _codec_by_url: dict[str, str] = {}
 _CODEC_MARKERS = (
     ("h264", (b"V_MPEG4/ISO/AVC", b"avc1", b"avcC")),
@@ -491,25 +493,21 @@ async def _pgrep_exact(name: str) -> list[int]:
     return pids
 
 
-async def _pkill_exact(name: str) -> None:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "pkill",
-            "-x",
-            name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.wait()
-    except OSError:
-        return
+def _live_pids() -> set[int]:
+    return {proc.pid for proc in _live_procs if proc.returncode is None}
+
+
+async def _vod_leftovers() -> list[int]:
+    spared = _live_pids()
+    pids = await _pgrep_exact("ffmpeg")
+    pids += await _pgrep_exact("ffprobe")
+    return [pid for pid in pids if pid not in spared]
 
 
 async def _stop_all_vod() -> None:
     """One Magnum VOD pull at a time. Kill remux/probe leftovers and wait until they are gone."""
     tracked = list(_vod_procs)
-    extra = await _pgrep_exact("ffmpeg")
-    extra += await _pgrep_exact("ffprobe")
+    extra = await _vod_leftovers()
     had = bool(tracked) or bool(extra)
     _vod_procs.clear()
     for proc in tracked:
@@ -523,13 +521,9 @@ async def _stop_all_vod() -> None:
                 await asyncio.wait_for(proc.wait(), 2)
             except TimeoutError:
                 pass
-    await _pkill_exact("ffmpeg")
-    await _pkill_exact("ffprobe")
     deadline = time.monotonic() + 6.0
     while time.monotonic() < deadline:
-        ffmpeg_pids = await _pgrep_exact("ffmpeg")
-        probe_pids = await _pgrep_exact("ffprobe")
-        leftover = ffmpeg_pids + probe_pids
+        leftover = await _vod_leftovers()
         if not leftover:
             break
         for pid in leftover:
@@ -578,13 +572,93 @@ async def remux_vod_to_browser_mp4(
         )
 
 
+def _live_cast_ffmpeg_args(binary: str, source: str) -> list[str]:
+    # Cast receivers cannot play raw MPEG-TS. Copy video, AAC stereo audio, 1s fMP4 fragments.
+    args = [
+        binary,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-user_agent",
+        _STREAM_UA,
+        "-reconnect",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_delay_max",
+        "2",
+    ]
+    if source.startswith("https://"):
+        args.extend(["-tls_verify", "0"])
+    args.extend(
+        [
+            "-fflags",
+            "+genpts+discardcorrupt",
+            "-probesize",
+            "2000000",
+            "-analyzeduration",
+            "2000000",
+            "-i",
+            source,
+            "-map",
+            "0:V:0",
+            "-map",
+            "0:a:0?",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+            "-b:a",
+            "160k",
+            "-af",
+            "aresample=async=1",
+            "-max_muxing_queue_size",
+            "4096",
+            "-avoid_negative_ts",
+            "make_zero",
+            "-movflags",
+            "frag_keyframe+empty_moov+default_base_moof",
+            "-frag_duration",
+            "1000000",
+            "-f",
+            "mp4",
+            "pipe:1",
+        ]
+    )
+    return args
+
+
+async def remux_live_to_cast_mp4(
+    url: str,
+    on_bytes: Callable[[int], None] | None = None,
+) -> StreamingResponse:
+    """Live TS -> fragmented MP4 for Chromecast. Not under the one-VOD lock."""
+    binary = ffmpeg_bin()
+    if not binary:
+        raise HTTPException(status_code=503, detail="Casting needs ffmpeg on the server.")
+    logger.info("Live cast remux started")
+    return await _stream_vod_ffmpeg(
+        _live_cast_ffmpeg_args(binary, url),
+        feed=None,
+        on_bytes=on_bytes,
+        media_type="video/mp4",
+        registry=_live_procs,
+    )
+
+
 async def _stream_vod_ffmpeg(
     ffmpeg_args: list[str],
     *,
     feed: Callable[[asyncio.subprocess.Process], object] | None,
     on_bytes: Callable[[int], None] | None,
     media_type: str = "video/mp4",
+    registry: set[asyncio.subprocess.Process] | None = None,
 ) -> StreamingResponse:
+    procs = _vod_procs if registry is None else registry
     proc_kwargs: dict[str, object] = {
         "stdin": asyncio.subprocess.PIPE if feed is not None else asyncio.subprocess.DEVNULL,
         "stdout": asyncio.subprocess.PIPE,
@@ -601,7 +675,7 @@ async def _stream_vod_ffmpeg(
         except TypeError:
             proc_kwargs.pop("start_new_session", None)
             proc = await asyncio.create_subprocess_exec(*ffmpeg_args, **proc_kwargs)
-    _vod_procs.add(proc)
+    procs.add(proc)
 
     async def drain_stderr() -> None:
         if proc.stderr is None:
@@ -631,7 +705,7 @@ async def _stream_vod_ffmpeg(
                     on_bytes(len(chunk))
                 yield chunk
         finally:
-            _vod_procs.discard(proc)
+            procs.discard(proc)
             _stop_proc(proc)
             tasks = [err_task, proc.wait()]
             if feed_task is not None:

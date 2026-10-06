@@ -151,6 +151,10 @@ function preferNativeHls() {
 }
 
 function liveExtensions() {
+  // AirPlay cannot send MSE (mpegts.js) to a TV; Safari's native HLS can.
+  if (airplayOn() && canPlayNativeHls()) {
+    return ["m3u8"];
+  }
   if (canPlayMpegTs()) {
     return ["ts"];
   }
@@ -563,6 +567,10 @@ let vodSeekOffset = 0;
 let vodScrubbing = false;
 let vodSeeking = false;
 let vodHoldActive = false;
+// Safari/iOS VOD on the seekable HLS playlist: currentTime is the film clock
+// (vodSeekOffset stays 0) and seeks are native instead of reloading.
+let vodHlsTimeline = false;
+let spinnerClock = -1;
 let vodChromeTimer = 0;
 let vodDetailHideTimer = 0;
 let vodWaitTimer = 0;
@@ -586,7 +594,7 @@ function paintBufferButtons() {
     return;
   }
   const live = Boolean(state.playingLiveId) || state.playingKind === "live";
-  bufferRow.hidden = !canPlayMpegTs() || !live;
+  bufferRow.hidden = !canPlayMpegTs() || !live || castOn();
   const key = bufferKey();
   bufferRow.querySelectorAll("[data-buf]").forEach((button) => {
     button.classList.toggle("is-here", button.getAttribute("data-buf") === key);
@@ -612,16 +620,19 @@ function showWatchSpinner(on) {
 }
 
 function showVodWaitSpinner() {
+  // iOS native HLS fires waiting/stalled (and reports a low readyState) while it
+  // is playing fine. Only a playhead that has not moved counts as buffering.
   window.clearTimeout(vodWaitTimer);
+  const before = Number(video.currentTime) || 0;
   vodWaitTimer = window.setTimeout(() => {
     vodWaitTimer = 0;
-    if (!playing || video.paused || state.playingLiveId) {
+    if (!playing || video.paused || castOn()) {
       return;
     }
-    if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+    if (Math.abs((Number(video.currentTime) || 0) - before) < 0.05) {
       showWatchSpinner(true);
     }
-  }, 500);
+  }, 700);
 }
 
 function clearLiveStallTimer() {
@@ -982,7 +993,7 @@ function vodLength() {
   if (vodRuntimeSec && vodRuntimeSec > 0) {
     return vodRuntimeSec;
   }
-  const native = Number(video.duration);
+  const native = castOn() ? castDuration() : Number(video.duration);
   if (Number.isFinite(native) && native > 1) {
     return native + vodSeekOffset;
   }
@@ -990,7 +1001,8 @@ function vodLength() {
 }
 
 function vodClock() {
-  return Math.max(0, vodSeekOffset + (Number(video.currentTime) || 0));
+  const at = castOn() ? castTime() : Number(video.currentTime);
+  return Math.max(0, vodSeekOffset + (at || 0));
 }
 
 function waitMs(ms) {
@@ -1253,7 +1265,7 @@ function paintVodPlayBtn() {
   if (!vodPlayBtn) {
     return;
   }
-  const paused = video.paused || video.ended;
+  const paused = castOn() ? castPaused() : video.paused || video.ended;
   vodPlayBtn.textContent = paused ? "▶" : "❚❚";
   vodPlayBtn.setAttribute("aria-label", paused ? "Play" : "Pause");
 }
@@ -1262,7 +1274,7 @@ function paintVodMuteBtn() {
   if (!vodMuteBtn) {
     return;
   }
-  const muted = video.muted || video.volume === 0;
+  const muted = castOn() ? castMuted() : video.muted || video.volume === 0;
   vodMuteBtn.textContent = muted ? "🔇" : "🔊";
   vodMuteBtn.setAttribute("aria-label", muted ? "Unmute" : "Mute");
 }
@@ -1297,6 +1309,9 @@ function applyVodRate(rate, persist) {
 }
 
 function cycleVodRate() {
+  if (castOn()) {
+    return;
+  }
   const cur = Number(video.playbackRate) || storedVodRate();
   const idx = VOD_RATES.indexOf(cur);
   applyVodRate(VOD_RATES[(idx + 1) % VOD_RATES.length], true);
@@ -1347,7 +1362,7 @@ function showVodChrome() {
 
 function setPlayerChrome() {
   const overlay = vodUsesOverlay();
-  video.controls = !overlay;
+  video.controls = !overlay && !castOn();
   if (vodChrome) {
     vodChrome.hidden = !overlay;
     if (!overlay) {
@@ -1379,6 +1394,11 @@ function toggleVodPlay() {
     goAdjacentEpisode(1).catch(() => {});
     return;
   }
+  if (castOn()) {
+    castTogglePlay();
+    showVodChrome();
+    return;
+  }
   if (video.paused || video.ended) {
     const play = video.play();
     if (play && typeof play.catch === "function") {
@@ -1392,6 +1412,11 @@ function toggleVodPlay() {
 }
 
 function toggleVodMute() {
+  if (castOn()) {
+    castToggleMute();
+    showVodChrome();
+    return;
+  }
   if (vodHoldActive) {
     return;
   }
@@ -1508,6 +1533,15 @@ async function seekVod(seconds) {
   const item = state.playingItem;
   const kind = state.playingKind;
   if (!item || (kind !== "movie" && kind !== "series")) {
+    return;
+  }
+  if (vodHlsTimeline && !castOn()) {
+    try {
+      video.currentTime = target;
+    } catch {
+      /* ignore */
+    }
+    paintVodSeek(target);
     return;
   }
   vodSeeking = true;
@@ -2011,6 +2045,7 @@ function destroyPlayers() {
     }
     tsPlayer = null;
   }
+  vodHlsTimeline = false;
   video.pause();
   try {
     video.removeAttribute("src");
@@ -2021,7 +2056,10 @@ function destroyPlayers() {
   video.load();
 }
 
-function stopPlayback() {
+function stopPlayback(opts) {
+  if (!opts?.keepCast) {
+    castStopMedia();
+  }
   playing = false;
   liveTsUrl = "";
   liveReconnectTries = 0;
@@ -2093,11 +2131,50 @@ function mediaUrl(kind, streamId, ext) {
     if (vodSeekOffset >= 1) {
       params.set("start", String(Math.floor(vodSeekOffset)));
     }
+    if (ext === "m3u8") {
+      const runtime = vodLength();
+      if (runtime > 1) {
+        params.set("dur", String(Math.round(runtime)));
+      }
+    }
     if (canPlayNativeHls()) {
       params.set("cb", String(Date.now()));
     }
   }
   return `/api/player/media/${kind}/${encodeURIComponent(streamId)}.${ext}?${params}`;
+}
+
+function watchVodTimeline(gen) {
+  const resumeAt = vodSeekOffset;
+  vodHlsTimeline = false;
+  video.addEventListener(
+    "loadedmetadata",
+    () => {
+      if (gen != null && gen !== playGen) {
+        return;
+      }
+      const length = Number(video.duration);
+      if (!Number.isFinite(length) || length <= 1) {
+        // Old single-segment wrapper (no runtime from the panel): keep reload seeks.
+        return;
+      }
+      vodHlsTimeline = true;
+      vodSeekOffset = 0;
+      if (!vodRuntimeSec) {
+        setVodRuntime(length);
+      }
+      // #EXT-X-START usually lands us there already; only correct a real miss.
+      if (resumeAt >= 1 && Math.abs((Number(video.currentTime) || 0) - resumeAt) > 8) {
+        try {
+          video.currentTime = resumeAt;
+        } catch {
+          /* ignore */
+        }
+      }
+      paintVodRuntime();
+    },
+    { once: true }
+  );
 }
 
 function attachHls(url) {
@@ -2280,7 +2357,7 @@ async function playSources(kind, streamId, extensions, gen) {
   const keepItem = state.playingItem;
   const keepLive = state.playingLiveId;
   const keepKind = state.playingKind;
-  stopPlayback();
+  stopPlayback({ keepCast: true });
   state.playingItem = keepItem;
   state.playingLiveId = keepLive;
   state.playingKind = keepKind;
@@ -2295,6 +2372,23 @@ async function playSources(kind, streamId, extensions, gen) {
     }
     showBanner(error.message, "bad");
   });
+  if (castOn()) {
+    try {
+      await castPlay(kind, streamId, gen);
+      return;
+    } catch (error) {
+      if (gen != null && gen !== playGen) {
+        return;
+      }
+      playing = false;
+      if (beatTimer) {
+        clearInterval(beatTimer);
+        beatTimer = null;
+      }
+      await releaseSlot();
+      throw error;
+    }
+  }
   let lastError = null;
   for (const ext of extensions) {
     if (gen != null && gen !== playGen) {
@@ -2308,6 +2402,7 @@ async function playSources(kind, streamId, extensions, gen) {
         if (canPlayNativeHls()) {
           if (kind !== "live") {
             showWatchSpinner(true);
+            watchVodTimeline(gen);
           }
           video.src = url;
           video.load();
@@ -4450,6 +4545,21 @@ if (bufferRow) {
 }
 
 video.addEventListener("timeupdate", () => {
+  const clock = Number(video.currentTime) || 0;
+  if (
+    watchSpinner &&
+    !watchSpinner.hidden &&
+    spinnerClock >= 0 &&
+    Math.abs(clock - spinnerClock) > 0.05 &&
+    !video.paused &&
+    !liveHold &&
+    !vodHoldActive &&
+    !vodSeeking &&
+    !castOn()
+  ) {
+    showWatchSpinner(false);
+  }
+  spinnerClock = clock;
   paintVodRuntime();
   if (isVodPlay()) {
     markVodProgress();
@@ -4501,6 +4611,10 @@ video.addEventListener("waiting", () => {
     return;
   }
   stallReports += 1;
+  if (state.playingLiveId && !liveMpeg) {
+    showVodWaitSpinner();
+    return;
+  }
   if (state.playingLiveId) {
     showWatchSpinner(true);
     if (liveBadge && !liveBadge.hidden) {
@@ -4512,7 +4626,7 @@ video.addEventListener("waiting", () => {
   showVodWaitSpinner();
 });
 video.addEventListener("stalled", () => {
-  if (playing && state.playingLiveId && !liveHold) {
+  if (playing && state.playingLiveId && liveMpeg && !liveHold) {
     showWatchSpinner(true);
   }
 });
@@ -4624,6 +4738,11 @@ if (vodVol) {
     if (!Number.isFinite(level)) {
       return;
     }
+    if (castOn()) {
+      castSetVolume(level);
+      showVodChrome();
+      return;
+    }
     if (vodHoldActive) {
       return;
     }
@@ -4706,6 +4825,10 @@ document.addEventListener("keydown", (event) => {
   } else if (event.key === "ArrowLeft") {
     event.preventDefault();
     seekVod(vodClock() - (event.shiftKey ? 5 : 10)).catch(() => {});
+    showVodChrome();
+  } else if ((event.key === "ArrowUp" || event.key === "ArrowDown") && castOn()) {
+    event.preventDefault();
+    castSetVolume(castVolume() + (event.key === "ArrowUp" ? 0.05 : -0.05));
     showVodChrome();
   } else if (event.key === "ArrowUp") {
     event.preventDefault();

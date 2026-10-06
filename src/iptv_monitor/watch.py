@@ -40,7 +40,14 @@ from iptv_monitor.player_auth import (
     require_username,
     set_session,
 )
-from iptv_monitor.player_proxy import load_fetch_url, panel_media_url, proxy_url, vod_hls_wrapper
+from iptv_monitor.player_proxy import (
+    load_fetch_url,
+    panel_media_url,
+    proxy_url,
+    remux_live_to_cast_mp4,
+    vod_hls_wrapper,
+)
+from iptv_monitor.player_hls import hls_file, vod_duration, vod_playlist
 from iptv_monitor.player_m3u import with_live_ext
 from iptv_monitor.player_guide import WatchGuide
 from iptv_monitor.player_presence import PresenceTracker
@@ -52,6 +59,16 @@ from iptv_monitor.player_xtream import XtreamCatalogue, load_player_config
 logger = logging.getLogger("iptv_monitor.watch")
 
 KINDS = {"live", "movie", "series"}
+
+
+def _vod_src_ext(src: str) -> str:
+    """Magnum container for VOD (`container_extension`); never a playlist type."""
+    ext = "".join(ch for ch in (src or "mp4").lower().lstrip(".") if ch.isalnum())[:8] or "mp4"
+    return "mp4" if ext in {"m3u8", "mpd", "ts"} else ext
+
+
+def _allows_hevc(vc: str) -> bool:
+    return any(part in {"hevc", "h265"} for part in (vc or "").lower().replace(" ", "").split(",") if part)
 
 
 def _merge_tmdb_info(guide: WatchGuide, data: dict[str, Any], kind: str, item_id: str) -> dict[str, Any]:
@@ -605,8 +622,30 @@ def register_watch(app: FastAPI, static_dir) -> None:
         src: str = Query(default=""),
         dur: float = Query(default=0),
         vc: str = Query(default=""),
+        cast: int = Query(default=0),
     ) -> Response:
-        """Proxy live/movie/series. sid is the tab play_id required to hold a slot."""
+        """Proxy live/movie/series. sid is the tab play_id required to hold a slot.
+
+        cast=1 is a Chromecast receiver fetching with the signed `k` (no cookie).
+        Live cast uses `.mp4` (ffmpeg fMP4); receivers cannot play raw MPEG-TS.
+        """
+        response = await _player_media(request, kind, stream_id, ext, sid, start, src, dur, vc, bool(cast))
+        if cast:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
+
+    async def _player_media(
+        request: Request,
+        kind: str,
+        stream_id: str,
+        ext: str,
+        sid: str,
+        start: float,
+        src: str,
+        dur: float,
+        vc: str,
+        cast: bool,
+    ) -> Response:
         if kind not in KINDS:
             raise HTTPException(status_code=400, detail="Invalid media kind.")
         user = require_player_user(request, _root(request))
@@ -626,22 +665,41 @@ def register_watch(app: FastAPI, static_dir) -> None:
             username=user,
         )
         url = ""
+        vod_ext = ext.lstrip(".").lower()
+        live_cast = cast and kind == "live" and vod_ext == "mp4"
+        upstream_ext = "ts" if live_cast else ext
         if kind == "live":
             playback = svc.guide.live_playback_url(stream_id)
             if playback:
-                url = with_live_ext(playback, ext)
+                url = with_live_ext(playback, upstream_ext)
             elif cfg.live_m3u_url:
                 raise HTTPException(status_code=404, detail="Unknown live stream.")
         if not url:
-            url = panel_media_url(cfg, kind, stream_id, ext)
-        live_ts = kind == "live" and ext.lstrip(".").lower() == "ts"
+            url = panel_media_url(cfg, kind, stream_id, upstream_ext)
+        if live_cast:
+            presence = svc.presence
+            return await remux_live_to_cast_mp4(
+                url, on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n)
+            )
+        live_ts = kind == "live" and vod_ext == "ts"
         kind_vod = kind in {"movie", "series"}
-        vod_ext = ext.lstrip(".").lower()
         token = "" if live_ts else mint_media_token(_root(request), user, sid)
         if kind_vod and vod_ext == "m3u8":
-            src_ext = "".join(ch for ch in (src or "mp4").lower().lstrip(".") if ch.isalnum())[:8] or "mp4"
-            if src_ext in {"m3u8", "mpd", "ts"}:
-                src_ext = "mp4"
+            src_ext = _vod_src_ext(src)
+            runtime = await vod_duration(
+                panel_media_url(cfg, kind, stream_id, src_ext), max(0.0, float(dur or 0.0))
+            )
+            if runtime:
+                return vod_playlist(
+                    kind=kind,
+                    stream_id=stream_id,
+                    sid=sid,
+                    access_token=token,
+                    src_ext=src_ext,
+                    video_caps=vc,
+                    duration_sec=runtime,
+                    start_sec=max(0.0, float(start or 0.0)),
+                )
             return vod_hls_wrapper(
                 kind=kind,
                 stream_id=stream_id,
@@ -655,17 +713,10 @@ def register_watch(app: FastAPI, static_dir) -> None:
         vod = kind_vod and vod_ext not in {"m3u8", "mpd"}
         remux_container = "mpegts" if vod and vod_ext == "ts" else "mp4"
         if vod:
-            src_ext = "".join(ch for ch in (src or "mp4").lower().lstrip(".") if ch.isalnum())[:8] or "mp4"
-            if src_ext in {"m3u8", "mpd", "ts"}:
-                src_ext = "mp4"
-            url = panel_media_url(cfg, kind, stream_id, src_ext)
+            url = panel_media_url(cfg, kind, stream_id, _vod_src_ext(src))
         presence = svc.presence
         start_sec = max(0.0, float(start or 0.0)) if vod else 0.0
-        allow_hevc = any(
-            part in {"hevc", "h265"}
-            for part in (vc or "").lower().replace(" ", "").split(",")
-            if part
-        )
+        allow_hevc = _allows_hevc(vc)
         return await proxy_url(
             url,
             rewrite_uris=not live_ts,
@@ -678,6 +729,55 @@ def register_watch(app: FastAPI, static_dir) -> None:
             on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n),
             start_sec=start_sec,
             allow_hevc=allow_hevc,
+        )
+
+    @app.get("/api/player/hls/{kind}/{stream_id}/{name}")
+    async def player_hls(
+        request: Request,
+        kind: str,
+        stream_id: str,
+        name: str,
+        sid: str = Query(default=""),
+        src: str = Query(default=""),
+        vc: str = Query(default=""),
+        s: int = Query(default=0),
+    ) -> Response:
+        """Init / segment of the seekable VOD playlist (Safari, iPhone, AirPlay receivers)."""
+        if kind not in {"movie", "series"}:
+            raise HTTPException(status_code=400, detail="Invalid media kind.")
+        user = require_player_user(request, _root(request))
+        svc = _svc(request)
+        cfg = svc.config()
+        if not cfg.configured:
+            raise HTTPException(status_code=503, detail="Watch player is not configured.")
+        if not sid or len(sid) < 8:
+            raise HTTPException(status_code=400, detail="Missing sid.")
+        await _require_slot(svc, user, sid)
+        await _touch_presence(
+            request,
+            play_id=sid,
+            playing=True,
+            kind=kind,
+            stream_id=stream_id,
+            username=user,
+        )
+        path = await hls_file(
+            sid=sid,
+            kind=kind,
+            stream_id=stream_id,
+            url=panel_media_url(cfg, kind, stream_id, _vod_src_ext(src)),
+            allow_hevc=_allows_hevc(vc),
+            name=name,
+            start_hint=max(0, int(s or 0)),
+        )
+        try:
+            svc.presence.add_bytes(sid, path.stat().st_size)
+        except OSError:
+            pass
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            headers={"Cache-Control": "no-store"},
         )
 
     @app.get("/api/player/fetch")

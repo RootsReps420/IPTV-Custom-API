@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=71" />
+  <link rel="stylesheet" href="/static/styles.css?v=72" />
   <link rel="stylesheet" href="/static/dash.css?v=8" />
 </head>
 <body class="watch-body">
@@ -138,8 +138,15 @@
         <div class="watch-preview-card" id="watch-preview">
           <button type="button" id="vod-player-close" class="watch-vod-player-close" hidden>Close player</button>
           <div class="watch-video-wrap" id="watch-video-wrap">
-            <video id="player" playsinline webkit-playsinline></video>
+            <video id="player" playsinline webkit-playsinline x-webkit-airplay="allow"></video>
+            <div id="cast-overlay" class="watch-tvcast-overlay" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 18v3h3a3 3 0 0 0-3-3zm0-4v2a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7zm0-4v2a9 9 0 0 1 9 9h2A11 11 0 0 0 1 10zm20-7H3a2 2 0 0 0-2 2v3h2V5h18v14h-7v2h7a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg>
+              <p>Casting to <strong id="cast-overlay-name">your TV</strong></p>
+            </div>
             <div id="watch-spinner" class="watch-spinner" hidden><span></span></div>
+            <button type="button" id="cast-btn" class="watch-tvcast-btn" hidden title="Cast to TV" aria-label="Cast to TV" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 18v3h3a3 3 0 0 0-3-3zm0-4v2a5 5 0 0 1 5 5h2a7 7 0 0 0-7-7zm0-4v2a9 9 0 0 1 9 9h2A11 11 0 0 0 1 10zm20-7H3a2 2 0 0 0-2 2v3h2V5h18v14h-7v2h7a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/></svg>
+            </button>
             <span id="live-badge" class="watch-live-badge" hidden>LIVE</span>
             <div id="vod-chrome" class="watch-vod-chrome" hidden>
               <button type="button" id="vod-hit" class="watch-vod-hit" aria-label="Play or pause"></button>
@@ -220,6 +227,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
-  <script src="/static/watch.js?v=83"></script>
+  <script src="/static/watch-cast.js?v=1"></script>
+  <script src="/static/watch.js?v=85"></script>
 </body>
 </html>
