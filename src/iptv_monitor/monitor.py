@@ -18,6 +18,7 @@ Choose URL can select them. Magnum swaps call EPGenius like Strong 8K, then poin
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 from dataclasses import dataclass, field
@@ -38,7 +39,7 @@ from iptv_monitor.config import (
     DEFAULT_POOL,
 )
 from iptv_monitor.epgenius import EpgeniusError, update_creds
-from iptv_monitor.health import HealthResult, check_url, check_urls, normalize_url
+from iptv_monitor.health import HealthResult, TcpCache, check_url, check_urls, normalize_url
 from iptv_monitor.history import UrlHistoryStore
 from iptv_monitor.notify import (
     DiscordStatusBoard,
@@ -74,6 +75,8 @@ class UrlStats:
     last_result: HealthResult | None = None
     # Timestamps of healthy → down transitions (pruned to the frequent-failure window).
     down_at: list[datetime] = field(default_factory=list)
+    # Start of the current outage (None while healthy). Not persisted across restarts.
+    down_since: datetime | None = None
 
 
 @dataclass
@@ -98,18 +101,24 @@ class SharedState:
     available: list[dict[str, Any]] = field(default_factory=list)
     playlists: list[dict[str, Any]] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
+    # Down hosts grouped by cause + /24, so one blocked panel is one row, not 26.
+    down_groups: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
     dry_run: bool = False
 
-    def add_event(self, kind: str, message: str) -> None:
-        """Prepend a dashboard event. Keep 40 so the public page stays small."""
+    def add_event(self, kind: str, message: str, **extra: Any) -> None:
+        """Prepend a dashboard event. Keep 40 so the public page stays small.
+
+        `extra` carries role / hosts / reason / subnet for grouped events.
+        """
         self.events.insert(
             0,
             {
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "kind": kind,
                 "message": message,
+                **extra,
             },
         )
         self.events = self.events[:40]
@@ -126,6 +135,7 @@ class SharedState:
             "available": self.available,
             "playlists": self.playlists,
             "alerts": self.alerts,
+            "down_groups": self.down_groups,
             "events": self.events,
             "error": self.error,
             "dry_run": self.dry_run,
@@ -157,6 +167,9 @@ class SharedState:
         data["alerts"] = [
             text for text in data.get("alerts") or [] if "live URL" not in text
         ]
+        data["down_groups"] = [
+            group for group in data.get("down_groups") or [] if group.get("role") != "live"
+        ]
         return data
 
 
@@ -169,8 +182,59 @@ def _public_url_row(row: dict[str, Any]) -> dict[str, Any]:
 def _public_event(item: dict[str, Any]) -> bool:
     if item.get("kind") not in {"down", "up"}:
         return False
+    if item.get("role") in {"live", "both"}:
+        return False
     message = str(item.get("message") or "")
     return not (message.startswith("live ") or message.startswith("both "))
+
+
+def _subnet24(ips: list[str]) -> str | None:
+    """First IPv4 as a /24 — panels hand out neighbouring IPs, and blocks hit the range."""
+    for ip in ips or []:
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if addr.version == 4:
+            return str(ipaddress.ip_network(f"{ip}/24", strict=False))
+    return None
+
+
+def _outage_key(reason: str | None, ips: list[str]) -> tuple[str, str | None]:
+    """Group key for downs. TCP/stream failures group by /24; DNS failures by reason only."""
+    reason = reason or "unknown"
+    if reason.startswith(("tcp_", "stream_")):
+        return reason, _subnet24(ips)
+    return reason, None
+
+
+def _down_groups(rows: list[dict[str, Any]], role: str) -> list[dict[str, Any]]:
+    """Collapse down rows into one entry per (reason, /24)."""
+    buckets: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.get("healthy"):
+            continue
+        key = _outage_key(row.get("fail_reason"), row.get("resolved_ips") or [])
+        buckets.setdefault(key, []).append(row)
+    groups: list[dict[str, Any]] = []
+    for (reason, subnet), members in buckets.items():
+        ips = sorted({ip for row in members for ip in row.get("resolved_ips") or [] if ":" not in ip})
+        since = [row["down_since"] for row in members if row.get("down_since")]
+        groups.append(
+            {
+                "role": role,
+                "reason": reason,
+                "subnet": subnet,
+                "ips": ips,
+                "hosts": [row["url"] for row in members],
+                "count": len(members),
+                "since": min(since) if since else None,
+                # Several names on one range all timing out at once is a firewall, not a dead panel.
+                "likely_block": reason.startswith("tcp_") and subnet is not None and len(members) >= 3,
+            }
+        )
+    groups.sort(key=lambda group: -group["count"])
+    return groups
 
 
 def _url_is_vpn(cfg: AppConfig, url: str) -> bool:
@@ -292,6 +356,7 @@ def _url_view(
         "consecutive_failures": stats.consecutive_failures,
         "consecutive_successes": stats.consecutive_successes,
         "last_checked": result.checked_at.isoformat() if result else None,
+        "down_since": stats.down_since.isoformat() if stats.down_since else None,
         "playlists": playlist_names,
         "down_events_24h": down_events,
         "frequent_failure": down_events >= frequent_threshold,
@@ -312,6 +377,8 @@ class Monitor:
         self._swap_lock = asyncio.Lock()
         self.watch_syncer = None
         self.watch_service = None
+        # Health edges seen this cycle; flushed as grouped dashboard events.
+        self._transitions: list[tuple[str, str, str, HealthResult]] = []
         self._load_failure_history()
         days = 90
         try:
@@ -456,8 +523,32 @@ class Monitor:
                 "Skipping Magnum MPEG-TS health probes while /watch is using the panel"
             )
 
+        live_set = set(live_keys)
+        available_set = set(available_keys)
+
+        # Live DNS every cycle; standby-only hosts once per standby interval.
+        # Half a cycle of slack so a 60s interval does not drift to 64s+.
+        now = datetime.now(timezone.utc)
+        standby_every = max(
+            settings.check_interval_seconds, int(settings.standby_check_interval_seconds)
+        ) - settings.check_interval_seconds / 2
+        tcp_cache: TcpCache = {}
         results: dict[str, HealthResult] = {}
+        fresh: set[str] = set()
         for (pool, vpn), urls in grouped.items():
+            due: list[str] = []
+            for url in urls:
+                last = self._stat(url).last_result
+                if (
+                    url in live_set
+                    or last is None
+                    or (now - last.checked_at).total_seconds() >= standby_every
+                ):
+                    due.append(url)
+                else:
+                    results[url] = last
+            if not due:
+                continue
             creds = [
                 (item.username, item.password)
                 for item in cfg.playlists
@@ -466,20 +557,21 @@ class Monitor:
             magnum = pool == "magnum"
             skip_stream = magnum_busy and magnum
             batch = await check_urls(
-                urls,
+                due,
                 settings,
                 creds or None,
                 skip_stream=skip_stream,
                 require_mpegts=magnum,
+                tcp_cache=tcp_cache,
             )
             results.update(batch)
-
-        live_set = set(live_keys)
-        available_set = set(available_keys)
+            fresh.update(batch)
 
         window = self._failure_window(settings)
         self.url_history.days = max(7, int(settings.history_retention_days))
-        for url, result in results.items():
+        self._transitions = []
+        for url in fresh:
+            result = results[url]
             stats = self._stat(url)
             stats.last_result = result
             if self._record_down_event(stats, result, window):
@@ -487,14 +579,18 @@ class Monitor:
             if result.healthy:
                 stats.consecutive_failures = 0
                 stats.consecutive_successes += 1
+                stats.down_since = None
             else:
                 stats.consecutive_failures += 1
                 stats.consecutive_successes = 0
+                if stats.down_since is None:
+                    stats.down_since = result.checked_at
 
             role = _role(url, live_set, available_set)
             if notify:
                 await self._emit_transition(cfg, url, role, result, stats)
             stats.last_healthy = result.healthy
+        self._flush_transition_events()
 
         self._last_cfg = cfg
         self._last_results = results
@@ -536,29 +632,57 @@ class Monitor:
         result: HealthResult,
         stats: UrlStats,
     ) -> None:
-        """Discord + event log only when health changes (or on first sight of a down URL)."""
+        """Discord + event log only when health changes (or on first sight of a down URL).
+
+        Discord still fires per URL. Dashboard events are queued and grouped by
+        `_flush_transition_events` so a blocked range is one row.
+        """
         previous = stats.last_healthy
         if previous is None:
             if not result.healthy:
-                self.shared.add_event(
-                    "down",
-                    f"{role} {url} down ({result.fail_reason or 'unknown'})",
-                )
+                self._transitions.append(("down", role, url, result))
                 await notify_url_down(
                     cfg.secrets, url, role, result.fail_reason, result.error_detail
                 )
             return
         if previous and not result.healthy:
-            self.shared.add_event(
-                "down",
-                f"{role} {url} down ({result.fail_reason or 'unknown'})",
-            )
+            self._transitions.append(("down", role, url, result))
             await notify_url_down(
                 cfg.secrets, url, role, result.fail_reason, result.error_detail
             )
         elif not previous and result.healthy:
-            self.shared.add_event("up", f"{role} {url} recovered")
+            self._transitions.append(("up", role, url, result))
             await notify_url_up(cfg.secrets, url, role)
+
+    def _flush_transition_events(self) -> None:
+        """One event per (kind, role, cause, /24). A single host keeps the old wording."""
+        buckets: dict[tuple[str, str, str, str | None], list[tuple[str, HealthResult]]] = {}
+        for kind, role, url, result in self._transitions:
+            if kind == "down":
+                reason, subnet = _outage_key(result.fail_reason, result.resolved_ips)
+            else:
+                reason, subnet = "", _subnet24(result.resolved_ips)
+            buckets.setdefault((kind, role, reason, subnet), []).append((url, result))
+        self._transitions = []
+        # Recoveries first so the newest-first list reads down → up when both happen.
+        for (kind, role, reason, subnet), members in sorted(
+            buckets.items(), key=lambda item: item[0][0] == "down"
+        ):
+            hosts = [url for url, _result in members]
+            extra = {"role": role, "hosts": hosts, "reason": reason or None, "subnet": subnet}
+            if len(members) == 1:
+                url = hosts[0]
+                if kind == "down":
+                    message = f"{role} {url} down ({reason or 'unknown'})"
+                else:
+                    message = f"{role} {url} recovered"
+            else:
+                where = f" on {subnet}" if subnet else ""
+                if kind == "down":
+                    message = f"{role}: {len(members)} hosts down ({reason}){where}"
+                else:
+                    message = f"{role}: {len(members)} hosts recovered{where}"
+            self.shared.add_event(kind, message, **extra)
 
     def _build_plans(
         self,
@@ -842,6 +966,8 @@ class Monitor:
         self._last_results[url] = result
         if result.healthy:
             return
+        if stats.down_since is None:
+            stats.down_since = result.checked_at
         window = self._failure_window(cfg.settings)
         if self._record_down_event(stats, result, window):
             self.url_history.record(url, result.fail_reason)
@@ -1277,13 +1403,11 @@ class Monitor:
             alerts.append("DRY RUN — EPGenius swaps and Discord alerts are disabled.")
         if self.shared.error:
             alerts.append(self.shared.error)
-        down_live = [row["url"] for row in self.shared.live if not row.get("healthy")]
-        down_avail = [row["url"] for row in self.shared.available if not row.get("healthy")]
-        if down_live:
-            alerts.append(f"{len(down_live)} live URL(s) down: {', '.join(down_live)}")
-        if down_avail:
-            alerts.append(f"{len(down_avail)} standby URL(s) down: {', '.join(down_avail)}")
-        if self.shared.last_cycle_at and not down_live and not down_avail and not self.shared.error:
+        # Downs are structured in down_groups (dashboard "Down now" panel), not alert strings.
+        self.shared.down_groups = _down_groups(self.shared.live, "live") + _down_groups(
+            self.shared.available, "standby"
+        )
+        if self.shared.last_cycle_at and not self.shared.down_groups and not self.shared.error:
             alerts.append("All portal URLs are up.")
         self.shared.alerts = alerts
 

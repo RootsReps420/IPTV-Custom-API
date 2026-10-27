@@ -13,6 +13,8 @@ const nextCheck = document.getElementById("next-check");
 const alertsEl = document.getElementById("alerts");
 const modePill = document.getElementById("mode-pill");
 const eventList = document.getElementById("event-list");
+const eventCount = document.getElementById("event-count");
+const downNowEl = document.getElementById("down-now");
 const statLive = document.getElementById("stat-live");
 const statAvail = document.getElementById("stat-avail");
 const statPlaylists = document.getElementById("stat-playlists");
@@ -66,6 +68,65 @@ function fmtAge(seconds) {
   const h = Math.floor(n / 3600);
   const m = Math.floor((n % 3600) / 60);
   return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function secondsSince(iso) {
+  if (!iso) {
+    return null;
+  }
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+}
+
+function agoLabel(iso) {
+  const n = secondsSince(iso);
+  if (n === null) {
+    return "";
+  }
+  return n < 5 ? "just now" : `${fmtAge(n)} ago`;
+}
+
+const REASON_LABELS = {
+  tcp_timeout: "Connection timed out",
+  tcp_refused: "Connection refused",
+  tcp_error: "Connection error",
+  dns_nxdomain: "Domain does not exist",
+  dns_timeout: "DNS lookup timed out",
+  dns_no_records: "No DNS records",
+  dns_no_nameservers: "No working nameservers",
+  dns_error: "DNS error",
+  stream_no_api: "Xtream API missing (404)",
+  stream_blocked: "Panel blocked the request",
+  stream_452: "Panel rejected this host",
+  stream_auth: "Account not authorised",
+  stream_no_mpegts: "No MPEG-TS on live path",
+  stream_timeout: "Stream timed out",
+  stream_error: "Stream request failed",
+  stream_not_verified: "Pre-swap stream check failed",
+  check_error: "Health check crashed",
+  not_checked: "Not checked yet",
+};
+
+function reasonLabel(reason) {
+  return REASON_LABELS[reason] || reason || "Down";
+}
+
+function hostLabel(url) {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return String(url).replace(/^https?:\/\//i, "");
+  }
+}
+
+function hostChips(urls) {
+  return (urls || [])
+    .map((url) => `<span class="alert-host" title="${esc(url)}">${esc(hostLabel(url))}</span>`)
+    .join("");
+}
+
+// Keep <details> open across the 4s re-render.
+function openDetailKeys(root) {
+  return new Set([...root.querySelectorAll("details[open][data-key]")].map((el) => el.dataset.key));
 }
 
 function watchKindLabel(kind) {
@@ -155,14 +216,16 @@ function ipRow(ips) {
 function card(item) {
   const state = item.healthy ? "up" : "down";
   const reason = item.fail_reason
-    ? `<span>reason ${esc(item.fail_reason)}${
+    ? `<span class="card-reason" title="${esc(item.fail_reason)}${
         item.error_detail ? ` · ${esc(String(item.error_detail).slice(0, 80))}` : ""
-      }</span>`
+      }">${esc(reasonLabel(item.fail_reason))}</span>`
     : "";
   const playlists = item.playlists?.length ? `<span>playlists ${esc(item.playlists.join(", "))}</span>` : "";
+  const downFor = item.down_since ? ` · down ${fmtAge(secondsSince(item.down_since))}` : "";
+  const checked = item.last_checked ? ` · checked ${agoLabel(item.last_checked)}` : "";
   const check = item.healthy
-    ? `check-pass completed: ${item.consecutive_successes || 0}`
-    : `fails ${item.consecutive_failures}`;
+    ? `check-pass completed: ${item.consecutive_successes || 0}${checked}`
+    : `fails ${item.consecutive_failures}${downFor}${checked}`;
   const downs = `Service 'Down' count (24hr): ${item.down_events_24h || 0}`;
   const frequent = item.frequent_failure
     ? `<span class="pill frequent" title="${item.down_events_24h || 0} separate downs in 24h">Frequent failure</span>`
@@ -228,13 +291,16 @@ function groupBlock(title, rows, listClass) {
     return "";
   }
   const groupUp = rows.filter((item) => item.healthy).length;
+  const groupDown = rows.length - groupUp;
+  // Down first so problems are at the top of each group; stable otherwise.
+  const ordered = [...rows].sort((a, b) => Number(a.healthy) - Number(b.healthy));
   return `
     <div class="url-group">
       <div class="url-group-head">
         <h3>${esc(title)}</h3>
-        <span class="count">${groupUp}/${rows.length} up</span>
+        <span class="count${groupDown ? " has-down" : ""}">${groupUp}/${rows.length} up${groupDown ? ` · ${groupDown} down` : ""}</span>
       </div>
-      <div class="${listClass}">${rows.map(card).join("")}</div>
+      <div class="${listClass}">${ordered.map(card).join("")}</div>
     </div>
   `;
 }
@@ -912,23 +978,139 @@ if (liveList) {
   liveList.addEventListener("click", onPoolTabClick);
 }
 
+const EVENTS_COLLAPSED = 10;
+let eventsShowAll = false;
+
+// Returns escaped HTML. Grouped events get a readable headline; old events keep their message.
+function eventTitle(item) {
+  const hosts = item.hosts || [];
+  if (hosts.length > 1) {
+    const where = item.subnet ? ` on ${item.subnet}` : "";
+    const role = item.role === "available" ? "standby" : item.role || "";
+    if (item.kind === "down") {
+      return esc(`${hosts.length} ${role} hosts down${where} — ${reasonLabel(item.reason)}`);
+    }
+    if (item.kind === "up") {
+      return esc(`${hosts.length} ${role} hosts recovered${where}`);
+    }
+  }
+  if (hosts.length === 1 && (item.kind === "down" || item.kind === "up")) {
+    const role = item.role === "available" ? "standby" : item.role || "";
+    const verb = item.kind === "down" ? `down — ${reasonLabel(item.reason)}` : "recovered";
+    return `${role} <strong>${esc(hostLabel(hosts[0]))}</strong> ${esc(verb)}`;
+  }
+  return esc(item.message);
+}
+
 function renderEvents(items) {
-  if (!items || !items.length) {
+  const list = items || [];
+  if (eventCount) {
+    eventCount.textContent = list.length ? String(list.length) : "";
+  }
+  if (!list.length) {
     eventList.innerHTML = `<li class="empty-events">No events yet this process. Downs, recoveries, and swaps show up here.</li>`;
     return;
   }
-  eventList.innerHTML = items
+  const open = openDetailKeys(eventList);
+  const shown = eventsShowAll ? list : list.slice(0, EVENTS_COLLAPSED);
+  const rows = shown
     .map((item) => {
       const kind = esc(item.kind || "info");
+      const hosts = item.hosts || [];
+      const headline = eventTitle(item);
+      const key = `${item.ts}|${item.kind}`;
+      const body =
+        hosts.length > 1
+          ? `<details class="event-fold" data-key="${esc(key)}"${open.has(key) ? " open" : ""}>
+               <summary><span class="event-msg">${headline}</span><span class="alert-fold-hint">Hosts</span></summary>
+               <div class="alert-hosts">${hostChips(hosts)}</div>
+             </details>`
+          : `<span class="event-msg">${headline}</span>`;
       return `
-        <li>
-          <span class="event-time">${esc(fmtTime(item.ts))}</span>
+        <li class="event-row ${kind}">
+          <span class="event-time" title="${esc(new Date(item.ts).toLocaleString())}">
+            ${esc(fmtTime(item.ts))}<small>${esc(agoLabel(item.ts))}</small>
+          </span>
           <span class="event-kind ${kind}">${kind}</span>
-          <span>${esc(item.message)}</span>
+          ${body}
         </li>
       `;
     })
     .join("");
+  const more =
+    list.length > EVENTS_COLLAPSED
+      ? `<li class="event-more"><button type="button" class="sort-btn" data-events-toggle>${
+          eventsShowAll ? "Show fewer" : `Show all ${list.length}`
+        }</button></li>`
+      : "";
+  eventList.innerHTML = rows + more;
+}
+
+eventList.addEventListener("click", (event) => {
+  if (event.target.closest("[data-events-toggle]")) {
+    eventsShowAll = !eventsShowAll;
+    renderEvents(window.latest?.events || []);
+  }
+});
+
+function downGroupTitle(group) {
+  if (group.likely_block) {
+    return `${group.subnet} unreachable from the VPS`;
+  }
+  const where = group.subnet ? ` on ${group.subnet}` : "";
+  return `${reasonLabel(group.reason)}${where}`;
+}
+
+function renderDownNow(groups) {
+  if (!downNowEl) {
+    return;
+  }
+  const list = groups || [];
+  if (!list.length) {
+    downNowEl.hidden = true;
+    downNowEl.innerHTML = "";
+    return;
+  }
+  const open = openDetailKeys(downNowEl);
+  const total = list.reduce((sum, group) => sum + group.count, 0);
+  const liveDown = list.some((group) => group.role === "live");
+  const rows = list
+    .map((group) => {
+      const key = `${group.role}|${group.reason}|${group.subnet || ""}`;
+      const since = group.since ? `down ${fmtAge(secondsSince(group.since))}` : "";
+      const ips = group.ips?.length ? group.ips.join(", ") : "";
+      const meta = [group.reason, since, ips].filter(Boolean).map(esc).join(" · ");
+      const hint = group.likely_block
+        ? `<p class="down-hint">All ${group.count} names on this range time out together — likely a firewall block on the VPS IP, not dead hosts. Check from a home connection.</p>`
+        : "";
+      return `
+        <details class="down-group ${esc(group.role)}" data-key="${esc(key)}"${open.has(key) ? " open" : ""}>
+          <summary>
+            <span class="down-count">${esc(String(group.count))}</span>
+            <span class="down-main">
+              <span class="down-title">
+                <span class="down-role">${group.role === "live" ? "Live" : "Standby"}</span>
+                ${esc(downGroupTitle(group))}
+              </span>
+              <span class="down-meta">${meta}</span>
+            </span>
+            <span class="alert-fold-hint">${group.count === 1 ? "Host" : "Hosts"}</span>
+          </summary>
+          ${hint}
+          <div class="alert-hosts">${hostChips(group.hosts)}</div>
+        </details>
+      `;
+    })
+    .join("");
+  downNowEl.hidden = false;
+  downNowEl.classList.toggle("has-live", liveDown);
+  downNowEl.innerHTML = `
+    <div class="down-now-head">
+      <h2><span class="down-dot" aria-hidden="true"></span>Down now</h2>
+      <span class="count">${esc(String(total))} host${total === 1 ? "" : "s"} · ${esc(String(list.length))} group${list.length === 1 ? "" : "s"}</span>
+    </div>
+    ${rows}
+  `;
 }
 
 function alertClass(text) {
@@ -945,41 +1127,8 @@ function alertClass(text) {
   return "alert";
 }
 
-function alertHostLabel(url) {
-  try {
-    return new URL(url).host || url;
-  } catch {
-    return String(url).replace(/^https?:\/\//i, "");
-  }
-}
-
-function renderDownAlert(text, kind, count, rawList, openKeys) {
-  const urls = rawList.split(",").map((item) => item.trim()).filter(Boolean);
-  const key = `${kind}-${count}`;
-  const open = openKeys.has(key) ? " open" : "";
-  const label = count === 1 ? `${kind} URL down` : `${kind} URLs down`;
-  const chips = urls
-    .map((url) => {
-      const host = alertHostLabel(url);
-      return `<span class="alert-host" title="${esc(url)}">${esc(host)}</span>`;
-    })
-    .join("");
-  return `
-    <details class="${alertClass(text)} alert-fold" data-alert-key="${esc(key)}"${open}>
-      <summary>
-        <span><strong>${esc(String(count))}</strong> ${esc(label)}</span>
-        <span class="alert-fold-hint">Show list</span>
-      </summary>
-      <div class="alert-hosts">${chips}</div>
-    </details>
-  `;
-}
-
-function renderAlertHtml(text, openKeys) {
-  const down = /^(\d+) (live|standby) URL\(s\) down:\s*(.+)$/i.exec(text);
-  if (down) {
-    return renderDownAlert(text, down[2].toLowerCase(), Number(down[1]), down[3], openKeys);
-  }
+function renderAlertHtml(text) {
+  // Down hosts render in the Down now panel (down_groups); alerts are plain notices.
   return `<div class="${alertClass(text)}">${esc(text)}</div>`;
 }
 
@@ -998,11 +1147,8 @@ function renderAlerts(items, fallbackError) {
     alertsEl.innerHTML = "";
     return;
   }
-  const openKeys = new Set(
-    [...alertsEl.querySelectorAll("details[open][data-alert-key]")].map((el) => el.dataset.alertKey),
-  );
   alertsEl.hidden = false;
-  alertsEl.innerHTML = messages.map((text) => renderAlertHtml(text, openKeys)).join("");
+  alertsEl.innerHTML = messages.map(renderAlertHtml).join("");
 }
 
 function tickCountdown() {
@@ -1027,6 +1173,8 @@ async function refresh() {
     const signedIn = Boolean(data.owner);
     lastCycle.textContent = fmtTime(data.last_cycle_at);
     statAvail.textContent = `${counts.available_up ?? "—"}/${counts.available_total ?? "—"} up`;
+    statAvail.parentElement.classList.toggle("is-bad", (counts.available_up ?? 0) < (counts.available_total ?? 0));
+    statLive.parentElement.classList.toggle("is-bad", (counts.live_up ?? 0) < (counts.live_total ?? 0));
     if (playlistStatWrap) {
       playlistStatWrap.hidden = !signedIn;
     }
@@ -1077,6 +1225,7 @@ async function refresh() {
     modePill.hidden = !data.dry_run;
     tickCountdown();
     renderAlerts(data.alerts, data.error);
+    renderDownNow(data.down_groups);
     renderGrouped(availList, availCount, data.available || [], "No standby URLs in urls.yaml.", true, "avail");
     if (signedIn) {
       renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false, "live");

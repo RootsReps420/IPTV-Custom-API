@@ -4,6 +4,10 @@
 # VPS production must keep dashboard_host: 127.0.0.1 (Caddy proxies). Local may use 0.0.0.0.
 check_interval_seconds: 10
 
+# Standby-only hosts are probed this often (live DNS still every cycle).
+# Probing every standby every 10s got the VPS firewalled by shared panel IPs.
+standby_check_interval_seconds: 60
+
 # Live URL must fail this many cycles in a row before EPGenius is called.
 consecutive_failures_to_swap: 3
 

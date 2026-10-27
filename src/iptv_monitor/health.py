@@ -126,18 +126,18 @@ async def _resolve_dns(host: str, timeout: float) -> tuple[bool, list[str], str 
         return False, [], "dns_error", str(exc)
 
 
-async def _check_tcp(
-    ips: list[str],
-    host: str,
-    port: int,
-    timeout: float,
+# One connect per (ip, port) per cycle. Many hostnames share a handful of panel IPs;
+# probing each name separately looked like a port scan and got the VPS firewalled.
+TcpCache = dict[tuple[str, int], "asyncio.Task[tuple[bool, str | None, str | None]]"]
+
+
+async def _probe_tcp_target(
+    target: str, port: int, timeout: float, retries: int = 1
 ) -> tuple[bool, str | None, str | None]:
-    targets = _ipv4_only(ips) or _ipv4_only([host])
-    if not targets:
-        return False, "tcp_error", "no ipv4"
-    last_reason = "tcp_error"
-    last_detail: str | None = None
-    for target in targets:
+    """Connect once; retry a timeout so a single dropped SYN is not a down."""
+    reason = "tcp_error"
+    detail: str | None = None
+    for _attempt in range(retries + 1):
         try:
             conn = asyncio.open_connection(target, port)
             _reader, writer = await asyncio.wait_for(conn, timeout=timeout)
@@ -148,14 +148,42 @@ async def _check_tcp(
                 pass
             return True, None, None
         except asyncio.TimeoutError:
-            last_reason = "tcp_timeout"
-            last_detail = f"{target}:{port}"
+            reason = "tcp_timeout"
+            detail = f"{target}:{port}"
+            continue
         except ConnectionRefusedError:
-            last_reason = "tcp_refused"
-            last_detail = f"{target}:{port}"
+            return False, "tcp_refused", f"{target}:{port}"
         except OSError as exc:
-            last_reason = "tcp_error"
-            last_detail = f"{target}:{port} {exc}"
+            return False, "tcp_error", f"{target}:{port} {exc}"
+    return False, reason, detail
+
+
+async def _check_tcp(
+    ips: list[str],
+    host: str,
+    port: int,
+    timeout: float,
+    cache: TcpCache | None = None,
+) -> tuple[bool, str | None, str | None]:
+    targets = _ipv4_only(ips) or _ipv4_only([host])
+    if not targets:
+        return False, "tcp_error", "no ipv4"
+    last_reason = "tcp_error"
+    last_detail: str | None = None
+    for target in targets:
+        if cache is None:
+            ok, reason, detail = await _probe_tcp_target(target, port, timeout)
+        else:
+            key = (target, port)
+            task = cache.get(key)
+            if task is None:
+                task = asyncio.create_task(_probe_tcp_target(target, port, timeout))
+                cache[key] = task
+            ok, reason, detail = await task
+        if ok:
+            return True, None, None
+        last_reason = reason or "tcp_error"
+        last_detail = detail
     return False, last_reason, last_detail
 
 
@@ -184,6 +212,7 @@ async def check_url(
     *,
     skip_stream: bool = False,
     require_mpegts: bool = True,
+    tcp_cache: TcpCache | None = None,
 ) -> HealthResult:
     """Run enabled checks in order. First failure becomes fail_reason; later checks are skipped.
 
@@ -236,6 +265,7 @@ async def check_url(
                 host,
                 port,
                 settings.tcp_timeout_seconds,
+                tcp_cache,
             )
             if not tcp_ok:
                 fail_reason = tcp_reason
@@ -310,8 +340,12 @@ async def check_urls(
     *,
     skip_stream: bool = False,
     require_mpegts: bool = True,
+    tcp_cache: TcpCache | None = None,
 ) -> dict[str, HealthResult]:
-    """Probe unique URLs in parallel. Keyed by normalised URL."""
+    """Probe unique URLs in parallel. Keyed by normalised URL.
+
+    Pass one `tcp_cache` for a whole cycle so hosts sharing an IP get one connect.
+    """
     unique: list[str] = []
     seen: set[str] = set()
     for raw in urls:
@@ -331,6 +365,7 @@ async def check_urls(
                 credentials,
                 skip_stream=skip_stream,
                 require_mpegts=require_mpegts,
+                tcp_cache=tcp_cache,
             )
             for url in unique
         ),
