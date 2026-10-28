@@ -3,6 +3,7 @@
 Default (no subcommand): run the check loop forever and serve the dashboard.
 `check` / `--once` probe once with no swaps. `test` exercises one piece.
 `apply` pushes DNS to EPGenius. `watch-hash` prints a pbkdf2 hash for /watch logins.
+`dashboard-user` manages dashboard sign-in users (config/dashboard_users.yaml).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from iptv_monitor import dash_auth
 from iptv_monitor.config import load_config
 from iptv_monitor.dashboard import serve_dashboard
 from iptv_monitor.dryrun import (
@@ -83,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print a pbkdf2 hash for config/watch_users.yaml",
     )
     hash_cmd.add_argument("password", nargs="?", help="Password (prompted if omitted)")
+    dash_cmd = sub.add_parser(
+        "dashboard-user",
+        help="Manage dashboard sign-in users (config/dashboard_users.yaml)",
+    )
+    dash_auth.add_cli_arguments(dash_cmd)
     return parser
 
 
@@ -177,6 +184,8 @@ def main(argv: list[str] | None = None) -> int:
 
         extra = [args.password] if args.password else []
         return hash_main(extra)
+    if args.command == "dashboard-user":
+        return dash_auth.run_cli(args, args.root)
     configure_logging(args.root)
     try:
         return asyncio.run(_run(args))

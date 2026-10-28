@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/console.css?v=3" />
+  <link rel="stylesheet" href="/static/console.css?v=4" />
 </head>
 <body>
   <div class="bg" aria-hidden="true"></div>
@@ -42,7 +42,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
           Monitor
         </a>
-        <a href="/owner" id="owner-link">
+        <a href="/owner" id="owner-link" data-owner-only>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="3" /><path d="m17 2-5 5-5-5" /></svg>
           Playlists
         </a>
@@ -60,7 +60,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18" /><path d="M7 15l4-4 3 3 5-6" /></svg>
           History
         </a>
-        <a href="/key">
+        <a href="/key" data-owner-only>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
           Info
         </a>
@@ -74,6 +74,11 @@
         <div class="side-status-main"><span id="side-dot" class="dot"></span><span id="side-status-text">Connecting…</span></div>
         <div class="side-status-meta">Checked <span id="last-cycle">--:--:--</span> · next <span id="next-check">—</span></div>
         <div class="cycle-bar"><i id="side-progress"></i></div>
+      </div>
+      <div class="side-user" id="side-user" hidden>
+        <span class="avatar" id="side-avatar">?</span>
+        <span class="side-user-text"><b id="side-user-name"></b><small id="side-user-role"></small></span>
+        <button type="button" class="sign-out" id="sign-out" aria-label="Sign out" data-tip-title="Sign out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></svg></button>
       </div>
     </aside>
 
@@ -283,7 +288,7 @@
       </div>
     </main>
   </div>
-  <script src="/static/shell.js?v=2"></script>
-  <script src="/static/app.js?v=55"></script>
+  <script src="/static/shell.js?v=3"></script>
+  <script src="/static/app.js?v=56"></script>
 </body>
 </html>

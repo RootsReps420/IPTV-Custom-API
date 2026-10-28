@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<!--
+  Sign-in front page. Served at / while signed out (dash_auth.py); /?next=<path> returns there after.
+  Shows no monitor data: the signal grid is decoration. Theme: console.css. Form: login.js -> POST /login.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Sign in · IPTV Portal Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/console.css?v=4" />
+</head>
+<body class="landing-body">
+  <div class="bg" aria-hidden="true"></div>
+  <main class="landing">
+    <section class="landing-hero">
+      <a class="brand" href="/">
+        <svg class="logo" viewBox="0 0 36 36" aria-hidden="true">
+          <defs>
+            <linearGradient id="logo-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8b7cff" />
+              <stop offset="0.55" stop-color="#6f8cff" />
+              <stop offset="1" stop-color="#3dd6f5" />
+            </linearGradient>
+          </defs>
+          <rect x="1" y="1" width="34" height="34" rx="10" fill="url(#logo-grad)" />
+          <path d="M14 8.5l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="8" y="12.5" width="20" height="14.5" rx="4" fill="rgba(255,255,255,0.16)" stroke="#fff" stroke-width="1.8" />
+          <path d="M16 16.6v6.3l5.2-3.15z" fill="#fff" />
+        </svg>
+        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV control room</span></span>
+      </a>
+
+      <h1 class="landing-title">Every portal, <span class="grad">watched around the clock.</span></h1>
+      <p class="landing-lede">Live DNS health checks, automatic failover through EPGenius and reliability grades for every standby host — all in one control room.</p>
+
+      <ul class="landing-points">
+        <li>
+          <span class="point-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg></span>
+          <span><b>Instant failover</b>Playlists move to a healthy standby before viewers notice.</span>
+        </li>
+        <li>
+          <span class="point-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16" /></svg></span>
+          <span><b>Live signal map</b>Every standby host at a glance, refreshed every few seconds.</span>
+        </li>
+        <li>
+          <span class="point-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></svg></span>
+          <span><b>Reliability grades</b>See which hosts to trust and which to avoid.</span>
+        </li>
+      </ul>
+
+      <div class="landing-grid" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+    </section>
+
+    <section class="login-card" aria-labelledby="login-title">
+      <div class="login-head">
+        <span class="login-chip"><span class="pulse"></span>Private dashboard</span>
+        <h2 id="login-title">Sign in</h2>
+        <p>Use your dashboard account to open the control room.</p>
+      </div>
+      <form id="login-form" novalidate>
+        <label class="field">
+          <span>Username</span>
+          <input id="login-user" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <span class="pw">
+            <input id="login-pass" name="password" type="password" autocomplete="current-password" required />
+            <button type="button" class="pw-toggle" id="pw-toggle" aria-label="Show password">Show</button>
+          </span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="login-remember" checked />
+          <span>Keep me signed in for 30 days</span>
+        </label>
+        <p class="login-error" id="login-error" role="alert" hidden></p>
+        <button type="submit" class="login-btn" id="login-btn">
+          <span>Enter control room</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+        </button>
+      </form>
+      <p class="login-foot">Here to watch TV? <a href="/watch">Open Watch →</a></p>
+    </section>
+  </main>
+  <script src="/static/login.js?v=1"></script>
+</body>
+</html>

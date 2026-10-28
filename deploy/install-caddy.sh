@@ -1,12 +1,10 @@
 #!/bin/bash
-# First-time Caddy + HTTPS + owner basicauth on the OVH VPS.
-# Writes /etc/caddy/Caddyfile and /home/ubuntu/.dashboard-login (password file).
-# Do not re-run on a live box — it would replace the Caddy hash and owner password.
-# After Watch shipped, live Caddy also skips gzip on /api/player; this template may lag.
+# First-time Caddy + HTTPS on the OVH VPS. Writes /etc/caddy/Caddyfile (same as deploy/Caddyfile).
+# No logins in Caddy: the app's sign-in page handles the dashboard (main.py dashboard-user) and
+# Watch has its own login. Do not re-run on a live box without checking the live Caddyfile first.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 HOST="vps-4f889186.vps.ovh.net"
-USER_NAME="dan"
 
 install_caddy() {
   if command -v caddy >/dev/null 2>&1; then
@@ -24,20 +22,20 @@ apt-get update -y
 apt-get install -y curl ca-certificates debian-keyring debian-archive-keyring apt-transport-https gnupg
 install_caddy
 
-PASS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')"
-HASH="$(caddy hash-password --plaintext "$PASS")"
-
-umask 077
 cat >/etc/caddy/Caddyfile <<EOF
 ${HOST} {
-	encode gzip
-	@owner {
-		path /owner /owner/ /api/status /api/switch /api/switch-back
+	@notplayer {
+		not path /api/player /api/player/*
 	}
-	basicauth @owner {
-		${USER_NAME} "${HASH}"
+	encode @notplayer gzip
+	reverse_proxy 127.0.0.1:8787 {
+		flush_interval -1
+		transport http {
+			dial_timeout 10s
+			read_timeout 24h
+			write_timeout 24h
+		}
 	}
-	reverse_proxy 127.0.0.1:8787
 }
 EOF
 
@@ -46,16 +44,10 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw allow OpenSSH
 ufw --force enable
-systemctl enable --now caddy
-systemctl reload caddy
-
-install -m 600 /dev/null /home/ubuntu/.dashboard-login
-chown ubuntu:ubuntu /home/ubuntu/.dashboard-login
-cat >/home/ubuntu/.dashboard-login <<EOF
-url=https://${HOST}
-username=${USER_NAME}
-password=${PASS}
-EOF
+systemctl enable caddy
+systemctl restart caddy
 
 echo "CADDY_OK"
 systemctl is-active caddy
+echo "Next: create the dashboard owner account:"
+echo "  cd /home/ubuntu/iptv-monitor && .venv/bin/python main.py dashboard-user dan --role owner"

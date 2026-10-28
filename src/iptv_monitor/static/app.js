@@ -1643,6 +1643,10 @@ async function refresh() {
   try {
     const owner = isOwnerView();
     const response = await fetch(owner ? "/api/status" : "/api/public");
+    if (response.status === 401) {
+      window.consoleShell?.toSignIn();
+      return;
+    }
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }

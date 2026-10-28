@@ -1,13 +1,13 @@
 # Reverse proxy for the Python app on 127.0.0.1:8787.
 #
-# Open (no Caddy login): `/watch` `/api/watch/*` `/api/player/*` `/static/*`
-# /watch login is IN THE APP (cookie), not Caddy.
-# Caddy `dan`: `/` `/history` `/key` `/owner` and owner APIs (switch, kick, status, live-groups).
-# Caddy `Steve`: `/` and `/history` only (plus `/api/public` `/api/history` those pages need).
-# Steve cannot open `/key`, `/owner`, or switch/kick/status APIs.
+# No logins here: the app does them.
+#   Dashboard: sign-in page at / (dash_auth.py, config/dashboard_users.yaml) —
+#   owner = everything, viewer = / and /history. Unknown paths are owner-only.
+#   Watch: its own site login (/watch, /api/watch/*, /api/player/*).
+# Do not add basicauth back for dashboard paths, or people get two password prompts.
 #
-# Do not gzip `/api/player/*` (live MPEG-TS / HLS). Do not copy this file over
-# /etc/caddy/Caddyfile blindly: keep the live bcrypt hashes.
+# Do not gzip `/api/player/*` (live MPEG-TS / HLS). Copying this over /etc/caddy/Caddyfile:
+# keep the live hostname; validate, then `systemctl restart caddy` (not reload).
 
 vps-4f889186.vps.ovh.net {
 	# Live streams are already compressed video; gzip would buffer and stall playback.
@@ -15,21 +15,6 @@ vps-4f889186.vps.ovh.net {
 		not path /api/player /api/player/*
 	}
 	encode @notplayer gzip
-	@monitor {
-		path / /history /history/* /api/public /api/history
-	}
-	@owner {
-		not path /watch /watch/* /api/watch /api/watch/* /api/player /api/player/* /static /static/*
-		not path / /history /history/* /api/public /api/history
-		not path /.well-known /.well-known/*
-	}
-	basicauth @monitor {
-		dan REPLACE_WITH_BASE64_HASH
-		Steve REPLACE_WITH_STEVE_BASE64_HASH
-	}
-	basicauth @owner {
-		dan REPLACE_WITH_BASE64_HASH
-	}
 	# flush_interval -1: stream MPEG-TS to the browser without waiting for full responses.
 	# Catalogue JSON from this panel can take ~60s; default upstream timeout is too short.
 	reverse_proxy 127.0.0.1:8787 {

@@ -1,5 +1,6 @@
 /* Shared chrome for the console pages (/, /owner, /history, /key).
- * Overview: live clock, one hover/focus tooltip for any element with data-tip-title
+ * Overview: signed-in user + Sign out (/api/session, /logout; viewers lose [data-owner-only] links),
+ * live clock, one hover/focus tooltip for any element with data-tip-title
  * (data-tip-body = extra lines, data-tip-key = colour key), and the sidebar status.
  * Pages without app.js (History, Info) set data-status-feed on <body>; shell.js then
  * polls /api/public for the sidebar status. app.js drives it on the Monitor page.
@@ -188,10 +189,55 @@
   document.addEventListener("pointerleave", hide);
   window.addEventListener("scroll", hide, { passive: true });
 
+  // ---------- Signed-in user ----------
+  // Session gone (expired / signed out elsewhere): back to the sign-in page, then here again.
+  function toSignIn() {
+    location.href = `/?next=${encodeURIComponent(location.pathname + location.search)}`;
+  }
+
+  async function loadSession() {
+    try {
+      const response = await fetch("/api/session", { cache: "no-store" });
+      if (response.status === 401) {
+        toSignIn();
+        return;
+      }
+      const data = await response.json();
+      if (!data.username) {
+        return;
+      }
+      // Viewers (Monitor + History only) do not see links the server would refuse.
+      document.querySelectorAll("[data-owner-only]").forEach((el) => {
+        el.hidden = data.role !== "owner";
+      });
+      const box = document.getElementById("side-user");
+      if (box) {
+        document.getElementById("side-user-name").textContent = data.username;
+        document.getElementById("side-user-role").textContent = data.role === "owner" ? "Owner" : "Viewer";
+        document.getElementById("side-avatar").textContent = data.username.slice(0, 1).toUpperCase();
+        box.hidden = false;
+      }
+    } catch {
+      // Offline: keep the page; the status poll reports it.
+    }
+  }
+
+  document.getElementById("sign-out")?.addEventListener("click", async () => {
+    try {
+      await fetch("/logout", { method: "POST", credentials: "same-origin" });
+    } finally {
+      location.href = "/";
+    }
+  });
+
   // ---------- Sidebar status for History / Info ----------
   async function pollStatus() {
     try {
       const response = await fetch("/api/public", { cache: "no-store" });
+      if (response.status === 401) {
+        toSignIn();
+        return;
+      }
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -208,10 +254,11 @@
 
   tickClock();
   setInterval(tickClock, 1000);
+  loadSession();
   if (document.body.hasAttribute("data-status-feed")) {
     pollStatus();
     setInterval(pollStatus, 15000);
   }
 
-  window.consoleShell = { setStatus, overallState, reliability, incidentDays, gradeTip, hideTip: hide };
+  window.consoleShell = { setStatus, overallState, reliability, incidentDays, gradeTip, toSignIn, hideTip: hide };
 })();

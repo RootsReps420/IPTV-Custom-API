@@ -10,6 +10,7 @@ config/urls.yaml
 config/player.yaml
 config/watch_users.yaml
 config/watch_live_groups.yaml
+config/dashboard_users.yaml
 config/*.yaml.tmp
 state/
 # VPS-only: backups, hand-made config copies, failed-deploy marker (deploy/update.sh)

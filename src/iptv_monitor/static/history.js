@@ -291,6 +291,10 @@ function render() {
 async function poll() {
   try {
     const response = await fetch("/api/history", { cache: "no-store" });
+    if (response.status === 401) {
+      window.consoleShell.toSignIn();
+      return;
+    }
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }

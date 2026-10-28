@@ -1,0 +1,15 @@
+# Dashboard sign-in users. The live copy is config/dashboard_users.yaml (gitignored).
+# Overview: owner = everything (Playlists, Info, Switch, Watch kicks); viewer = Monitor + History.
+# Manage it with the CLI instead of editing hashes by hand:
+#   .venv/bin/python main.py dashboard-user dan --role owner      # add / change password
+#   .venv/bin/python main.py dashboard-user Steve --role viewer
+#   .venv/bin/python main.py dashboard-user --list
+#   sudo cat /etc/caddy/Caddyfile | .venv/bin/python main.py dashboard-user --import-caddy -
+# password_hash is pbkdf2_sha256$... (from the CLI) or bcrypt $2a$... (imported from Caddy basicauth).
+users:
+  - username: dan
+    role: owner
+    password_hash: pbkdf2_sha256$120000$REPLACE_SALT$REPLACE_DIGEST
+  - username: Steve
+    role: viewer
+    password_hash: pbkdf2_sha256$120000$REPLACE_SALT$REPLACE_DIGEST

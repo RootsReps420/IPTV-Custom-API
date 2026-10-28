@@ -43,22 +43,23 @@ flowchart LR
   App -->|alerts swaps status| Disc
 ```
 
-Caddy terminates TLS and proxies to the app on `127.0.0.1:8787`. That port stays closed on the firewall. Watch and its media APIs are **not** behind Caddy basic-auth; they use the Watch site login. The monitor pages and owner APIs are.
+Caddy terminates TLS and proxies to the app on `127.0.0.1:8787`. That port stays closed on the firewall. Logins happen **in the app**: the dashboard has its own sign-in page (`dash_auth.py`, shown at `/` when signed out) and Watch keeps its own site login.
 
 ```mermaid
 flowchart TB
-  subgraph caddy [Caddy]
-    BA[Basic-auth: monitor + owner]
-    Open[No Caddy login]
+  subgraph signin [App sign-in]
+    Owner[Owner account]
+    Viewer[Viewer account]
+    WL[Watch site login]
   end
 
-  BA --> Pub["/  /history  /key"]
-  BA --> Own["/owner  switch  kick"]
-  Open --> W["/watch"]
-  Open --> API["/api/watch  /api/player  /static"]
+  Viewer --> Pub["/  /history"]
+  Owner --> Pub
+  Owner --> Own["/owner  /key  switch  kick"]
+  WL --> W["/watch  /api/watch  /api/player"]
 ```
 
-A **read-only** Caddy user (optional) can open `/` and `/history` only — not Playlists, Info, Switch, or kick.
+A **viewer** account (optional) can open `/` and `/history` only — not Playlists, Info, Switch, or kick. Manage accounts with `main.py dashboard-user` ([deploy/README.md](deploy/README.md#dashboard-accounts)).
 
 ---
 
@@ -193,11 +194,11 @@ Frequent failure is **not** History. The 24-hour file is only for the badge and 
 
 | Path | Who | What |
 |------|-----|------|
-| `/` | Monitor login | Standby cards (`dns` / `tcp` / `mpeg-ts`), alerts, events. No live DNS, no playlists. |
-| `/owner` | Owner login | The same, plus Current DNS, playlists, Switch / Choose URL / Switch back, Watch sessions + kick. |
-| `/history` | Monitor login | 90-day outage counts. Public JSON omits currently-live hosts that are not in the standby pool. |
-| `/key` | Owner login | Legend (UP / DOWN / Cloudflare / Frequent failure / Switch / Watch). |
-| `/watch` | Watch site login | Browser player. Not a Caddy user. |
+| `/` | Sign-in page, then owner or viewer | Standby cards (`dns` / `tcp` / `mpeg-ts`), alerts, events. No live DNS, no playlists. |
+| `/owner` | Owner account | The same, plus Current DNS, playlists, Switch / Choose URL / Switch back, Watch sessions + kick. |
+| `/history` | Owner or viewer | 90-day outage counts. Public JSON omits currently-live hosts that are not in the standby pool. |
+| `/key` | Owner account | Legend (UP / DOWN / Cloudflare / Frequent failure / Switch / Watch). |
+| `/watch` | Watch site login | Browser player. Separate from dashboard accounts. |
 
 Owner JSON includes playlist **usernames** and current DNS. It does not include panel passwords.
 
@@ -249,13 +250,14 @@ Do not put the status webhook in the swaps channel.
 | `config/urls.yaml` | **No** | Standby pool. Magnum rows need `pool: magnum`. Strong 8K VPN hosts go under `vpn:`. |
 | `config/player.yaml` | **No** | Watch portal + optional live M3U. |
 | `config/watch_users.yaml` | **No** | Watch site logins (hashes only). |
+| `config/dashboard_users.yaml` | **No** | Dashboard sign-in accounts: owner / viewer (hashes only). |
 | `config/settings.yaml` | Yes | Intervals, checks, dashboard bind. Production must keep `dashboard_host: 127.0.0.1`. |
 | `config/*.example.yaml` | Yes | Templates. |
 | `state/` | **No** | 24h failure stamps, 90-day history, Watch cache. |
 | `logs/monitor.log` | **No** | Rotating log. |
 | `src/iptv_monitor/` | Yes | The app. |
 | `android/` | Yes | Sideloadable TV/phone player (Xtream/M3U on device). See [android/README.md](android/README.md). |
-| `deploy/` | Yes | systemd unit, Caddy **template** (replace hostname and hashes on the server). |
+| `deploy/` | Yes | systemd unit, Caddy **template** (replace the hostname on the server). |
 
 `current_dns` must be the portal URL **as EPGenius expects it** (usually `http://host`, no extra port unless the panel really uses one).
 
@@ -341,7 +343,8 @@ Dry-run commands do **not** call EPGenius or rewrite `current_dns`.
 | `history.py` | 90-day outage store (`state/url_history.json`). |
 | `epgenius.py` | `update_creds` HTTP call. |
 | `notify.py` | Discord webhooks + edited status board. |
-| `dashboard.py` | FastAPI routes for monitor / owner / history. |
+| `dashboard.py` | FastAPI routes for monitor / owner / history, sign-in and sign-out. |
+| `dash_auth.py` | Dashboard accounts, session cookie, which paths need owner / viewer. |
 | `watch.py` / `player_*.py` | Watch login, catalogue, media proxy, presence, slots. |
 | `player_sync.py` | Periodic M3U / Xtream / EPG refresh into `state/`. |
 | `dryrun.py` | `check` / `test` commands. |

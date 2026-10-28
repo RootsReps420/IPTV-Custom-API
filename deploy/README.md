@@ -28,13 +28,14 @@ sudo journalctl -u iptv-monitor -n 50 --no-pager
 | `src/`, `main.py`, `pyproject.toml` | Yes | Push to `main`. Auto-deploy pulls, reinstalls if needed, restarts |
 | `src/iptv_monitor/static/` | Yes | Push to `main` (bump the `?v=` cache-bust in HTML) |
 | `config/settings.yaml` | Yes | Push to `main`. Keep `dashboard_host: 127.0.0.1`; the unit also pins `DASHBOARD_HOST=127.0.0.1`. |
-| `deploy/*.service`, `deploy/*.timer` | Yes | Pulled automatically but **not** installed. Copy to `/etc/systemd/system/` and `daemon-reload` by hand |
+| `deploy/*.service`, `deploy/*.timer`, `deploy/Caddyfile` | Yes | Pulled automatically but **not** installed. Copy to `/etc/systemd/system/` and `daemon-reload` by hand |
 | `.env` | **No** | Edit on the server only |
 | `config/playlists.yaml` | **No** | Edit on the server. Reloads next cycle. Failover rewrites `current_dns` here. |
 | `config/urls.yaml` | **No** | Same as playlists |
 | `config/player.yaml` | **No** | Watch portal + M3U. Magnum swaps rewrite `dns`. |
 | `config/watch_users.yaml` | **No** | Watch site hashes |
 | `config/watch_live_groups.yaml` | **No** | /watch Live TV group ON/OFF. Edited from `/owner`. Reloads without a restart. |
+| `config/dashboard_users.yaml` | **No** | Dashboard sign-in accounts. Manage with `main.py dashboard-user` (see below). |
 | `state/` | **No** | Failure history, URL history, Watch catalogue cache |
 | Live `/etc/caddy/Caddyfile` | **No** | Do **not** overwrite with `deploy/Caddyfile` without keeping live hashes and hostname |
 
@@ -88,10 +89,9 @@ Caddy terminates HTTPS and proxies to `127.0.0.1:8787`. Port **8787 stays closed
 
 `deploy/Caddyfile` is a **template**. The live file is `/etc/caddy/Caddyfile`. When you edit Caddy:
 
-1. Keep the live basic-auth hashes (do not paste template placeholders).
-2. Keep Watch, `/api/watch/*`, `/api/player/*`, and `/static/*` **out** of basic-auth.
-3. Do **not** gzip `/api/player/*` (live MPEG-TS will buffer).
-4. Validate, then **`systemctl restart caddy`** (do not `reload` on this box — reload has taken the site down).
+1. Caddy does **no** logins any more — the app's sign-in page does (see [Dashboard accounts](#dashboard-accounts)). Do not add `basicauth` back for dashboard paths, or people get two password prompts.
+2. Do **not** gzip `/api/player/*` (live MPEG-TS will buffer).
+3. Validate, then **`systemctl restart caddy`** (do not `reload` on this box — reload has taken the site down).
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile
@@ -103,27 +103,35 @@ Typical access:
 
 | Path | Login | What it shows |
 |------|--------|----------------|
-| `/` `/history` | Caddy (owner and optional read-only user) | Standby pool / 90-day history |
-| `/key` `/owner` | Caddy **owner only** | Legend, playlists, Switch, Watch kick |
-| `/api/public` `/api/history` | Same as `/` | JSON for those pages |
-| `/api/status` `/api/switch` `/api/switch-back` `/api/live-groups` | Owner only | Full snapshot, failover, Watch live-group toggles |
-| `/watch` `/api/watch/*` `/api/player/*` | Watch site cookie (not Caddy) | Player, catalogue, media proxy |
+| `/` | Sign-in page when signed out; then owner or viewer | Standby pool, signal map, reliability |
+| `/history` | Owner or viewer | 90-day history |
+| `/key` `/owner` | Owner account | Legend, playlists, Switch, Watch kick |
+| `/api/public` `/api/history` `/api/session` | Owner or viewer | JSON for those pages |
+| `/api/status` `/api/switch` `/api/switch-back` `/api/live-groups` `/api/kick-watch` | Owner account | Full snapshot, failover, Watch live-group toggles |
+| `/watch` `/api/watch/*` `/api/player/*` | Watch site cookie (separate accounts) | Player, catalogue, media proxy |
+| `/healthz` `/static/*` | None | Deploy health check, CSS / JS |
 
-To rotate the owner password, generate a hash the way **this** Caddy build expects (Ubuntu 2.6.2 wants **base64** of the bcrypt string, not a raw `$2a$` line):
+Anything not listed is owner-only by default (`dash_auth.required_role`).
+
+## Dashboard accounts
+
+Accounts live in `config/dashboard_users.yaml` (not in git). **Owner** = everything; **viewer** = Monitor + History. Passwords are stored as hashes only.
 
 ```bash
-python3 << 'PY'
-import base64, getpass, subprocess
-pw = getpass.getpass("New dashboard password: ")
-pw2 = getpass.getpass("Again: ")
-if pw != pw2 or not pw:
-    raise SystemExit("Passwords did not match")
-raw = subprocess.check_output(["caddy", "hash-password", "--plaintext", pw], text=True).strip()
-print("owner " + base64.b64encode(raw.encode()).decode())
-PY
+cd /home/ubuntu/iptv-monitor
+.venv/bin/python main.py dashboard-user --list
+.venv/bin/python main.py dashboard-user dan --role owner      # add, or change password (prompted)
+.venv/bin/python main.py dashboard-user Steve --role viewer
+.venv/bin/python main.py dashboard-user Steve --remove
 ```
 
-Put that user line inside the owner `basicauth` matcher. Leave path matchers in place.
+Changes apply at once, no restart: removing an account or changing its role takes effect on that person's next request. "Keep me signed in" lasts 30 days, otherwise 12 hours. After 8 wrong passwords for one name (or 10 from one IP) in 15 minutes, sign-in is locked for the rest of that window.
+
+The first accounts (dan, Steve) were imported from the old Caddy basicauth lines, so their passwords did not change. To import again from a Caddyfile backup:
+
+```bash
+sudo cat /etc/caddy/Caddyfile.bak-basicauth | .venv/bin/python main.py dashboard-user --import-caddy -
+```
 
 If Caddy is down, an SSH tunnel still works:
 

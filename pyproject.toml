@@ -21,6 +21,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "itsdangerous>=2.2",
+    "bcrypt>=4.1",
 ]
 
 [project.scripts]
