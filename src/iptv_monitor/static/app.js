@@ -308,7 +308,7 @@ function card(item, { live = false } = {}) {
     <article class="card ${state}${item.frequent_failure ? " frequent" : ""}${live ? " live" : ""}${flash}" data-url="${esc(item.url)}">
       <div class="card-top">
         <div class="card-title">${onAir}<span class="url" title="${esc(item.url)}">${esc(hostLabel(item.url))}</span></div>
-        ${signalBars(item)}
+        <div class="card-marks">${gradeChip(item)}${signalBars(item)}</div>
       </div>
       <div class="pills">
         <span class="pill ${state}">${state}</span>
@@ -455,7 +455,15 @@ function poolChoices(playlist) {
       if (Boolean(a.healthy) !== Boolean(b.healthy)) {
         return a.healthy ? -1 : 1;
       }
-      return hostOf(a.url).localeCompare(hostOf(b.url));
+      // Most reliable first (fewest outage days in 30, then fewest outages in 7 days).
+      const ra = gradeFor(a);
+      const rb = gradeFor(b);
+      const byDays = (ra?.bad ?? 99) - (rb?.bad ?? 99);
+      if (byDays !== 0) {
+        return byDays;
+      }
+      const byWeek = (ra?.downs7 ?? 0) - (rb?.downs7 ?? 0);
+      return byWeek || hostOf(a.url).localeCompare(hostOf(b.url));
     });
 }
 
@@ -501,7 +509,10 @@ function pickerMarkup(item, id, dryRun, busy) {
     const state = row.healthy ? "up" : "down";
     const frequent = row.frequent_failure ? " · frequent" : "";
     const prefix = row.vpn ? "VPN · " : "";
-    return `<option value="${esc(row.url)}"${selected}${disabled}>${prefix}${esc(hostOf(row.url))} · ${state} · ${kind}${frequent}</option>`;
+    const rel = gradeFor(row);
+    const grade = rel ? `${rel.grade} · ` : "";
+    const clean = rel ? ` · ${rel.clean}/${rel.span} clean days` : "";
+    return `<option value="${esc(row.url)}"${selected}${disabled}>${grade}${prefix}${esc(hostOf(row.url))} · ${state} · ${kind}${frequent}${clean}</option>`;
   };
   const publicRows = choices.filter((row) => !row.vpn);
   const vpnRows = choices.filter((row) => row.vpn);
@@ -1208,7 +1219,9 @@ function cellMarkup(item) {
   const cls = !item.healthy ? "down" : item.frequent_failure ? "frequent" : "up";
   const title = item.healthy ? SIGNAL_TEXT[signalLevel(item)] : `Down · ${reasonLabel(item.fail_reason)}`;
   const host = hostLabel(item.url);
-  const body = [host, laneLabel(item), outagesText(item), "Click to jump to its card"].join("\n");
+  const rel = gradeFor(item);
+  const gradeLine = rel ? `Grade ${rel.grade} · ${rel.clean}/${rel.span} clean days` : "";
+  const body = [host, laneLabel(item), outagesText(item), gradeLine, "Click to jump to its card"].filter(Boolean).join("\n");
   return `<button type="button" class="cell ${cls}" data-url="${esc(item.url)}" data-tip-title="${esc(title)}" data-tip-body="${esc(body)}" data-tip-key="${cls}" aria-label="${esc(`${host}: ${title}`)}"></button>`;
 }
 
@@ -1218,7 +1231,10 @@ function renderMatrix(items) {
   }
   // Only rebuild when something changed, so hover + focus survive the 4s poll.
   const key = items
-    .map((item) => `${item.url}|${item.healthy}|${item.frequent_failure}|${item.down_events_24h}|${item.fail_reason}`)
+    .map(
+      (item) =>
+        `${item.url}|${item.healthy}|${item.frequent_failure}|${item.down_events_24h}|${item.fail_reason}|${gradeFor(item)?.bad ?? ""}`
+    )
     .join(";");
   if (key === matrixKey) {
     return;
@@ -1248,24 +1264,143 @@ function renderMatrix(items) {
   }).join("");
 }
 
+// Scroll to a standby's card and flash it. The card may be behind a lane tab, so show All first.
+function jumpToCard(url) {
+  if (!url || !latest) {
+    return;
+  }
+  poolView.avail = "all";
+  flashUrl = url;
+  flashUntil = Date.now() + 1800;
+  renderGrouped(availList, availCount, latest.available || [], "No standby URLs in urls.yaml.", true, "avail");
+  const target = [...availList.querySelectorAll(".card[data-url]")].find((el) => el.getAttribute("data-url") === url);
+  if (target) {
+    window.consoleShell?.hideTip();
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
 if (matrixEl) {
   matrixEl.addEventListener("click", (event) => {
     const cell = event.target.closest("[data-url]");
-    if (!cell || !latest) {
-      return;
+    if (cell) {
+      jumpToCard(cell.getAttribute("data-url"));
     }
-    const url = cell.getAttribute("data-url");
-    // The card may be hidden behind a lane tab: show All first.
-    if (poolView.avail !== "all") {
-      poolView.avail = "all";
-    }
-    flashUrl = url;
-    flashUntil = Date.now() + 1800;
-    renderGrouped(availList, availCount, latest.available || [], "No standby URLs in urls.yaml.", true, "avail");
-    const target = [...availList.querySelectorAll(".card[data-url]")].find((el) => el.getAttribute("data-url") === url);
-    if (target) {
-      window.consoleShell?.hideTip();
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+}
+
+// ---------- Reliability: best picks per lane + hosts to avoid ----------
+
+const RELIABILITY_LANES = [
+  { id: "strong8k", title: "Strong 8K" },
+  { id: "strong8k-vpn", title: "Strong 8K VPN" },
+  { id: "magnum", title: "Magnum" },
+];
+const AVOID_SHOWN = 8;
+let reliabilityKey = "";
+
+// 30 bars, oldest on the left: tall red = an outage day, short = clean, faint = VPS-wide incident.
+function dayStrip(rel) {
+  const bars = rel.days
+    .map((n, i) => `<i class="${rel.skip.has(i) ? "skip" : n > 0 ? "bad" : ""}"></i>`)
+    .join("");
+  const body = [
+    "One bar per day, oldest on the left.",
+    "Tall red: this host had an outage.",
+    rel.skipped ? "Faint: VPS-wide incident, not counted." : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return `<span class="strip" role="img" aria-label="${rel.bad} of ${rel.span} counted days had an outage" data-tip-title="${rel.clean}/${rel.span} clean days" data-tip-body="${esc(body)}">${bars}</span>`;
+}
+
+function reliabilityRow(item) {
+  const rel = gradeFor(item);
+  const state = item.healthy ? (item.frequent_failure ? " · flapping" : "") : " · down now";
+  return `
+    <button type="button" class="rel-row" data-url="${esc(item.url)}">
+      <span class="grade g-${rel.grade}" aria-label="Grade ${rel.grade}">${rel.grade}</span>
+      <span class="rel-main">
+        <span class="rel-host">${esc(hostLabel(item.url))}</span>
+        <span class="rel-meta">${esc(laneLabel(item) + state)}</span>
+      </span>
+      ${dayStrip(rel)}
+      <span class="rel-num"><b>${rel.clean}/${rel.span}</b><small>clean days</small></span>
+    </button>
+  `;
+}
+
+// Best first: fewest outage days, then fewest outages this week.
+function byReliability(a, b) {
+  const ra = gradeFor(a);
+  const rb = gradeFor(b);
+  return ra.bad - rb.bad || ra.downs7 - rb.downs7 || hostLabel(a.url).localeCompare(hostLabel(b.url));
+}
+
+function renderReliability(pool) {
+  const bestEl = document.getElementById("rel-best");
+  const avoidEl = document.getElementById("rel-avoid");
+  const summaryEl = document.getElementById("rel-summary");
+  if (!bestEl || !avoidEl) {
+    return;
+  }
+  const graded = pool.filter((item) => gradeFor(item));
+  const key = graded
+    .map((item) => `${item.url}|${item.healthy}|${item.frequent_failure}|${gradeFor(item).bad}|${gradeFor(item).downs7}`)
+    .join(";");
+  if (key === reliabilityKey) {
+    return;
+  }
+  reliabilityKey = key;
+  if (!graded.length) {
+    bestEl.innerHTML = `<div class="empty">Loading 30-day history…</div>`;
+    avoidEl.innerHTML = "";
+    return;
+  }
+  const counts = { A: 0, B: 0, C: 0, D: 0, F: 0 };
+  graded.forEach((item) => {
+    counts[gradeFor(item).grade] += 1;
+  });
+  if (summaryEl) {
+    summaryEl.innerHTML = Object.entries(counts)
+      .map(([grade, n]) => `<span class="grade-count"><span class="grade g-${grade}">${grade}</span>${n}</span>`)
+      .join("");
+  }
+  bestEl.innerHTML =
+    RELIABILITY_LANES.map((lane) => {
+      // A "best pick" must be up, not flapping and graded C or better.
+      const rows = graded
+        .filter(
+          (item) =>
+            poolLane(item) === lane.id &&
+            item.healthy &&
+            !item.frequent_failure &&
+            ["A", "B", "C"].includes(gradeFor(item).grade)
+        )
+        .sort(byReliability)
+        .slice(0, 3);
+      if (!rows.length) {
+        const inLane = graded.some((item) => poolLane(item) === lane.id);
+        return inLane
+          ? `<div class="rel-lane"><div class="rel-lane-title">${esc(lane.title)}</div><div class="rel-none">No healthy host graded C or better.</div></div>`
+          : "";
+      }
+      return `<div class="rel-lane"><div class="rel-lane-title">${esc(lane.title)}</div>${rows.map(reliabilityRow).join("")}</div>`;
+    }).join("") || `<div class="empty">No healthy standbys right now.</div>`;
+  const worst = graded.filter((item) => ["D", "F"].includes(gradeFor(item).grade)).sort((a, b) => byReliability(b, a));
+  const more = worst.length - AVOID_SHOWN;
+  avoidEl.innerHTML = worst.length
+    ? worst.slice(0, AVOID_SHOWN).map(reliabilityRow).join("") +
+      (more > 0 ? `<a class="rel-more" href="/history">+${more} more graded D or F — see History</a>` : "")
+    : `<div class="empty">Nothing to avoid: every standby is grade C or better.</div>`;
+}
+
+const reliabilitySection = document.getElementById("reliability-section");
+if (reliabilitySection) {
+  reliabilitySection.addEventListener("click", (event) => {
+    const row = event.target.closest(".rel-row[data-url]");
+    if (row) {
+      jumpToCard(row.getAttribute("data-url"));
     }
   });
 }
@@ -1362,8 +1497,25 @@ function renderTiles(data, signedIn) {
   }
 }
 
-// 14-day outage trend for the Outages tile, from /api/history (refreshed once a minute).
+// /api/history, refreshed once a minute: the Outages tile trend + per-host reliability grades.
 let dailyLoadedAt = 0;
+const gradeByUrl = new Map();
+const gradeByHost = new Map();
+
+function gradeFor(item) {
+  if (!item?.url) {
+    return null;
+  }
+  return gradeByUrl.get(item.url) || gradeByHost.get(hostLabel(item.url)) || null;
+}
+
+function gradeChip(item) {
+  const rel = gradeFor(item);
+  if (!rel) {
+    return "";
+  }
+  return `<span class="grade g-${rel.grade}" role="img" aria-label="Reliability grade ${rel.grade}: ${esc(rel.text)}" data-tip-title="Grade ${rel.grade} · ${esc(rel.text)}" data-tip-body="${esc(window.consoleShell.gradeTip(rel))}">${rel.grade}</span>`;
+}
 
 async function loadDailyTrend() {
   const holder = document.getElementById("stat-outages-spark");
@@ -1377,6 +1529,27 @@ async function loadDailyTrend() {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
+    gradeByUrl.clear();
+    gradeByHost.clear();
+    const skip = window.consoleShell?.incidentDays(data.urls || []);
+    for (const row of data.urls || []) {
+      const rel = window.consoleShell?.reliability(row, skip);
+      if (rel && row.url) {
+        gradeByUrl.set(row.url, rel);
+        gradeByHost.set(hostLabel(row.url), rel);
+      }
+    }
+    // Grades arrived: redraw what shows them without waiting for the next 4s poll.
+    if (latest) {
+      matrixKey = "";
+      reliabilityKey = "";
+      renderMatrix(latest.available || []);
+      renderReliability(latest.available || []);
+      renderGrouped(availList, availCount, latest.available || [], "No standby URLs in urls.yaml.", true, "avail");
+      if (latest.owner) {
+        renderGrouped(liveList, liveCount, latest.live || [], "No live portal URLs yet.", false, "live");
+      }
+    }
     const days = data.window_days || 90;
     const totals = new Array(days).fill(0);
     for (const row of data.urls || []) {
@@ -1530,6 +1703,7 @@ async function refresh() {
     renderAlerts(data.alerts, data.error);
     renderDownNow(data.down_groups);
     renderMatrix(data.available || []);
+    renderReliability(data.available || []);
     renderGrouped(availList, availCount, data.available || [], "No standby URLs in urls.yaml.", true, "avail");
     if (signedIn) {
       renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false, "live");

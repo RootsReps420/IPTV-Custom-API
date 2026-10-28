@@ -206,6 +206,23 @@ function spark(byDay) {
   return `<div class="spark" aria-hidden="true">${bars}</div>`;
 }
 
+// Reliability grade (shell.js): share of the last 30 days with an outage → A–F,
+// ignoring VPS-wide incident days (recomputed from every poll's rows).
+const gradeCache = new WeakMap();
+let incidentSkip = new Set();
+
+function gradeOf(row) {
+  if (!gradeCache.has(row)) {
+    gradeCache.set(row, window.consoleShell.reliability(row, incidentSkip));
+  }
+  return gradeCache.get(row);
+}
+
+function gradeCell(row) {
+  const rel = gradeOf(row);
+  return `<span class="hist-grade"><span class="grade g-${rel.grade}" role="img" aria-label="Grade ${rel.grade}: ${esc(rel.text)}" data-tip-title="Grade ${rel.grade} · ${esc(rel.text)}" data-tip-body="${esc(window.consoleShell.gradeTip(rel))}">${rel.grade}</span><small>${rel.clean}/${rel.span} clean</small></span>`;
+}
+
 function renderTiles() {
   const totals = dailyTotals(rows);
   const week = totals.slice(-7).reduce((a, b) => a + b, 0);
@@ -231,7 +248,11 @@ function render() {
   });
   renderDaily(visibleRows);
   const sorted = [...visibleRows].sort((a, b) => {
-    const delta = (Number(b[sortKey]) || 0) - (Number(a[sortKey]) || 0);
+    // "Worst grade" ranks by outage days in the last 30, then outages this week.
+    const delta =
+      sortKey === "grade"
+        ? gradeOf(b).bad - gradeOf(a).bad || gradeOf(b).downs7 - gradeOf(a).downs7
+        : (Number(b[sortKey]) || 0) - (Number(a[sortKey]) || 0);
     if (delta !== 0) {
       return delta;
     }
@@ -239,7 +260,7 @@ function render() {
   });
   historyCount.textContent = query ? `${sorted.length} of ${rows.length} URLs` : `${rows.length} URLs`;
   if (!sorted.length) {
-    bodyEl.innerHTML = `<tr><td colspan="8" class="empty-events">No URLs match.</td></tr>`;
+    bodyEl.innerHTML = `<tr><td colspan="9" class="empty-events">No URLs match.</td></tr>`;
     return;
   }
   bodyEl.innerHTML = sorted
@@ -256,6 +277,7 @@ function render() {
         </td>
         <td>${esc(typeLabel(row))}</td>
         <td>${nowLabel(row)}</td>
+        <td>${gradeCell(row)}</td>
         <td>${Number(row.downs_24h) || 0}</td>
         <td>${Number(row.downs_7d) || 0}</td>
         <td><strong>${downs.toLocaleString()}</strong></td>
@@ -275,6 +297,7 @@ async function poll() {
     const data = await response.json();
     rows = data.urls || [];
     windowDays = data.window_days || 90;
+    incidentSkip = window.consoleShell.incidentDays(rows);
     statUrls.textContent = String(data.url_count ?? rows.length);
     statDowns.textContent = Number(data.total_downs ?? 0).toLocaleString();
     statUpdated.textContent = data.generated_at
@@ -284,7 +307,7 @@ async function poll() {
     render();
   } catch (error) {
     statUpdated.textContent = "could not load";
-    bodyEl.innerHTML = `<tr><td colspan="8" class="empty-events">Could not load history.</td></tr>`;
+    bodyEl.innerHTML = `<tr><td colspan="9" class="empty-events">Could not load history.</td></tr>`;
   }
 }
 

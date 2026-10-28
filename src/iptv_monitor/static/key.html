@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
-  <link rel="stylesheet" href="/static/console.css?v=2" />
+  <link rel="stylesheet" href="/static/console.css?v=3" />
 </head>
 <body data-status-feed>
   <div class="bg" aria-hidden="true"></div>
@@ -82,6 +82,7 @@
             <a href="#cf-ns">Cloudflare NS</a>
             <a href="#frequent">Frequent failure</a>
             <a href="#signal">Signal bars &amp; signal map</a>
+            <a href="#grades">Reliability grades</a>
             <a href="#switch">Switch / Choose URL</a>
             <a href="#history">History</a>
             <a href="#watch">Watch</a>
@@ -218,6 +219,32 @@
             </p>
           </article>
 
+          <article class="key-card" id="grades">
+            <div class="key-card-top">
+              <span class="grade g-A">A</span>
+              <h2>Reliability grades</h2>
+            </div>
+            <p>
+              Every standby gets a grade from the share of the <strong>last 30 days</strong> on which it had at least
+              one outage, as seen from the VPS, scaled to 30 days: <strong>A</strong> 0–2 days, <strong>B</strong> 3–6,
+              <strong>C</strong> 7–12, <strong>D</strong> 13–20, <strong>F</strong> 21 or more. Counting days rather than
+              outages means one bad spike only costs a host one day.
+            </p>
+            <p>
+              Days when <strong>75% or more of the pool failed at once</strong> are treated as VPS-side incidents (a
+              firewall block or network trouble on the VPS) and are not counted against any host — they show as faint
+              bars in the 30-day strips. Hosts that fail <em>together as a group</em> on other days, such as a family
+              of names sharing one panel, still count: from the VPS they really are unreliable.
+            </p>
+            <p>
+              The <strong>Reliability</strong> panel lists <strong>Best picks</strong> — the most reliable healthy
+              hosts in each lane — and <strong>Avoid</strong>, the worst. <strong>Choose URL</strong> lists healthy
+              hosts best grade first, with the grade at the start of each option. The History table has a grade
+              column and a <strong>Worst grade</strong> sort. Grades describe the past; a host's current UP/DOWN
+              state still decides whether it can be used.
+            </p>
+          </article>
+
 <article class="key-card" id="switch">
         <div class="key-card-top">
           <span class="pill">switch</span>
@@ -297,6 +324,6 @@
       </div>
     </main>
   </div>
-  <script src="/static/shell.js?v=1"></script>
+  <script src="/static/shell.js?v=2"></script>
 </body>
 </html>

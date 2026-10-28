@@ -3,6 +3,8 @@
  * (data-tip-body = extra lines, data-tip-key = colour key), and the sidebar status.
  * Pages without app.js (History, Info) set data-status-feed on <body>; shell.js then
  * polls /api/public for the sidebar status. app.js drives it on the Monitor page.
+ * reliability(row, incidentDays(rows)) turns an /api/history row into an A–F grade
+ * (shared by Monitor + History so both pages grade the same way).
  * Tooltip text goes in with textContent only: hosts and names come from the API.
  */
 (() => {
@@ -41,6 +43,82 @@
       return { level: "warning", short: `${hosts} down`, headline: `${hosts} down` };
     }
     return { level: "good", short: "All systems up", headline: "All systems operational" };
+  }
+
+  // ---------- Reliability grade ----------
+  // From /api/history rows: share of the last 30 days on which a host had at least one outage.
+  // Counting days (not outages) keeps one bad spike from sinking a host for a month, and days
+  // when 75%+ of the pool failed at once are VPS-side incidents that count against nobody.
+  const GRADE_WINDOW = 30;
+  const INCIDENT_SHARE = 0.75;
+  const GRADE_STEPS = [
+    { grade: "A", maxShare: 2 / 30, text: "Very reliable" },
+    { grade: "B", maxShare: 6 / 30, text: "Reliable" },
+    { grade: "C", maxShare: 12 / 30, text: "Patchy" },
+    { grade: "D", maxShare: 20 / 30, text: "Unreliable" },
+  ];
+  const GRADE_F = { grade: "F", text: "Avoid" };
+
+  function lastDays(row) {
+    return (row?.by_day || []).slice(-GRADE_WINDOW).map((n) => Number(n) || 0);
+  }
+
+  // Indexes (0 = oldest of the last 30 days) of VPS-wide incident days across the pool.
+  function incidentDays(rows) {
+    const pool = (rows || []).filter((row) => row.in_pool !== false);
+    const skip = new Set();
+    if (pool.length < 4) {
+      return skip;
+    }
+    const failing = new Array(GRADE_WINDOW).fill(0);
+    for (const row of pool) {
+      lastDays(row).forEach((n, i) => {
+        if (n > 0) {
+          failing[i] += 1;
+        }
+      });
+    }
+    failing.forEach((n, i) => {
+      if (n >= INCIDENT_SHARE * pool.length) {
+        skip.add(i);
+      }
+    });
+    return skip;
+  }
+
+  function reliability(row, skip = new Set()) {
+    const days = lastDays(row);
+    let counted = 0;
+    let bad = 0;
+    days.forEach((n, i) => {
+      if (!skip.has(i)) {
+        counted += 1;
+        bad += n > 0 ? 1 : 0;
+      }
+    });
+    const share = counted ? bad / counted : 0;
+    const step = GRADE_STEPS.find((s) => share <= s.maxShare + 1e-9) || GRADE_F;
+    return {
+      grade: step.grade,
+      text: step.text,
+      bad,
+      clean: counted - bad,
+      span: counted,
+      skipped: skip.size,
+      skip,
+      days,
+      downs7: Number(row?.downs_7d) || 0,
+    };
+  }
+
+  // Tooltip lines shared by cards, the signal map and History.
+  function gradeTip(rel) {
+    const lines = [`${rel.clean} of ${rel.span} days without an outage`];
+    if (rel.skipped) {
+      lines.push(`${rel.skipped} VPS-wide incident day${rel.skipped === 1 ? "" : "s"} not counted`);
+    }
+    lines.push(`${rel.downs7} outage${rel.downs7 === 1 ? "" : "s"} in the last 7 days`);
+    return lines.join("\n");
   }
 
   // ---------- Tooltip ----------
@@ -135,5 +213,5 @@
     setInterval(pollStatus, 15000);
   }
 
-  window.consoleShell = { setStatus, overallState, hideTip: hide };
+  window.consoleShell = { setStatus, overallState, reliability, incidentDays, gradeTip, hideTip: hide };
 })();
