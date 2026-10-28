@@ -1,6 +1,6 @@
 # VPS operations
 
-How to run, update, and debug the **live** copy. Git push does not update the server. Copy files, then restart if the change was Python or static assets.
+How to run, update, and debug the **live** copy. The VPS runs whatever is on GitHub `main`: push, and it deploys within about 2 minutes (see [Auto-deploy](#auto-deploy-from-main)).
 
 Run **one** monitor. Do not also run the Windows Task Scheduler job.
 
@@ -25,9 +25,10 @@ sudo journalctl -u iptv-monitor -n 50 --no-pager
 
 | Path | In git? | How to update live |
 |------|---------|-------------------|
-| `src/`, `main.py`, `deploy/` | Yes | Copy or `git pull`, then **restart** |
-| `src/iptv_monitor/static/` | Yes | Copy, then restart (or at least cache-bust `?v=` in HTML) |
-| `config/settings.yaml` | Yes | Copy carefully. Production **must** keep `dashboard_host: 127.0.0.1`. YAML reloads each cycle. |
+| `src/`, `main.py`, `pyproject.toml` | Yes | Push to `main`. Auto-deploy pulls, reinstalls if needed, restarts |
+| `src/iptv_monitor/static/` | Yes | Push to `main` (bump the `?v=` cache-bust in HTML) |
+| `config/settings.yaml` | Yes | Push to `main`. Keep `dashboard_host: 127.0.0.1`; the unit also pins `DASHBOARD_HOST=127.0.0.1`. |
+| `deploy/*.service`, `deploy/*.timer` | Yes | Pulled automatically but **not** installed. Copy to `/etc/systemd/system/` and `daemon-reload` by hand |
 | `.env` | **No** | Edit on the server only |
 | `config/playlists.yaml` | **No** | Edit on the server. Reloads next cycle. Failover rewrites `current_dns` here. |
 | `config/urls.yaml` | **No** | Same as playlists |
@@ -41,25 +42,22 @@ Never commit `.env`, playlists, urls, player, or watch-users YAML. The laptop co
 
 ---
 
-## After you change code
+## Auto-deploy from main
 
-1. Push to GitHub if you want a backup (code only).
-2. Copy the changed files onto the app directory (or `git pull` if that directory is a clone).
-3. Restart:
+The app directory is a git checkout of `main`. `iptv-monitor-update.timer` runs `deploy/update.sh` every 2 minutes. When `origin/main` has moved, it:
 
-```bash
-cd /home/ubuntu/iptv-monitor
-sudo systemctl restart iptv-monitor
-systemctl is-active iptv-monitor
-```
-
-If `pyproject.toml` changed:
+1. Resets tracked files to `origin/main`. It never runs `git clean`, so `.env`, live config YAML, `state/` and `logs/` are untouched.
+2. Runs `.venv/bin/pip install -e .` if `pyproject.toml` changed.
+3. Restarts `iptv-monitor`, unless only `*.md` or `android/` changed.
+4. Health check: the service stays up with no crash restarts and `/api/public` answers on `127.0.0.1:8787`. If not, it rolls back to the previous commit, restarts, and posts to the Discord alerts webhook. The failed commit is skipped until `main` moves again.
 
 ```bash
-cd /home/ubuntu/iptv-monitor
-.venv/bin/pip install -e .
-sudo systemctl restart iptv-monitor
+journalctl -u iptv-monitor-update -n 30 --no-pager   # recent deploys
+sudo systemctl start iptv-monitor-update             # deploy now
+sudo systemctl stop iptv-monitor-update.timer        # pause auto-deploy (start to resume)
 ```
+
+Do not edit tracked files on the server; the next deploy overwrites them. Server-only config belongs in the gitignored files above.
 
 ---
 
@@ -137,30 +135,20 @@ Then `http://127.0.0.1:8787`.
 
 ---
 
-## Optional: git clone on the server
-
-Code only. Keep secrets untracked.
-
-```bash
-cd /home/ubuntu/iptv-monitor
-git pull
-sudo systemctl restart iptv-monitor
-```
-
-A private repo needs a deploy key (or keep copying files).
-
----
-
 ## First install
 
 ```bash
-sudo cp /home/ubuntu/iptv-monitor/deploy/iptv-monitor.service /etc/systemd/system/
+git clone https://github.com/RootsReps420/IPTV-Custom-API.git /home/ubuntu/iptv-monitor
+cd /home/ubuntu/iptv-monitor
+python3 -m venv .venv && .venv/bin/pip install -e .
+# add .env and the gitignored config YAML, then:
+sudo cp deploy/iptv-monitor.service deploy/iptv-monitor-update.service deploy/iptv-monitor-update.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now iptv-monitor
+sudo systemctl enable --now iptv-monitor iptv-monitor-update.timer
 sudo ufw allow OpenSSH
 sudo ufw --force enable
 ```
 
-On the server, `config/settings.yaml` must keep `dashboard_host: 127.0.0.1`. Recreate `.venv` on the target architecture — do not copy an x86 venv onto ARM.
+The repo is public, so the clone needs no deploy key. Recreate `.venv` on the target architecture — do not copy an x86 venv onto ARM.
 
 Caddy: prefer `apt install caddy` for the host architecture. `deploy/install-caddy.sh` is a first-boot helper with an amd64 fallback; do not run it on a live box (it would replace hashes) and do not use the amd64 deb on ARM.

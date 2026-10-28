@@ -1,0 +1,16 @@
+# systemd oneshot that deploys origin/main onto the VPS (deploy/update.sh).
+# Triggered by iptv-monitor-update.timer. Logs: journalctl -u iptv-monitor-update
+# No NoNewPrivileges here: update.sh needs sudo to restart iptv-monitor.
+
+[Unit]
+Description=Deploy iptv-monitor from GitHub main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/iptv-monitor
+ExecStart=/bin/bash /home/ubuntu/iptv-monitor/deploy/update.sh
+TimeoutStartSec=300

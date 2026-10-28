@@ -18,6 +18,8 @@ Restart=always
 RestartSec=5
 TimeoutStopSec=20
 Environment=PYTHONUNBUFFERED=1
+# Pins the dashboard to localhost even if settings.yaml in git ever says 0.0.0.0.
+Environment=DASHBOARD_HOST=127.0.0.1
 NoNewPrivileges=true
 PrivateTmp=true
 

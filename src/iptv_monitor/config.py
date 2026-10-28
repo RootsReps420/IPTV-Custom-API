@@ -188,6 +188,10 @@ def ensure_runtime_configs(paths: Paths) -> None:
 
 def load_settings(path: Path) -> Settings:
     data = _safe_yaml().load(path.read_text(encoding="utf-8")) or {}
+    # DASHBOARD_HOST overrides the file: 0.0.0.0 for LAN testing, pinned to 127.0.0.1 on the VPS.
+    host = os.getenv("DASHBOARD_HOST", "").strip()
+    if host:
+        data["dashboard_host"] = host
     return Settings.model_validate(data)
 
 

@@ -321,11 +321,11 @@ Dry-run commands do **not** call EPGenius or rewrite `current_dns`.
 
 ## Keep it running
 
-**VPS (live):** systemd unit `iptv-monitor`. Git push does **not** update the server — copy files, then restart for Python/static changes. YAML-only edits reload on the next cycle. See [deploy/README.md](deploy/README.md).
+**VPS (live):** systemd unit `iptv-monitor`. The server runs GitHub `main`: push, and it deploys within about 2 minutes, restarting and health-checking (rolls back on failure). Gitignored YAML edits on the server reload on the next cycle. See [deploy/README.md](deploy/README.md).
 
 **Windows (lab only):** Task Scheduler job from `scripts/install-windows-task.ps1`. Do **not** enable this while the VPS unit is live.
 
-Production `config/settings.yaml` must bind the dashboard to `127.0.0.1`. The git copy may use `0.0.0.0` for local LAN testing — do not copy that bind address onto the VPS wholesale.
+`config/settings.yaml` binds the dashboard to `127.0.0.1`, which production requires. For LAN testing on a PC, set `DASHBOARD_HOST=0.0.0.0` in the environment (`$env:DASHBOARD_HOST="0.0.0.0"` in PowerShell) rather than editing the file.
 
 ---
 

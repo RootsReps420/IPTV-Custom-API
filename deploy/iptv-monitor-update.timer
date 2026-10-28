@@ -1,0 +1,12 @@
+# Checks GitHub main every 2 minutes (2 minutes after the previous check finished).
+# Pause auto-deploy: sudo systemctl stop iptv-monitor-update.timer
+
+[Unit]
+Description=Check GitHub main for iptv-monitor updates
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+
+[Install]
+WantedBy=timers.target
