@@ -44,13 +44,14 @@ if ! $needs_restart; then
     exit 0
 fi
 
-# Healthy = service active, no automatic restarts since ours, dashboard answering locally.
+# Healthy = service active, no automatic restarts since ours, app answering locally.
+# /healthz stays public when the dashboard is behind its sign-in page.
 healthy() {
     for _ in $(seq 1 15); do
         sleep 3
         if systemctl is-active -q "$SERVICE" \
             && [ "$(systemctl show -p NRestarts --value "$SERVICE")" = "0" ] \
-            && curl -sf -o /dev/null --max-time 5 http://127.0.0.1:8787/api/public; then
+            && curl -sf -o /dev/null --max-time 5 http://127.0.0.1:8787/healthz; then
             return 0
         fi
     done

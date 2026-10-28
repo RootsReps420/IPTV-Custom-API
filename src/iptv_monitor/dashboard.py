@@ -31,6 +31,12 @@ from iptv_monitor.watch import WatchService, register_watch
 
 logger = logging.getLogger("iptv_monitor.dashboard")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+# Pages always revalidate (cheap 304 via ETag) so a deploy never pairs stale HTML with new CSS/JS.
+PAGE_HEADERS = {"Cache-Control": "no-cache"}
+
+
+def _page(name: str) -> FileResponse:
+    return FileResponse(STATIC_DIR / name, headers=PAGE_HEADERS)
 
 
 class SwitchBody(BaseModel):
@@ -130,23 +136,28 @@ def create_app(monitor: Monitor) -> FastAPI:
         except SwitchError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    @app.get("/healthz")
+    async def healthz() -> dict:
+        """Liveness probe for deploy/update.sh. Never behind a login, returns no data."""
+        return {"ok": True}
+
     @app.get("/")
     async def index() -> FileResponse:
         """Public monitor. Same HTML as /owner; JS hides playlists unless owner JSON."""
-        return FileResponse(STATIC_DIR / "index.html")
+        return _page("index.html")
 
     @app.get("/owner")
     async def owner() -> FileResponse:
         """Owner view of the same page (Caddy login)."""
-        return FileResponse(STATIC_DIR / "index.html")
+        return _page("index.html")
 
     @app.get("/key")
     async def key() -> FileResponse:
-        return FileResponse(STATIC_DIR / "key.html")
+        return _page("key.html")
 
     @app.get("/history")
     async def history_page() -> FileResponse:
-        return FileResponse(STATIC_DIR / "history.html")
+        return _page("history.html")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
