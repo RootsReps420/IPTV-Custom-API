@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Info key: what UP / DOWN / Cloudflare / Frequent failure / History / Watch mean. Static page, no API. Theme: console.css. -->
+<!-- Info key: what UP / DOWN / Cloudflare / Frequent failure / signal bars / History / Watch mean. Static page. Theme: console.css. -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -7,15 +7,29 @@
   <title>Info · IPTV Portal Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/console.css?v=1" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/console.css?v=2" />
 </head>
-<body>
+<body data-status-feed>
+  <div class="bg" aria-hidden="true"></div>
   <div class="shell">
     <aside class="sidebar">
       <a class="brand" href="/">
-        <span class="brand-mark">TV</span>
-        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV DNS failover</span></span>
+        <svg class="logo" viewBox="0 0 36 36" aria-hidden="true">
+          <defs>
+            <linearGradient id="logo-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8b7cff" />
+              <stop offset="0.55" stop-color="#6f8cff" />
+              <stop offset="1" stop-color="#3dd6f5" />
+            </linearGradient>
+          </defs>
+          <rect x="1" y="1" width="34" height="34" rx="10" fill="url(#logo-grad)" />
+          <path d="M14 8.5l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="8" y="12.5" width="20" height="14.5" rx="4" fill="rgba(255,255,255,0.16)" stroke="#fff" stroke-width="1.8" />
+          <path d="M16 16.6v6.3l5.2-3.15z" fill="#fff" />
+        </svg>
+        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV control room</span></span>
       </a>
       <nav class="nav" aria-label="Pages">
         <span class="nav-label">Dashboard</span>
@@ -24,11 +38,11 @@
           Monitor
         </a>
         <a href="/owner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="3" /><path d="m17 2-5 5-5-5" /></svg>
           Playlists
         </a>
         <a href="/history">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18" /><path d="M7 15l4-4 3 3 5-6" /></svg>
           History
         </a>
         <a href="/key" class="is-here" aria-current="page">
@@ -41,14 +55,22 @@
           Watch<span class="ext">↗</span>
         </a>
       </nav>
+      <div class="side-status" aria-live="polite">
+        <div class="side-status-main"><span id="side-dot" class="dot"></span><span id="side-status-text">Connecting…</span></div>
+        <div class="side-status-meta">Last check <span id="last-cycle">--:--:--</span></div>
+      </div>
     </aside>
 
     <main class="main">
       <div class="content">
         <header class="page-head">
           <div>
+            <p class="eyebrow">IPTV control room</p>
             <h1>Info</h1>
-            <p class="page-sub">What the badges, states and actions mean</p>
+            <p class="page-sub">What the badges, signals and actions mean</p>
+          </div>
+          <div class="page-meta">
+            <span class="live-chip"><span class="pulse"></span><b>LIVE</b><span id="clock">--:--:--</span></span>
           </div>
         </header>
 
@@ -59,13 +81,14 @@
             <a href="#cf-proxy">Cloudflare Proxy</a>
             <a href="#cf-ns">Cloudflare NS</a>
             <a href="#frequent">Frequent failure</a>
+            <a href="#signal">Signal bars &amp; signal map</a>
             <a href="#switch">Switch / Choose URL</a>
             <a href="#history">History</a>
             <a href="#watch">Watch</a>
             <a href="#vpn">Strong 8K VPN DNS</a>
           </nav>
           <section class="key-page">
-          <article class="key-card" id="up">
+<article class="key-card" id="up">
         <div class="key-card-top">
           <span class="pill up">up</span>
           <h2>UP</h2>
@@ -81,12 +104,12 @@
         </p>
         <p>
           <strong>Use it.</strong> A card marked UP is currently working for playback.
-          <code>check-pass completed: N</code> is how many cycles in a row it has stayed up.
-          <code>Service 'Down' count (24hr)</code> is how many separate outages that host had in the last day.
+          <strong>N passes in a row</strong> on a card is how many cycles in a row it has stayed up, and
+          <strong>N outages in 24h</strong> is how many separate outages that host had in the last day.
         </p>
           </article>
 
-          <article class="key-card" id="down">
+<article class="key-card" id="down">
         <div class="key-card-top">
           <span class="pill down">down</span>
           <h2>DOWN</h2>
@@ -110,14 +133,14 @@
         </p>
         <p>
           <strong>Do not use it.</strong> Players will not get a working stream from this URL.
-          <code>fails N</code> is how many cycles in a row it has been down. After 3 failures
+          <strong>N fails in a row</strong> is how many cycles in a row it has been down. After 3 failures
           (~30 seconds at a 10s check interval) on a
           <em>live</em> URL, playlists on that host are swapped to a healthy standby. A down standby
           is never chosen for failover.
         </p>
           </article>
 
-          <article class="key-card" id="cf-proxy">
+<article class="key-card" id="cf-proxy">
         <div class="key-card-top">
           <span class="pill cf">Cloudflare proxy</span>
           <h2>Cloudflare Proxy</h2>
@@ -138,7 +161,7 @@
         </p>
           </article>
 
-          <article class="key-card" id="cf-ns">
+<article class="key-card" id="cf-ns">
         <div class="key-card-top">
           <span class="pill cf">Cloudflare NS</span>
           <h2>Cloudflare NS</h2>
@@ -158,7 +181,7 @@
         </p>
           </article>
 
-          <article class="key-card" id="frequent">
+<article class="key-card" id="frequent">
         <div class="key-card-top">
           <span class="pill frequent">Frequent failure</span>
           <h2>Frequent failure</h2>
@@ -170,11 +193,32 @@
         </p>
         <p>
           <strong>Treat it as unreliable</strong> even if the latest card says UP — it has been
-          flapping. Counts reset as those downs age out of the 24-hour window.
+          flapping. Counts reset as those downs age out of the 24-hour window. On the signal map it is an
+          amber square marked <strong>!</strong>, and its card shows two amber signal bars.
         </p>
           </article>
 
-          <article class="key-card" id="switch">
+          <article class="key-card" id="signal">
+            <div class="key-card-top">
+              <span class="signal s4" role="img" aria-label="Four signal bars"><i></i><i></i><i></i><i></i></span>
+              <h2>Signal bars &amp; signal map</h2>
+            </div>
+            <p>
+              Every card carries TV-style signal bars that sum up the last day.
+              <strong>Four green bars</strong>: up, no outages in 24 hours.
+              <strong>Three</strong>: up, but it went down once or twice in the last day.
+              <strong>Two amber bars</strong>: flapping (Frequent failure).
+              <strong>One red bar</strong>: down right now.
+            </p>
+            <p>
+              The <strong>signal map</strong> on the Monitor and Playlists pages shows one square per standby URL,
+              grouped by lane and always in the same order: green is up, amber with <strong>!</strong> is flapping,
+              red with <strong>✕</strong> is down. Hover a square for the host and its 24-hour outages; click it to
+              jump to that card.
+            </p>
+          </article>
+
+<article class="key-card" id="switch">
         <div class="key-card-top">
           <span class="pill">switch</span>
           <h2>Switch / Choose URL</h2>
@@ -197,7 +241,7 @@
         </p>
           </article>
 
-          <article class="key-card" id="history">
+<article class="key-card" id="history">
         <div class="key-card-top">
           <span class="pill ns">90 days</span>
           <h2>History</h2>
@@ -215,7 +259,7 @@
         </p>
           </article>
 
-          <article class="key-card" id="watch">
+<article class="key-card" id="watch">
         <div class="key-card-top">
           <span class="pill">watch</span>
           <h2>Watch</h2>
@@ -229,7 +273,7 @@
         </p>
           </article>
 
-          <article class="key-card" id="vpn">
+<article class="key-card" id="vpn">
         <div class="key-card-top">
           <span class="pill vpn-dns">Strong 8K VPN</span>
           <h2>Strong 8K VPN DNS</h2>
@@ -253,5 +297,6 @@
       </div>
     </main>
   </div>
+  <script src="/static/shell.js?v=1"></script>
 </body>
 </html>

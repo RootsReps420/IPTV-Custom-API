@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 90-day outage table. Polls /api/history (public). Worst hosts first. No live-only DNS. Theme: console.css. -->
+<!-- 90-day outage chart + table. Polls /api/history (public). Theme: console.css; shell.js = clock, tooltips, sidebar status. -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -7,15 +7,29 @@
   <title>History · IPTV Portal Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/console.css?v=1" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/console.css?v=2" />
 </head>
-<body>
+<body data-status-feed>
+  <div class="bg" aria-hidden="true"></div>
   <div class="shell">
     <aside class="sidebar">
       <a class="brand" href="/">
-        <span class="brand-mark">TV</span>
-        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV DNS failover</span></span>
+        <svg class="logo" viewBox="0 0 36 36" aria-hidden="true">
+          <defs>
+            <linearGradient id="logo-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8b7cff" />
+              <stop offset="0.55" stop-color="#6f8cff" />
+              <stop offset="1" stop-color="#3dd6f5" />
+            </linearGradient>
+          </defs>
+          <rect x="1" y="1" width="34" height="34" rx="10" fill="url(#logo-grad)" />
+          <path d="M14 8.5l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="8" y="12.5" width="20" height="14.5" rx="4" fill="rgba(255,255,255,0.16)" stroke="#fff" stroke-width="1.8" />
+          <path d="M16 16.6v6.3l5.2-3.15z" fill="#fff" />
+        </svg>
+        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV control room</span></span>
       </a>
       <nav class="nav" aria-label="Pages">
         <span class="nav-label">Dashboard</span>
@@ -24,11 +38,11 @@
           Monitor
         </a>
         <a href="/owner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="3" /><path d="m17 2-5 5-5-5" /></svg>
           Playlists
         </a>
         <a href="/history" class="is-here" aria-current="page">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18" /><path d="M7 15l4-4 3 3 5-6" /></svg>
           History
         </a>
         <a href="/key">
@@ -41,54 +55,82 @@
           Watch<span class="ext">↗</span>
         </a>
       </nav>
+      <div class="side-status" aria-live="polite">
+        <div class="side-status-main"><span id="side-dot" class="dot"></span><span id="side-status-text">Connecting…</span></div>
+        <div class="side-status-meta">Last check <span id="last-cycle">--:--:--</span></div>
+      </div>
     </aside>
 
     <main class="main">
       <div class="content">
         <header class="page-head">
           <div>
+            <p class="eyebrow">IPTV control room</p>
             <h1>History</h1>
-            <p class="page-sub">Outages by URL over the last 90 days</p>
+            <p class="page-sub">Separate outages per URL over the last 90 days</p>
           </div>
-          <div class="page-meta">Updated <span id="stat-updated">waiting…</span></div>
+          <div class="page-meta">
+            <span class="live-chip"><span class="pulse"></span><b>LIVE</b><span id="clock">--:--:--</span></span>
+          </div>
         </header>
 
         <div class="stats">
-          <div class="stat neutral">
-            <span class="label">Window</span>
-            <span class="value" id="stat-window">90d</span>
+          <div class="stat">
+            <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01" /></svg>Outages · 90 days</span>
+            <div class="stat-row"><span class="value" id="stat-downs">—</span></div>
+            <span class="caption">every up → down edge, all URLs</span>
           </div>
-          <div class="stat neutral">
-            <span class="label">URLs tracked</span>
-            <span class="value" id="stat-urls">—</span>
+          <div class="stat">
+            <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>Last 7 days</span>
+            <div class="stat-row"><span class="value" id="stat-week">—</span></div>
+            <span class="caption"><span id="stat-week-cap">&nbsp;</span></span>
           </div>
-          <div class="stat neutral">
-            <span class="label">Outages (90d)</span>
-            <span class="value" id="stat-downs">—</span>
+          <div class="stat">
+            <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 6-6 4 4 8-8" /><path d="M14 7h7v7" /></svg>Worst day</span>
+            <div class="stat-row"><span class="value" id="stat-worst">—</span></div>
+            <span class="caption"><span id="stat-worst-cap">&nbsp;</span></span>
           </div>
+          <div class="stat">
+            <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20" /></svg>URLs tracked</span>
+            <div class="stat-row"><span class="value" id="stat-urls">—</span></div>
+            <span class="caption"><span id="stat-updated">waiting…</span></span>
+          </div>
+        </div>
+
+        <div class="history-tools">
+          <input id="history-filter" type="search" placeholder="Filter by host, e.g. cf. or 8khw" autocomplete="off" aria-label="Filter the chart and table by host" />
+          <span id="history-count" class="count"></span>
         </div>
 
         <section class="panel">
           <div class="section-head">
-            <h2>Outages by URL</h2>
-            <span id="history-count" class="count"></span>
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18" /><path d="M7 16v-4M11 16V8M15 16v-6M19 16V5" /></svg>Outages per day</h2>
+            <span class="count">last 90 days · UTC · hover a day for its total</span>
           </div>
+          <div id="daily-chart" class="daily-chart"></div>
           <details class="help">
-            <summary>How to read this</summary>
-            <p>
-              Each count is a separate outage (healthy → down), not how long it stayed down.
-              Sorted worst-first so the flakiest hosts sit at the top. Sparkline bars are one day each.
-              History starts from when this store was created; older days fill in over time.
-            </p>
+            <summary>Daily numbers</summary>
+            <div id="daily-table" class="daily-table"></div>
           </details>
-          <div class="history-tools">
-            <input id="history-filter" type="search" placeholder="Filter by host…" autocomplete="off" />
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>Outages by URL</h2>
             <div class="history-sort" role="group" aria-label="Sort by">
               <button type="button" class="sort-btn is-here" data-sort="downs_90d">90 days</button>
               <button type="button" class="sort-btn" data-sort="downs_7d">7 days</button>
               <button type="button" class="sort-btn" data-sort="downs_24h">24 hours</button>
             </div>
           </div>
+          <details class="help">
+            <summary>How to read this</summary>
+            <p>
+              Each count is a separate outage (healthy → down), not how long it stayed down.
+              Sorted worst-first so the flakiest hosts sit at the top. Trend bars are one day each.
+              History starts from when this store was created; older days fill in over time.
+            </p>
+          </details>
           <div class="table-wrap">
             <table class="history-table">
               <thead>
@@ -110,6 +152,7 @@
       </div>
     </main>
   </div>
-  <script src="/static/history.js?v=23"></script>
+  <script src="/static/shell.js?v=1"></script>
+  <script src="/static/history.js?v=24"></script>
 </body>
 </html>

@@ -16,8 +16,12 @@ const eventList = document.getElementById("event-list");
 const eventCount = document.getElementById("event-count");
 const downNowEl = document.getElementById("down-now");
 const statLive = document.getElementById("stat-live");
-const statAvail = document.getElementById("stat-avail");
 const statPlaylists = document.getElementById("stat-playlists");
+// Last /api/status or /api/public payload (null until the first poll lands or after an error).
+let latest = null;
+const heroEl = document.getElementById("hero");
+const matrixEl = document.getElementById("matrix");
+const matrixCount = document.getElementById("matrix-count");
 
 const playlistSection = document.getElementById("playlists-section");
 const playlistStatWrap = document.getElementById("stat-playlists-wrap");
@@ -35,16 +39,16 @@ const ownerLink = document.getElementById("owner-link");
 const publicLink = document.getElementById("public-link");
 const watchLink = document.getElementById("watch-link");
 const ownerSubnav = document.getElementById("owner-subnav");
-const sideDot = document.getElementById("side-dot");
-const sideStatusText = document.getElementById("side-status-text");
 
-// Sidebar status: red if live DNS is down, amber if only standbys are, green otherwise.
+// shell.js owns the sidebar status + the overall-state wording (shared with History / Info).
 function setSideStatus(level, text) {
-  if (sideDot) {
-    sideDot.className = `dot ${level}`;
-  }
-  if (sideStatusText) {
-    sideStatusText.textContent = text;
+  window.consoleShell?.setStatus(level, text);
+}
+
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.textContent = text;
   }
 }
 
@@ -56,8 +60,8 @@ function setPageHeading(owner) {
   }
   if (sub) {
     sub.textContent = owner
-      ? "Playlists, live DNS, Watch sessions and the standby pool"
-      : "Standby pool health and recent events";
+      ? "Playlists, what's on air, Watch sessions and the standby pool"
+      : "Standby pool health, live signal map and recent events";
   }
   document.title = `${owner ? "Playlists" : "Monitor"} · IPTV Portal Monitor`;
 }
@@ -240,44 +244,87 @@ function ipRow(ips) {
   return `<div class="ip-row"><span class="ip-label">IPs</span><div class="ip-chips">${chips}</div></div>`;
 }
 
-function card(item) {
+// Signal bars: 4 = up, no outages in 24h; 3 = up, recovered from 1-2; 2 = flapping; 0 = down.
+function signalLevel(item) {
+  if (!item.healthy) {
+    return 0;
+  }
+  if (item.frequent_failure) {
+    return 2;
+  }
+  return (item.down_events_24h || 0) > 0 ? 3 : 4;
+}
+
+const SIGNAL_TEXT = {
+  4: "Strong signal",
+  3: "Good signal",
+  2: "Weak signal · flapping",
+  0: "No signal · down",
+};
+
+function outagesText(item) {
+  const n = item.down_events_24h || 0;
+  return `${n} outage${n === 1 ? "" : "s"} in 24h`;
+}
+
+function laneLabel(item) {
+  const lane = item.pool === "magnum" ? "Magnum" : item.vpn ? "Strong 8K VPN" : "Strong 8K";
+  const ns = nsLabel(item);
+  return ns ? `${lane} · ${ns}` : lane;
+}
+
+function signalBars(item) {
+  const level = signalLevel(item);
+  const label = `${SIGNAL_TEXT[level]} — ${outagesText(item)}`;
+  return `<span class="signal s${level}" role="img" aria-label="${esc(label)}" data-tip-title="${esc(SIGNAL_TEXT[level])}" data-tip-body="${esc(outagesText(item))}"><i></i><i></i><i></i><i></i></span>`;
+}
+
+// Matrix click → scroll to this URL's card and flash it (survives one 4s re-render).
+let flashUrl = "";
+let flashUntil = 0;
+
+function card(item, { live = false } = {}) {
   const state = item.healthy ? "up" : "down";
   const reason = item.fail_reason
     ? `<span class="card-reason" title="${esc(item.fail_reason)}${
         item.error_detail ? ` · ${esc(String(item.error_detail).slice(0, 80))}` : ""
       }">${esc(reasonLabel(item.fail_reason))}</span>`
     : "";
-  const playlists = item.playlists?.length ? `<span>playlists ${esc(item.playlists.join(", "))}</span>` : "";
+  const playlists = item.playlists?.length
+    ? `<div class="card-playlists"><span>Used by</span>${item.playlists.map((name) => `<b>${esc(name)}</b>`).join("")}</div>`
+    : "";
   const downFor = item.down_since ? ` · down ${fmtAge(secondsSince(item.down_since))}` : "";
-  const checked = item.last_checked ? ` · checked ${agoLabel(item.last_checked)}` : "";
-  const check = item.healthy
-    ? `check-pass completed: ${item.consecutive_successes || 0}${checked}`
-    : `fails ${item.consecutive_failures}${downFor}${checked}`;
-  const downs = `Service 'Down' count (24hr): ${item.down_events_24h || 0}`;
+  const streak = item.healthy
+    ? `${item.consecutive_successes || 0} passes in a row`
+    : `${item.consecutive_failures || 0} fails in a row${downFor}`;
+  const checked = item.last_checked ? `checked ${agoLabel(item.last_checked)}` : "";
   const frequent = item.frequent_failure
     ? `<span class="pill frequent" title="${item.down_events_24h || 0} separate downs in 24h">Frequent failure</span>`
     : "";
   const tsLabel = item.pool === "magnum" ? "mpeg-ts" : "xtream";
+  const onAir = live ? `<span class="onair ${state}">${item.healthy ? "On air" : "Off air"}</span>` : "";
+  const flash = item.url === flashUrl && Date.now() < flashUntil ? " flash" : "";
   return `
-    <article class="card ${state}${item.cloudflare ? " cf" : ""}${item.frequent_failure ? " frequent" : ""}${item.vpn && item.pool !== "magnum" ? " vpn-lane" : ""}">
+    <article class="card ${state}${item.frequent_failure ? " frequent" : ""}${live ? " live" : ""}${flash}" data-url="${esc(item.url)}">
       <div class="card-top">
-        <div class="url">${esc(item.url)}</div>
-        <div class="pills">
-          ${poolBadge(item)}
-          ${nsBadge(item)}
-          ${frequent}
-          <span class="pill ${state}">${state}</span>
-        </div>
+        <div class="card-title">${onAir}<span class="url" title="${esc(item.url)}">${esc(hostLabel(item.url))}</span></div>
+        ${signalBars(item)}
+      </div>
+      <div class="pills">
+        <span class="pill ${state}">${state}</span>
+        ${poolBadge(item)}
+        ${nsBadge(item)}
+        ${frequent}
       </div>
       <div class="flags">
         ${flag("dns", item.dns_ok)}
         ${flag("tcp", item.tcp_ok)}
         ${flag(tsLabel, item.stream_ok, item)}
         ${reason}
-        ${playlists}
       </div>
+      ${playlists}
       ${ipRow(item.resolved_ips)}
-      <div class="check-line">${esc(check)} <span class="sep">|</span> ${esc(downs)}</div>
+      <div class="card-foot"><span>${esc(streak)}</span><span>${esc(outagesText(item))}</span><span>${esc(checked)}</span></div>
     </article>
   `;
 }
@@ -313,7 +360,7 @@ function poolTabsMarkup(tabKey, items) {
   `;
 }
 
-function groupBlock(title, rows, listClass) {
+function groupBlock(title, rows, listClass, live = false) {
   if (!rows.length) {
     return "";
   }
@@ -327,7 +374,7 @@ function groupBlock(title, rows, listClass) {
         <h3>${esc(title)}</h3>
         <span class="count${groupDown ? " has-down" : ""}">${groupUp}/${rows.length} up${groupDown ? ` · ${groupDown} down` : ""}</span>
       </div>
-      <div class="${listClass}">${ordered.map(card).join("")}</div>
+      <div class="${listClass}">${ordered.map((item) => card(item, { live })).join("")}</div>
     </div>
   `;
 }
@@ -359,9 +406,10 @@ function renderGrouped(el, countEl, items, emptyText, grid, tabKey) {
     other: rest.filter((item) => !item.cloudflare),
   };
   const listClass = grid ? "cards cards-grid" : "cards";
-  const vpnBlock = groupBlock("Strong 8K VPN", vpn, listClass);
-  const magnumBlock = groupBlock("Magnum", magnum, listClass);
-  const cfBlocks = CF_GROUPS.map((group) => groupBlock(group.title, buckets[group.id], listClass)).join("");
+  const live = tabKey === "live";
+  const vpnBlock = groupBlock("Strong 8K VPN", vpn, listClass, live);
+  const magnumBlock = groupBlock("Magnum", magnum, listClass, live);
+  const cfBlocks = CF_GROUPS.map((group) => groupBlock(group.title, buckets[group.id], listClass, live)).join("");
   el.innerHTML = tabs + magnumBlock + vpnBlock + cfBlocks;
 }
 
@@ -490,7 +538,7 @@ function renderPlaylists(items, { force = false } = {}) {
     playlistCount.textContent = items.length ? `${items.length} loaded` : "none";
   }
   if (!items.length) {
-    playlistBody.innerHTML = `<tr><td colspan="7">No playlists loaded. Add entries in config/playlists.yaml — they appear within one check cycle.</td></tr>`;
+    playlistBody.innerHTML = `<tr><td colspan="4">No playlists loaded. Add entries in config/playlists.yaml — they appear within one check cycle.</td></tr>`;
     return;
   }
   const dryRun = Boolean(latest && latest.dry_run);
@@ -527,17 +575,19 @@ function renderPlaylists(items, { force = false } = {}) {
       const revertLabel = busy ? "Checking…" : "Switch back";
       const chooseOpen = pickOpen === id;
       const chooseLabel = chooseOpen ? "Close" : "Choose URL";
+      const poolPill = item.pool_label
+        ? `<span class="pill ${item.pool === "magnum" ? "magnum" : item.vpn ? "vpn-dns" : "strong8k"}">${esc(item.pool_label)}</span>`
+        : "";
       return `
         <tr>
-          <td>${esc(item.name)}${
-            item.pool_label
-              ? ` <span class="pill ${item.pool === "magnum" ? "magnum" : item.vpn ? "vpn-dns" : "strong8k"}">${esc(item.pool_label)}</span>`
-              : ""
-          }</td>
-          <td>${esc(item.playlist_id)}</td>
-          <td>${esc(item.username)}</td>
-          <td>${esc(item.current_dns)}</td>
-          <td class="${nsCls}">${esc(ns)}</td>
+          <td>
+            <div class="pl-name">${esc(item.name)}</div>
+            <div class="pl-meta">${poolPill}<span>ID ${esc(item.playlist_id)}</span><span>${esc(item.username)}</span></div>
+          </td>
+          <td>
+            <div class="pl-dns" title="${esc(item.current_dns)}">${esc(hostLabel(item.current_dns))}</div>
+            <div class="pl-ns ${nsCls}">${esc(ns)}</div>
+          </td>
           <td class="${cls}">${label}</td>
           <td>
             <div class="switch-actions">
@@ -1076,7 +1126,7 @@ function renderEvents(items) {
 eventList.addEventListener("click", (event) => {
   if (event.target.closest("[data-events-toggle]")) {
     eventsShowAll = !eventsShowAll;
-    renderEvents(window.latest?.events || []);
+    renderEvents(latest?.events || []);
   }
 });
 
@@ -1140,6 +1190,220 @@ function renderDownNow(groups) {
   `;
 }
 
+// ---------- Signal map: one cell per standby URL, fixed order so colour follows the host ----------
+
+const MATRIX_GROUPS = [
+  { title: "Magnum", test: (item) => item.pool === "magnum" },
+  { title: "Strong 8K VPN", test: (item) => item.pool !== "magnum" && item.vpn },
+  { title: "Cloudflare proxy", test: (item) => item.pool !== "magnum" && !item.vpn && item.cloudflare_proxied },
+  {
+    title: "Cloudflare NS",
+    test: (item) => item.pool !== "magnum" && !item.vpn && item.cloudflare && !item.cloudflare_proxied,
+  },
+  { title: "Other", test: (item) => item.pool !== "magnum" && !item.vpn && !item.cloudflare },
+];
+let matrixKey = "";
+
+function cellMarkup(item) {
+  const cls = !item.healthy ? "down" : item.frequent_failure ? "frequent" : "up";
+  const title = item.healthy ? SIGNAL_TEXT[signalLevel(item)] : `Down · ${reasonLabel(item.fail_reason)}`;
+  const host = hostLabel(item.url);
+  const body = [host, laneLabel(item), outagesText(item), "Click to jump to its card"].join("\n");
+  return `<button type="button" class="cell ${cls}" data-url="${esc(item.url)}" data-tip-title="${esc(title)}" data-tip-body="${esc(body)}" data-tip-key="${cls}" aria-label="${esc(`${host}: ${title}`)}"></button>`;
+}
+
+function renderMatrix(items) {
+  if (!matrixEl) {
+    return;
+  }
+  // Only rebuild when something changed, so hover + focus survive the 4s poll.
+  const key = items
+    .map((item) => `${item.url}|${item.healthy}|${item.frequent_failure}|${item.down_events_24h}|${item.fail_reason}`)
+    .join(";");
+  if (key === matrixKey) {
+    return;
+  }
+  matrixKey = key;
+  if (matrixCount) {
+    matrixCount.textContent = `${items.length} hosts`;
+  }
+  if (!items.length) {
+    matrixEl.innerHTML = `<div class="empty">No standby URLs in urls.yaml.</div>`;
+    return;
+  }
+  matrixEl.innerHTML = MATRIX_GROUPS.map((group) => {
+    const rows = items
+      .filter(group.test)
+      .sort((a, b) => hostLabel(a.url).localeCompare(hostLabel(b.url)));
+    if (!rows.length) {
+      return "";
+    }
+    const up = rows.filter((item) => item.healthy).length;
+    return `
+      <div class="matrix-group">
+        <div class="matrix-label">${esc(group.title)} <span>${up}/${rows.length}</span></div>
+        <div class="matrix-cells">${rows.map(cellMarkup).join("")}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+if (matrixEl) {
+  matrixEl.addEventListener("click", (event) => {
+    const cell = event.target.closest("[data-url]");
+    if (!cell || !latest) {
+      return;
+    }
+    const url = cell.getAttribute("data-url");
+    // The card may be hidden behind a lane tab: show All first.
+    if (poolView.avail !== "all") {
+      poolView.avail = "all";
+    }
+    flashUrl = url;
+    flashUntil = Date.now() + 1800;
+    renderGrouped(availList, availCount, latest.available || [], "No standby URLs in urls.yaml.", true, "avail");
+    const target = [...availList.querySelectorAll(".card[data-url]")].find((el) => el.getAttribute("data-url") === url);
+    if (target) {
+      window.consoleShell?.hideTip();
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  });
+}
+
+// ---------- Hero + stat tiles ----------
+
+function renderHero(data, signedIn) {
+  if (!heroEl) {
+    return;
+  }
+  const counts = data.counts || {};
+  const state = window.consoleShell
+    ? window.consoleShell.overallState(signedIn ? counts : { ...counts, live_up: 0, live_total: 0 })
+    : { level: "good", short: "", headline: "" };
+  heroEl.dataset.level = state.level;
+  const tally = document.getElementById("hero-tally");
+  if (tally) {
+    tally.className = `tally ${state.level}`;
+  }
+  setText("hero-headline", state.headline);
+  const up = counts.available_up ?? 0;
+  const total = counts.available_total ?? 0;
+  setText(
+    "hero-detail",
+    signedIn
+      ? `Live DNS ${counts.live_up ?? 0}/${counts.live_total ?? 0} healthy · ${up} of ${total} standby hosts responding`
+      : `${up} of ${total} standby hosts are responding to checks`
+  );
+  setText("hero-up", String(up));
+  setText("hero-total", String(total));
+  const pct = total ? Math.round((up / total) * 100) : 0;
+  setText("hero-pct", total ? `${pct}%` : "—");
+  const meter = document.getElementById("hero-meter");
+  const fill = document.getElementById("hero-meter-fill");
+  if (meter && fill) {
+    // Meter severity follows its own quantity (standby health), not the overall state.
+    meter.className = `meter${pct === 100 ? "" : pct >= 50 ? " warning" : " critical"}`;
+    meter.setAttribute("aria-valuemax", String(total));
+    meter.setAttribute("aria-valuenow", String(up));
+    fill.style.width = `${pct}%`;
+  }
+  setSideStatus(state.level, state.short);
+}
+
+function uniqueByUrl(lists) {
+  const seen = new Map();
+  for (const item of lists.flat()) {
+    if (item?.url && !seen.has(item.url)) {
+      seen.set(item.url, item);
+    }
+  }
+  return [...seen.values()];
+}
+
+function renderTiles(data, signedIn) {
+  const counts = data.counts || {};
+  const pool = data.available || [];
+  const flapping = pool.filter((item) => item.frequent_failure).length;
+  const outages = uniqueByUrl([pool, signedIn ? data.live || [] : []]).reduce(
+    (sum, item) => sum + (item.down_events_24h || 0),
+    0
+  );
+  setText("stat-outages", String(outages));
+  setText(
+    "stat-outages-cap",
+    signedIn && flapping ? `${flapping} standby host${flapping === 1 ? "" : "s"} flapping` : "across the standby pool"
+  );
+  setText("stat-flapping", String(flapping));
+  const flapWrap = document.getElementById("stat-flapping-wrap");
+  if (flapWrap) {
+    flapWrap.classList.toggle("is-warn", flapping > 0);
+    flapWrap.hidden = signedIn;
+  }
+  if (!signedIn) {
+    return;
+  }
+  const liveDown = (counts.live_total ?? 0) - (counts.live_up ?? 0);
+  statLive.textContent = `${counts.live_up ?? "—"}/${counts.live_total ?? "—"}`;
+  statLive.closest(".stat")?.classList.toggle("is-bad", liveDown > 0);
+  setText("stat-live-cap", liveDown > 0 ? `${liveDown} live host${liveDown === 1 ? "" : "s"} down` : "all live hosts on air");
+  const playlists = data.playlists || [];
+  statPlaylists.textContent = String(counts.playlists ?? playlists.length);
+  const manual = playlists.filter((item) => item.failover === false).length;
+  setText("stat-playlists-cap", manual ? `${manual} manual only · rest auto failover` : "all on auto failover");
+  if (statWatch) {
+    const online = counts.watch_online ?? (data.watch?.online ?? 0);
+    const playing = counts.watch_playing ?? (data.watch?.playing ?? 0);
+    const slots = data.watch?.slots || {};
+    statWatch.textContent = `${playing} playing`;
+    setText(
+      "stat-watch-cap",
+      `${online} online${slots.max != null ? ` · ${slots.used ?? 0}/${slots.max} streams in use` : ""}`
+    );
+  }
+}
+
+// 14-day outage trend for the Outages tile, from /api/history (refreshed once a minute).
+let dailyLoadedAt = 0;
+
+async function loadDailyTrend() {
+  const holder = document.getElementById("stat-outages-spark");
+  if (!holder || Date.now() - dailyLoadedAt < 60000) {
+    return;
+  }
+  dailyLoadedAt = Date.now();
+  try {
+    const response = await fetch("/api/history", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    const days = data.window_days || 90;
+    const totals = new Array(days).fill(0);
+    for (const row of data.urls || []) {
+      (row.by_day || []).forEach((n, i) => {
+        totals[i] += Number(n) || 0;
+      });
+    }
+    const last = totals.slice(-14);
+    const max = Math.max(1, ...last);
+    const today = new Date();
+    const bars = last
+      .map((n, i) => {
+        const daysAgo = last.length - 1 - i;
+        const day = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - daysAgo));
+        const label = daysAgo === 0 ? "Today (UTC)" : day.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+        const h = n ? Math.max(3, Math.round((n / max) * 30)) : 2;
+        const x = i * 8;
+        return `<g data-tip-title="${n} outage${n === 1 ? "" : "s"}" data-tip-body="${esc(label)}"><rect class="hit" x="${x}" y="0" width="8" height="32"></rect><rect class="bar${daysAgo === 0 ? " now" : ""}" x="${x + 1}" y="${32 - h}" width="6" height="${h + 2}" rx="1.5"></rect></g>`;
+      })
+      .join("");
+    holder.innerHTML = `<svg class="spark-mini" width="112" height="32" viewBox="0 0 112 32" role="img" aria-label="Outages per day, last 14 days">${bars}</svg>`;
+  } catch {
+    dailyLoadedAt = 0;
+    holder.innerHTML = "";
+  }
+}
+
 function alertClass(text) {
   const lower = text.toLowerCase();
   if (lower.startsWith("dry run") || lower.includes("disabled")) {
@@ -1160,7 +1424,8 @@ function renderAlertHtml(text) {
 }
 
 function renderAlerts(items, fallbackError) {
-  const messages = [...(items || [])];
+  // "All portal URLs are up." is what the hero already says; keep only notices that add something.
+  const messages = (items || []).filter((text) => !String(text).toLowerCase().startsWith("all portal urls are up"));
   if (switchNotice && Date.now() < switchNoticeUntil) {
     messages.unshift(switchNotice);
   } else {
@@ -1182,8 +1447,22 @@ function tickCountdown() {
   if (!latest) {
     return;
   }
-  const left = secondsUntilNext(latest.last_cycle_at, latest.check_interval_seconds);
-  nextCheck.textContent = left === null ? "—" : `${left}s`;
+  const interval = latest.check_interval_seconds;
+  const left = secondsUntilNext(latest.last_cycle_at, interval);
+  const label = left === null ? "—" : left === 0 ? "now" : `${left}s`;
+  nextCheck.textContent = label;
+  setText("hero-next", label);
+  // Progress bars fill as the next check approaches; snap (no animation) when a cycle restarts.
+  const done = left === null || !interval ? 0 : Math.min(100, Math.max(0, ((interval - left) / interval) * 100));
+  for (const id of ["hero-progress", "side-progress"]) {
+    const bar = document.getElementById(id);
+    if (!bar) {
+      continue;
+    }
+    const previous = parseFloat(bar.style.width) || 0;
+    bar.style.transition = done < previous ? "none" : "";
+    bar.style.width = `${done}%`;
+  }
 }
 
 async function refresh() {
@@ -1198,10 +1477,9 @@ async function refresh() {
     latest = data;
     const counts = data.counts || {};
     const signedIn = Boolean(data.owner);
-    lastCycle.textContent = fmtTime(data.last_cycle_at);
-    statAvail.textContent = `${counts.available_up ?? "—"}/${counts.available_total ?? "—"} up`;
-    statAvail.parentElement.classList.toggle("is-bad", (counts.available_up ?? 0) < (counts.available_total ?? 0));
-    statLive.parentElement.classList.toggle("is-bad", (counts.live_up ?? 0) < (counts.live_total ?? 0));
+    lastCycle.textContent = data.last_cycle_at
+      ? new Date(data.last_cycle_at).toLocaleTimeString([], { hour12: false })
+      : "--:--:--";
     if (playlistStatWrap) {
       playlistStatWrap.hidden = !signedIn;
     }
@@ -1211,15 +1489,9 @@ async function refresh() {
     if (watchStatWrap) {
       watchStatWrap.hidden = !signedIn;
     }
-    if (signedIn) {
-      statLive.textContent = `${counts.live_up ?? "—"}/${counts.live_total ?? "—"} up`;
-      statPlaylists.textContent = String(counts.playlists ?? (data.playlists || []).length);
-      if (statWatch) {
-        const online = counts.watch_online ?? (data.watch?.online ?? 0);
-        const playing = counts.watch_playing ?? (data.watch?.playing ?? 0);
-        statWatch.textContent = `${playing} playing · ${online} online`;
-      }
-    }
+    renderHero(data, signedIn);
+    renderTiles(data, signedIn);
+    loadDailyTrend();
     if (ownerLink) {
       ownerLink.hidden = false;
       ownerLink.classList.toggle("is-here", isOwnerView());
@@ -1238,15 +1510,6 @@ async function refresh() {
       ownerSubnav.hidden = !(owner && signedIn);
     }
     setPageHeading(owner);
-    const liveDown = (counts.live_up ?? 0) < (counts.live_total ?? 0);
-    const standbyDown = (counts.available_total ?? 0) - (counts.available_up ?? 0);
-    if (liveDown) {
-      setSideStatus("bad", "Live DNS down");
-    } else if (standbyDown > 0) {
-      setSideStatus("warn", `${standbyDown} standby down`);
-    } else {
-      setSideStatus("ok", "All systems up");
-    }
     if (playlistSection) {
       playlistSection.hidden = !signedIn;
     }
@@ -1266,6 +1529,7 @@ async function refresh() {
     tickCountdown();
     renderAlerts(data.alerts, data.error);
     renderDownNow(data.down_groups);
+    renderMatrix(data.available || []);
     renderGrouped(availList, availCount, data.available || [], "No standby URLs in urls.yaml.", true, "avail");
     if (signedIn) {
       renderGrouped(liveList, liveCount, data.live || [], "No live portal URLs yet.", false, "live");
@@ -1277,7 +1541,16 @@ async function refresh() {
     modePill.hidden = true;
     latest = null;
     nextCheck.textContent = "—";
-    setSideStatus("bad", "Monitor unreachable");
+    setSideStatus("critical", "Monitor unreachable");
+    if (heroEl) {
+      heroEl.dataset.level = "critical";
+      setText("hero-headline", "Monitor unreachable");
+      setText("hero-detail", `The dashboard cannot reach the monitor (${error.message}). Retrying every 4 seconds.`);
+      const tally = document.getElementById("hero-tally");
+      if (tally) {
+        tally.className = "tally critical";
+      }
+    }
     renderAlerts([`Dashboard cannot reach the monitor: ${error.message}`]);
   }
 }

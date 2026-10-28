@@ -3,7 +3,7 @@
   Public + owner status page (same HTML).
   JS calls /api/public on `/` and /api/status on `/owner`.
   Playlists / Current DNS / Switch only render when the JSON has owner: true.
-  Layout + theme: console.css (sidebar shell). Cache-bust static URLs (?v=) after CSS/JS changes.
+  Theme: console.css. shell.js = clock, tooltips, sidebar status. Cache-bust ?v= after changes.
 -->
 <html lang="en">
 <head>
@@ -12,15 +12,29 @@
   <title>Monitor · IPTV Portal Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/console.css?v=1" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/console.css?v=2" />
 </head>
 <body>
+  <div class="bg" aria-hidden="true"></div>
   <div class="shell">
     <aside class="sidebar">
       <a class="brand" href="/">
-        <span class="brand-mark">TV</span>
-        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV DNS failover</span></span>
+        <svg class="logo" viewBox="0 0 36 36" aria-hidden="true">
+          <defs>
+            <linearGradient id="logo-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8b7cff" />
+              <stop offset="0.55" stop-color="#6f8cff" />
+              <stop offset="1" stop-color="#3dd6f5" />
+            </linearGradient>
+          </defs>
+          <rect x="1" y="1" width="34" height="34" rx="10" fill="url(#logo-grad)" />
+          <path d="M14 8.5l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="8" y="12.5" width="20" height="14.5" rx="4" fill="rgba(255,255,255,0.16)" stroke="#fff" stroke-width="1.8" />
+          <path d="M16 16.6v6.3l5.2-3.15z" fill="#fff" />
+        </svg>
+        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV control room</span></span>
       </a>
       <nav class="nav" aria-label="Pages">
         <span class="nav-label">Dashboard</span>
@@ -29,19 +43,20 @@
           Monitor
         </a>
         <a href="/owner" id="owner-link">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="3" /><path d="m17 2-5 5-5-5" /></svg>
           Playlists
         </a>
         <div class="subnav" id="owner-subnav" hidden>
           <a href="#playlists-section">Playlists</a>
-          <a href="#live-section">Current DNS</a>
+          <a href="#live-section">On air</a>
           <a href="#watchers-section">Watch sessions</a>
           <a href="#live-groups-section">Live groups</a>
+          <a href="#matrix-section">Signal map</a>
           <a href="#pool-section">Standby pool</a>
           <a href="#events-section">Events</a>
         </div>
         <a href="/history">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18" /><path d="M7 15l4-4 3 3 5-6" /></svg>
           History
         </a>
         <a href="/key">
@@ -56,7 +71,8 @@
       </nav>
       <div class="side-status" aria-live="polite">
         <div class="side-status-main"><span id="side-dot" class="dot"></span><span id="side-status-text">Connecting…</span></div>
-        <div class="side-status-meta">Checked <span id="last-cycle">waiting…</span> · next in <span id="next-check">—</span></div>
+        <div class="side-status-meta">Checked <span id="last-cycle">--:--:--</span> · next <span id="next-check">—</span></div>
+        <div class="cycle-bar"><i id="side-progress"></i></div>
       </div>
     </aside>
 
@@ -64,30 +80,60 @@
       <div class="content">
         <header class="page-head">
           <div>
+            <p class="eyebrow">IPTV control room</p>
             <h1 id="page-title">Monitor</h1>
             <p class="page-sub" id="page-sub">Standby pool health and recent events</p>
           </div>
           <div class="page-meta">
             <span id="mode-pill" class="mode-pill" hidden>Dry run</span>
+            <span class="live-chip"><span class="pulse"></span><b>LIVE</b><span id="clock">--:--:--</span></span>
           </div>
         </header>
 
+        <section class="hero" id="hero" data-level="">
+          <div class="hero-status">
+            <p class="hero-label"><span class="tally" id="hero-tally"></span>System status</p>
+            <h2 class="hero-headline" id="hero-headline">Connecting to the monitor…</h2>
+            <p class="hero-detail" id="hero-detail">Waiting for the first check.</p>
+            <div class="hero-cycle">
+              <span>Next check</span>
+              <div class="cycle-bar"><i id="hero-progress"></i></div>
+              <span id="hero-next">—</span>
+            </div>
+          </div>
+          <div class="hero-figure">
+            <div class="hero-number"><span id="hero-up">—</span><span class="hero-of">/<span id="hero-total">—</span></span></div>
+            <p class="hero-caption">standby hosts healthy</p>
+            <div class="meter" id="hero-meter" role="meter" aria-label="Standby hosts healthy" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><i id="hero-meter-fill"></i></div>
+            <div class="meter-scale"><span>0</span><span id="hero-pct">—</span></div>
+          </div>
+        </section>
+
         <div class="stats">
           <div class="stat" id="stat-live-wrap" hidden>
-            <span class="label">Live DNS</span>
-            <span class="value" id="stat-live">—</span>
+            <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1a10 10 0 0 1 0-14.2M19.1 4.9a10 10 0 0 1 0 14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4" /><circle cx="12" cy="12" r="2" /></svg>Live DNS</span>
+            <div class="stat-row"><span class="value" id="stat-live">—</span></div>
+            <span class="caption" id="stat-live-cap">&nbsp;</span>
           </div>
-          <div class="stat">
-            <span class="label">Standby pool</span>
-            <span class="value" id="stat-avail">—</span>
+          <div class="stat" id="stat-playlists-wrap" hidden>
+            <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>Playlists</span>
+            <div class="stat-row"><span class="value" id="stat-playlists">—</span></div>
+            <span class="caption" id="stat-playlists-cap">&nbsp;</span>
           </div>
-          <div class="stat neutral" id="stat-playlists-wrap" hidden>
-            <span class="label">Playlists</span>
-            <span class="value" id="stat-playlists">—</span>
+          <div class="stat" id="stat-watch-wrap" hidden>
+            <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3" /></svg>Watch</span>
+            <div class="stat-row"><span class="value" id="stat-watch">—</span></div>
+            <span class="caption" id="stat-watch-cap">&nbsp;</span>
           </div>
-          <div class="stat neutral" id="stat-watch-wrap" hidden>
-            <span class="label">Watch</span>
-            <span class="value" id="stat-watch">—</span>
+          <div class="stat" id="stat-flapping-wrap">
+            <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6" /></svg>Flapping</span>
+            <div class="stat-row"><span class="value" id="stat-flapping">—</span></div>
+            <span class="caption">standbys with 3+ outages in 24h</span>
+          </div>
+          <div class="stat" id="stat-outages-wrap">
+            <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01" /></svg>Outages · 24h</span>
+            <div class="stat-row"><span class="value" id="stat-outages">—</span><span id="stat-outages-spark"></span></div>
+            <span class="caption" id="stat-outages-cap">across the standby pool</span>
           </div>
         </div>
 
@@ -98,7 +144,7 @@
 
         <section class="panel" id="playlists-section" hidden>
           <div class="section-head">
-            <h2>Playlists</h2>
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>Playlists</h2>
             <span id="playlist-count" class="count"></span>
           </div>
           <details class="help">
@@ -109,11 +155,8 @@
             <table class="playlist-table">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Playlist ID</th>
-                  <th>User</th>
+                  <th>Playlist</th>
                   <th>Current DNS</th>
-                  <th>Nameserver</th>
                   <th>Status</th>
                   <th></th>
                 </tr>
@@ -125,7 +168,7 @@
 
         <section class="panel" id="live-section" hidden>
           <div class="section-head">
-            <h2>Current DNS</h2>
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1a10 10 0 0 1 0-14.2M19.1 4.9a10 10 0 0 1 0 14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4" /><circle cx="12" cy="12" r="2" /></svg>On air · current DNS</h2>
             <span id="live-count" class="count"></span>
           </div>
           <div id="live-list"></div>
@@ -133,7 +176,7 @@
 
         <section class="panel" id="watchers-section" hidden>
           <div class="section-head">
-            <h2>Watch sessions</h2>
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8" /></svg>Watch sessions</h2>
             <span id="watchers-count" class="count"></span>
           </div>
           <details class="help">
@@ -161,7 +204,7 @@
         <section class="panel" id="live-groups-section" hidden>
           <details class="live-groups-fold" id="live-groups-fold">
             <summary class="section-head">
-              <h2>Watch live groups</h2>
+              <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>Watch live groups</h2>
               <span class="live-groups-meta">
                 <span id="live-groups-count" class="count"></span>
                 <span class="live-groups-hint">Show</span>
@@ -183,9 +226,26 @@
           </details>
         </section>
 
+        <section class="panel" id="matrix-section">
+          <div class="section-head">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16" /></svg>Signal map</h2>
+            <div class="legend" aria-label="Legend">
+              <span><i class="cell up"></i>Up</span>
+              <span><i class="cell frequent"></i>Flapping</span>
+              <span><i class="cell down"></i>Down</span>
+              <span class="count" id="matrix-count"></span>
+            </div>
+          </div>
+          <details class="help">
+            <summary>How to read this</summary>
+            <p>One square per standby URL, grouped by lane, in the same place every refresh. Green is up, amber with <strong>!</strong> has gone down 3+ times in 24 hours, red with <strong>✕</strong> is down now. Hover or focus a square for details; click it to jump to that host's card below.</p>
+          </details>
+          <div id="matrix" class="matrix"></div>
+        </section>
+
         <section class="panel" id="pool-section">
           <div class="section-head">
-            <h2>Standby pool</h2>
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5" /><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3" /></svg>Standby pool</h2>
             <span id="avail-count" class="count"></span>
           </div>
           <div id="avail-list"></div>
@@ -193,7 +253,7 @@
 
         <section class="panel" id="events-section">
           <div class="section-head">
-            <h2>Recent events</h2>
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>Recent events</h2>
             <span id="event-count" class="count"></span>
           </div>
           <ol id="event-list" class="event-list"></ol>
@@ -201,6 +261,7 @@
       </div>
     </main>
   </div>
-  <script src="/static/app.js?v=53"></script>
+  <script src="/static/shell.js?v=1"></script>
+  <script src="/static/app.js?v=54"></script>
 </body>
 </html>
