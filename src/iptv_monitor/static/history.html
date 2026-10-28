@@ -1,96 +1,114 @@
 <!DOCTYPE html>
-<!-- 90-day outage table. Polls /api/history (public). Worst hosts first. No live-only DNS. -->
+<!-- 90-day outage table. Polls /api/history (public). Worst hosts first. No live-only DNS. Theme: console.css. -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>History · Portal Monitor</title>
+  <title>History · IPTV Portal Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=58" />
-  <link rel="stylesheet" href="/static/dash.css?v=12" />
+  <link rel="stylesheet" href="/static/console.css?v=1" />
 </head>
-<body class="dash">
-  <div class="dash-sky" aria-hidden="true">
-    <div class="dash-nebula"></div>
-    <div class="dash-dust"></div>
-    <div class="dash-stars dash-stars-a"></div>
-    <div class="dash-stars dash-stars-b"></div>
-    <div class="dash-meteor"></div>
-    <div class="dash-meteor dash-meteor-b"></div>
-    <div class="dash-meteor dash-meteor-c"></div>
-  </div>
-  <div class="dash-app">
-    <div class="dash-top">
-      <nav class="dash-nav" aria-label="Pages">
-        <a href="/">Monitor</a>
-        <a href="/history" class="is-here" aria-current="page">History</a>
-        <a href="/key">Info</a>
-        <a href="/owner">Playlists</a>
-        <a href="/watch">Watch</a>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="brand-mark">TV</span>
+        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV DNS failover</span></span>
+      </a>
+      <nav class="nav" aria-label="Pages">
+        <span class="nav-label">Dashboard</span>
+        <a href="/">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+          Monitor
+        </a>
+        <a href="/owner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>
+          Playlists
+        </a>
+        <a href="/history" class="is-here" aria-current="page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+          History
+        </a>
+        <a href="/key">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
+          Info
+        </a>
+        <span class="nav-label">Apps</span>
+        <a href="/watch">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3" /></svg>
+          Watch<span class="ext">↗</span>
+        </a>
       </nav>
-    </div>
+    </aside>
 
-    <div class="dash-intro">
-      <div>
-        <h1>History</h1>
-        <p class="dash-sub">Outages by URL over 90 days</p>
-      </div>
-      <p class="dash-updated">Updated <span id="stat-updated">waiting…</span></p>
-    </div>
+    <main class="main">
+      <div class="content">
+        <header class="page-head">
+          <div>
+            <h1>History</h1>
+            <p class="page-sub">Outages by URL over the last 90 days</p>
+          </div>
+          <div class="page-meta">Updated <span id="stat-updated">waiting…</span></div>
+        </header>
 
-    <div class="dash-stats">
-      <div class="dash-stat">
-        <span class="label">Window</span>
-        <span id="stat-window">90d</span>
-      </div>
-      <div class="dash-stat">
-        <span class="label">URLs</span>
-        <span id="stat-urls">—</span>
-      </div>
-      <div class="dash-stat">
-        <span class="label">Downs (90d)</span>
-        <span id="stat-downs">—</span>
-      </div>
-    </div>
-
-    <section class="history dash-panel">
-      <div class="section-head">
-        <h2>Outages by URL</h2>
-        <span id="history-count" class="count"></span>
-      </div>
-      <p class="history-note">
-        Each count is a separate outage (healthy → down), not how long it stayed down.
-        Sorted worst-first so the flakiest hosts sit at the top. Sparkline bars are one day each.
-        History starts from when this store was created; older days fill in over time.
-      </p>
-      <div class="history-tools">
-        <input id="history-filter" type="search" placeholder="Filter by host…" autocomplete="off" />
-        <div class="history-sort" role="group" aria-label="Sort by">
-          <button type="button" class="sort-btn is-here" data-sort="downs_90d">90d</button>
-          <button type="button" class="sort-btn" data-sort="downs_7d">7d</button>
-          <button type="button" class="sort-btn" data-sort="downs_24h">24h</button>
+        <div class="stats">
+          <div class="stat neutral">
+            <span class="label">Window</span>
+            <span class="value" id="stat-window">90d</span>
+          </div>
+          <div class="stat neutral">
+            <span class="label">URLs tracked</span>
+            <span class="value" id="stat-urls">—</span>
+          </div>
+          <div class="stat neutral">
+            <span class="label">Outages (90d)</span>
+            <span class="value" id="stat-downs">—</span>
+          </div>
         </div>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Outages by URL</h2>
+            <span id="history-count" class="count"></span>
+          </div>
+          <details class="help">
+            <summary>How to read this</summary>
+            <p>
+              Each count is a separate outage (healthy → down), not how long it stayed down.
+              Sorted worst-first so the flakiest hosts sit at the top. Sparkline bars are one day each.
+              History starts from when this store was created; older days fill in over time.
+            </p>
+          </details>
+          <div class="history-tools">
+            <input id="history-filter" type="search" placeholder="Filter by host…" autocomplete="off" />
+            <div class="history-sort" role="group" aria-label="Sort by">
+              <button type="button" class="sort-btn is-here" data-sort="downs_90d">90 days</button>
+              <button type="button" class="sort-btn" data-sort="downs_7d">7 days</button>
+              <button type="button" class="sort-btn" data-sort="downs_24h">24 hours</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>URL</th>
+                  <th>Type</th>
+                  <th>Now</th>
+                  <th>24h</th>
+                  <th>7d</th>
+                  <th>90d</th>
+                  <th>Last down</th>
+                  <th>90-day trend</th>
+                </tr>
+              </thead>
+              <tbody id="history-body"></tbody>
+            </table>
+          </div>
+        </section>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>URL</th>
-              <th>Type</th>
-              <th>Now</th>
-              <th>24h</th>
-              <th>7d</th>
-              <th>90d</th>
-              <th>Last down</th>
-              <th>90-day trend</th>
-            </tr>
-          </thead>
-          <tbody id="history-body"></tbody>
-        </table>
-      </div>
-    </section>
+    </main>
   </div>
   <script src="/static/history.js?v=23"></script>
 </body>

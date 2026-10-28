@@ -1,229 +1,257 @@
 <!DOCTYPE html>
-<!-- Info key: what UP / DOWN / Cloudflare / Frequent failure / History / Watch mean. Static page, no API. -->
+<!-- Info key: what UP / DOWN / Cloudflare / Frequent failure / History / Watch mean. Static page, no API. Theme: console.css. -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Info · Portal Monitor</title>
+  <title>Info · IPTV Portal Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=58" />
-  <link rel="stylesheet" href="/static/dash.css?v=12" />
+  <link rel="stylesheet" href="/static/console.css?v=1" />
 </head>
-<body class="dash">
-  <div class="dash-sky" aria-hidden="true">
-    <div class="dash-nebula"></div>
-    <div class="dash-dust"></div>
-    <div class="dash-stars dash-stars-a"></div>
-    <div class="dash-stars dash-stars-b"></div>
-    <div class="dash-meteor"></div>
-    <div class="dash-meteor dash-meteor-b"></div>
-    <div class="dash-meteor dash-meteor-c"></div>
-  </div>
-  <div class="dash-app">
-    <div class="dash-top">
-      <nav class="dash-nav" aria-label="Pages">
-        <a href="/">Monitor</a>
-        <a href="/history">History</a>
-        <a href="/key" class="is-here" aria-current="page">Info</a>
-        <a href="/owner">Playlists</a>
-        <a href="/watch">Watch</a>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="brand-mark">TV</span>
+        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV DNS failover</span></span>
+      </a>
+      <nav class="nav" aria-label="Pages">
+        <span class="nav-label">Dashboard</span>
+        <a href="/">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+          Monitor
+        </a>
+        <a href="/owner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>
+          Playlists
+        </a>
+        <a href="/history">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+          History
+        </a>
+        <a href="/key" class="is-here" aria-current="page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
+          Info
+        </a>
+        <span class="nav-label">Apps</span>
+        <a href="/watch">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3" /></svg>
+          Watch<span class="ext">↗</span>
+        </a>
       </nav>
-    </div>
+    </aside>
 
-    <div class="dash-intro">
-      <div>
-        <h1>Info</h1>
-        <p class="dash-sub">What the badges and actions mean</p>
-      </div>
-    </div>
+    <main class="main">
+      <div class="content">
+        <header class="page-head">
+          <div>
+            <h1>Info</h1>
+            <p class="page-sub">What the badges, states and actions mean</p>
+          </div>
+        </header>
 
-  <section class="key-page">
-    <article class="key-card">
-      <div class="key-card-top">
-        <span class="pill up">up</span>
-        <h2>UP</h2>
-      </div>
-      <p>
-        The portal passed the latest check cycle (every 10 seconds by default).
-        DNS resolved and TCP connected to the portal port. Magnum also needs a
-        short HTTP MPEG-TS pull from this VPS (/watch plays from here). Strong 8K
-        does not: a datacentre often gets HTTP 404/challenge on
-        <code>player_api.php</code> while TVs still play. Those cards stay
-        <strong>UP</strong> with <code>xtream vps-blind</code>. If the VPS
-        <em>can</em> log in to Xtream, the xtream flag is ok.
-      </p>
-      <p>
-        <strong>Use it.</strong> A card marked UP is currently working for playback.
-        <code>check-pass completed: N</code> is how many cycles in a row it has stayed up.
-        <code>Service 'Down' count (24hr)</code> is how many separate outages that host had in the last day.
-      </p>
-    </article>
+        <div class="info-layout">
+          <nav class="info-toc" aria-label="On this page">
+            <a href="#up">UP</a>
+            <a href="#down">DOWN</a>
+            <a href="#cf-proxy">Cloudflare Proxy</a>
+            <a href="#cf-ns">Cloudflare NS</a>
+            <a href="#frequent">Frequent failure</a>
+            <a href="#switch">Switch / Choose URL</a>
+            <a href="#history">History</a>
+            <a href="#watch">Watch</a>
+            <a href="#vpn">Strong 8K VPN DNS</a>
+          </nav>
+          <section class="key-page">
+          <article class="key-card" id="up">
+        <div class="key-card-top">
+          <span class="pill up">up</span>
+          <h2>UP</h2>
+        </div>
+        <p>
+          The portal passed the latest check cycle (every 10 seconds by default).
+          DNS resolved and TCP connected to the portal port. Magnum also needs a
+          short HTTP MPEG-TS pull from this VPS (/watch plays from here). Strong 8K
+          does not: a datacentre often gets HTTP 404/challenge on
+          <code>player_api.php</code> while TVs still play. Those cards stay
+          <strong>UP</strong> with <code>xtream vps-blind</code>. If the VPS
+          <em>can</em> log in to Xtream, the xtream flag is ok.
+        </p>
+        <p>
+          <strong>Use it.</strong> A card marked UP is currently working for playback.
+          <code>check-pass completed: N</code> is how many cycles in a row it has stayed up.
+          <code>Service 'Down' count (24hr)</code> is how many separate outages that host had in the last day.
+        </p>
+          </article>
 
-    <article class="key-card">
-      <div class="key-card-top">
-        <span class="pill down">down</span>
-        <h2>DOWN</h2>
-      </div>
-      <p>
-        The portal failed the latest check cycle. DNS or TCP failed, or the panel
-        explicitly rejected the host. The red <code>dns</code> / <code>tcp</code> /
-        <code>mpeg-ts</code> (Magnum) or <code>xtream</code> (Strong 8K) flags show
-        which step broke; <code>reason</code> is the specific code (for example
-        <code>dns_nxdomain</code>,
-        <code>tcp_timeout</code>, <code>stream_452</code>,
-        <code>stream_auth</code>).
-        Magnum must yield a real MPEG-TS pull from this VPS because /watch plays
-        from here. Strong 8K is marked down for DNS/TCP failure, panel codes
-        452/453/456/464 (blocked / DNS-locked), or Xtream JSON that refuses the
-        account. A <code>player_api</code> 404 or Cloudflare challenge from the
-        VPS is <em>not</em> a Strong down — home players often still work.
-        <code>stream_452</code> is the panel telling every channel to fail (blocked / DNS-locked).
-        A redirect to <code>black.ts</code> is ignored — that placeholder can look “up” while
-        real channels return 452.
-      </p>
-      <p>
-        <strong>Do not use it.</strong> Players will not get a working stream from this URL.
-        <code>fails N</code> is how many cycles in a row it has been down. After 3 failures
-        (~30 seconds at a 10s check interval) on a
-        <em>live</em> URL, playlists on that host are swapped to a healthy standby. A down standby
-        is never chosen for failover.
-      </p>
-    </article>
+          <article class="key-card" id="down">
+        <div class="key-card-top">
+          <span class="pill down">down</span>
+          <h2>DOWN</h2>
+        </div>
+        <p>
+          The portal failed the latest check cycle. DNS or TCP failed, or the panel
+          explicitly rejected the host. The red <code>dns</code> / <code>tcp</code> /
+          <code>mpeg-ts</code> (Magnum) or <code>xtream</code> (Strong 8K) flags show
+          which step broke; <code>reason</code> is the specific code (for example
+          <code>dns_nxdomain</code>,
+          <code>tcp_timeout</code>, <code>stream_452</code>,
+          <code>stream_auth</code>).
+          Magnum must yield a real MPEG-TS pull from this VPS because /watch plays
+          from here. Strong 8K is marked down for DNS/TCP failure, panel codes
+          452/453/456/464 (blocked / DNS-locked), or Xtream JSON that refuses the
+          account. A <code>player_api</code> 404 or Cloudflare challenge from the
+          VPS is <em>not</em> a Strong down — home players often still work.
+          <code>stream_452</code> is the panel telling every channel to fail (blocked / DNS-locked).
+          A redirect to <code>black.ts</code> is ignored — that placeholder can look “up” while
+          real channels return 452.
+        </p>
+        <p>
+          <strong>Do not use it.</strong> Players will not get a working stream from this URL.
+          <code>fails N</code> is how many cycles in a row it has been down. After 3 failures
+          (~30 seconds at a 10s check interval) on a
+          <em>live</em> URL, playlists on that host are swapped to a healthy standby. A down standby
+          is never chosen for failover.
+        </p>
+          </article>
 
-    <article class="key-card">
-      <div class="key-card-top">
-        <span class="pill cf">Cloudflare proxy</span>
-        <h2>Cloudflare Proxy</h2>
-      </div>
-      <p>
-        The hostname resolves to a Cloudflare anycast IP (orange-cloud). Every HTTP request — including
-        the MPEG-TS stream — goes through Cloudflare’s reverse proxy, not straight to the origin.
-        Hover the badge on a card to see the nameserver hosts.
-      </p>
-      <p>
-        <strong>This is the more likely block.</strong>
-        Cloudflare can 403, challenge, or TOS-disable IPTV while DNS and TCP still look fine.
-        We have already seen that on a proxied host: <code>player_api.php</code> returned HTTP 403
-        with <code>server: cloudflare</code>.
-        Failover will still use a proxied standby if nothing better is healthy, but only as a last
-        resort after origin hosts and Cloudflare-NS-only hosts. If a live card is still UP, the
-        stream is getting through <em>right now</em> — treat it as fragile, not preferred.
-      </p>
-    </article>
+          <article class="key-card" id="cf-proxy">
+        <div class="key-card-top">
+          <span class="pill cf">Cloudflare proxy</span>
+          <h2>Cloudflare Proxy</h2>
+        </div>
+        <p>
+          The hostname resolves to a Cloudflare anycast IP (orange-cloud). Every HTTP request — including
+          the MPEG-TS stream — goes through Cloudflare’s reverse proxy, not straight to the origin.
+          Hover the badge on a card to see the nameserver hosts.
+        </p>
+        <p>
+          <strong>This is the more likely block.</strong>
+          Cloudflare can 403, challenge, or TOS-disable IPTV while DNS and TCP still look fine.
+          We have already seen that on a proxied host: <code>player_api.php</code> returned HTTP 403
+          with <code>server: cloudflare</code>.
+          Failover will still use a proxied standby if nothing better is healthy, but only as a last
+          resort after origin hosts and Cloudflare-NS-only hosts. If a live card is still UP, the
+          stream is getting through <em>right now</em> — treat it as fragile, not preferred.
+        </p>
+          </article>
 
-    <article class="key-card">
-      <div class="key-card-top">
-        <span class="pill cf">Cloudflare NS</span>
-        <h2>Cloudflare NS</h2>
-      </div>
-      <p>
-        The domain’s nameservers are Cloudflare (<code>eric.ns.cloudflare.com</code> and similar —
-        those first names are real Cloudflare NS hosts), but the A record is <em>not</em> in
-        Cloudflare’s proxy ranges. DNS is at Cloudflare; stream traffic goes to the origin IP
-        (grey-cloud).
-      </p>
-      <p>
-        <strong>Less likely to block the stream itself.</strong>
-        Cloudflare is not sitting on the HTTP path, so they cannot WAF the MPEG-TS the way a proxy
-        can. Residual risk: they still control DNS, so they can orange-cloud the hostname later
-        without you changing the URL. Safer than Proxy for playback; still not as clean as a host
-        with no Cloudflare badge.
-      </p>
-    </article>
+          <article class="key-card" id="cf-ns">
+        <div class="key-card-top">
+          <span class="pill cf">Cloudflare NS</span>
+          <h2>Cloudflare NS</h2>
+        </div>
+        <p>
+          The domain’s nameservers are Cloudflare (<code>eric.ns.cloudflare.com</code> and similar —
+          those first names are real Cloudflare NS hosts), but the A record is <em>not</em> in
+          Cloudflare’s proxy ranges. DNS is at Cloudflare; stream traffic goes to the origin IP
+          (grey-cloud).
+        </p>
+        <p>
+          <strong>Less likely to block the stream itself.</strong>
+          Cloudflare is not sitting on the HTTP path, so they cannot WAF the MPEG-TS the way a proxy
+          can. Residual risk: they still control DNS, so they can orange-cloud the hostname later
+          without you changing the URL. Safer than Proxy for playback; still not as clean as a host
+          with no Cloudflare badge.
+        </p>
+          </article>
 
-    <article class="key-card">
-      <div class="key-card-top">
-        <span class="pill frequent">Frequent failure</span>
-        <h2>Frequent failure</h2>
-      </div>
-      <p>
-        This URL has gone down at least three separate times in the last 24 hours (not just one
-        outage that lasted several check cycles). Failover skips these standbys while any other
-        healthy option exists. They are only used if every non-frequent standby is down.
-      </p>
-      <p>
-        <strong>Treat it as unreliable</strong> even if the latest card says UP — it has been
-        flapping. Counts reset as those downs age out of the 24-hour window.
-      </p>
-    </article>
+          <article class="key-card" id="frequent">
+        <div class="key-card-top">
+          <span class="pill frequent">Frequent failure</span>
+          <h2>Frequent failure</h2>
+        </div>
+        <p>
+          This URL has gone down at least three separate times in the last 24 hours (not just one
+          outage that lasted several check cycles). Failover skips these standbys while any other
+          healthy option exists. They are only used if every non-frequent standby is down.
+        </p>
+        <p>
+          <strong>Treat it as unreliable</strong> even if the latest card says UP — it has been
+          flapping. Counts reset as those downs age out of the 24-hour window.
+        </p>
+          </article>
 
-    <article class="key-card">
-      <div class="key-card-top">
-        <span class="pill up">switch</span>
-        <h2>Switch / Choose URL</h2>
-      </div>
-      <p>
-        On the Playlists page, <strong>Switch</strong> picks the
-        best healthy standby (same preference as auto failover: origin, then Cloudflare NS,
-        then Cloudflare proxy; frequent-failure standbys are skipped while anything else is up).
-        Magnum playlists only list Magnum-tagged URLs; Strong 8K only lists Strong 8K.
-        <strong>Switch</strong> stays on the current lane (public or VPN).
-        <strong>Choose URL</strong> opens a dropdown of that pool so you can pick a specific
-        host, including a Strong 8K VPN host when the player is on a VPN.
-        Down URLs are listed but cannot be selected. Immediately before
-        EPGenius runs, that host is probed again (DNS, TCP, and MPEG-TS). Auto-failover
-        and <strong>Switch</strong> try the next ranked standby if it fails;
-        <strong>Choose URL</strong> aborts and leaves you on the current DNS.
-        After either action,
-        <strong>Switch back</strong> can return to the original DNS if that host is still healthy.
-        Magnum auto-failover uses the same EPGenius call as Strong 8K.
-      </p>
-    </article>
+          <article class="key-card" id="switch">
+        <div class="key-card-top">
+          <span class="pill">switch</span>
+          <h2>Switch / Choose URL</h2>
+        </div>
+        <p>
+          On the Playlists page, <strong>Switch</strong> picks the
+          best healthy standby (same preference as auto failover: origin, then Cloudflare NS,
+          then Cloudflare proxy; frequent-failure standbys are skipped while anything else is up).
+          Magnum playlists only list Magnum-tagged URLs; Strong 8K only lists Strong 8K.
+          <strong>Switch</strong> stays on the current lane (public or VPN).
+          <strong>Choose URL</strong> opens a dropdown of that pool so you can pick a specific
+          host, including a Strong 8K VPN host when the player is on a VPN.
+          Down URLs are listed but cannot be selected. Immediately before
+          EPGenius runs, that host is probed again (DNS, TCP, and MPEG-TS). Auto-failover
+          and <strong>Switch</strong> try the next ranked standby if it fails;
+          <strong>Choose URL</strong> aborts and leaves you on the current DNS.
+          After either action,
+          <strong>Switch back</strong> can return to the original DNS if that host is still healthy.
+          Magnum auto-failover uses the same EPGenius call as Strong 8K.
+        </p>
+          </article>
 
-    <article class="key-card">
-      <div class="key-card-top">
-        <span class="pill ns">90 days</span>
-        <h2>History</h2>
-      </div>
-      <p>
-        The History tab keeps each URL’s separate outages for 90 days — every time it went from
-        up to down, with the fail reason. Use 90-day / 7-day / 24-hour counts to judge which
-        hosts are historically stronger, not just which ones are up this cycle.
-      </p>
-      <p>
-        This is not the same as <strong>Frequent failure</strong>. That badge still only looks
-        at the last 24 hours so failover does not blacklist almost every host. History is for
-        comparing URLs over a longer window. Counts start from when this store was created;
-        older days fill in as time passes.
-      </p>
-    </article>
+          <article class="key-card" id="history">
+        <div class="key-card-top">
+          <span class="pill ns">90 days</span>
+          <h2>History</h2>
+        </div>
+        <p>
+          The History tab keeps each URL’s separate outages for 90 days — every time it went from
+          up to down, with the fail reason. Use 90-day / 7-day / 24-hour counts to judge which
+          hosts are historically stronger, not just which ones are up this cycle.
+        </p>
+        <p>
+          This is not the same as <strong>Frequent failure</strong>. That badge still only looks
+          at the last 24 hours so failover does not blacklist almost every host. History is for
+          comparing URLs over a longer window. Counts start from when this store was created;
+          older days fill in as time passes.
+        </p>
+          </article>
 
-    <article class="key-card">
-      <div class="key-card-top">
-        <span class="pill up">watch</span>
-        <h2>Watch</h2>
-      </div>
-      <p>
-        <code>/watch</code> is a Chromium web player for friends. It uses a dedicated
-        Xtream account (up to 5 streams at once). Magnum playlist failover updates
-        Watch’s portal DNS so live TV and Movies/Shows follow the new Magnum host.
-        Sign-in is a site login you hand out — the panel username and password
-        never appear in the browser. Chrome or Edge recommended.
-      </p>
-    </article>
+          <article class="key-card" id="watch">
+        <div class="key-card-top">
+          <span class="pill">watch</span>
+          <h2>Watch</h2>
+        </div>
+        <p>
+          <code>/watch</code> is a Chromium web player for friends. It uses a dedicated
+          Xtream account (up to 5 streams at once). Magnum playlist failover updates
+          Watch’s portal DNS so live TV and Movies/Shows follow the new Magnum host.
+          Sign-in is a site login you hand out — the panel username and password
+          never appear in the browser. Chrome or Edge recommended.
+        </p>
+          </article>
 
-    <article class="key-card">
-      <div class="key-card-top">
-        <span class="pill vpn-dns">Strong 8K VPN</span>
-        <h2>Strong 8K VPN DNS</h2>
+          <article class="key-card" id="vpn">
+        <div class="key-card-top">
+          <span class="pill vpn-dns">Strong 8K VPN</span>
+          <h2>Strong 8K VPN DNS</h2>
+        </div>
+        <p>
+          Strong 8K now rejects VPN clients on the normal public DNS hosts. The
+          <code>vpn:</code> list in <code>urls.yaml</code> is a separate allowlist of
+          hosts that work when the <em>player</em> is on a VPN. Those cards have a blue
+          badge and their own tab. Health checks use the VPS public NIC.
+        </p>
+        <p>
+          <strong>Auto failover never picks a VPN host</strong>, and it will not
+          move a playlist that is already on a VPN host onto a public host.
+          A device off VPN cannot use a VPN DNS, and a device on VPN cannot use
+          a public Strong 8K DNS. Use <strong>Choose URL</strong> when you
+          deliberately want to match the player’s VPN state.
+        </p>
+          </article>
+          </section>
+        </div>
       </div>
-      <p>
-        Strong 8K now rejects VPN clients on the normal public DNS hosts. The
-        <code>vpn:</code> list in <code>urls.yaml</code> is a separate allowlist of
-        hosts that work when the <em>player</em> is on a VPN. Those cards have a blue
-        badge and their own tab. Health checks use the VPS public NIC.
-      </p>
-      <p>
-        <strong>Auto failover never picks a VPN host</strong>, and it will not
-        move a playlist that is already on a VPN host onto a public host.
-        A device off VPN cannot use a VPN DNS, and a device on VPN cannot use
-        a public Strong 8K DNS. Use <strong>Choose URL</strong> when you
-        deliberately want to match the player’s VPN state.
-      </p>
-    </article>
-  </section>
+    </main>
   </div>
 </body>
 </html>

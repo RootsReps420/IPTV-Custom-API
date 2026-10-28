@@ -3,172 +3,204 @@
   Public + owner status page (same HTML).
   JS calls /api/public on `/` and /api/status on `/owner`.
   Playlists / Current DNS / Switch only render when the JSON has owner: true.
-  Cache-bust static URLs (?v=) after CSS/JS changes.
+  Layout + theme: console.css (sidebar shell). Cache-bust static URLs (?v=) after CSS/JS changes.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DNS Portal Monitor for IPTV</title>
+  <title>Monitor · IPTV Portal Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=58" />
-  <link rel="stylesheet" href="/static/dash.css?v=13" />
+  <link rel="stylesheet" href="/static/console.css?v=1" />
 </head>
-<body class="dash">
-  <div class="dash-sky" aria-hidden="true">
-    <div class="dash-nebula"></div>
-    <div class="dash-dust"></div>
-    <div class="dash-stars dash-stars-a"></div>
-    <div class="dash-stars dash-stars-b"></div>
-    <div class="dash-meteor"></div>
-    <div class="dash-meteor dash-meteor-b"></div>
-    <div class="dash-meteor dash-meteor-c"></div>
-  </div>
-  <div class="dash-app">
-    <div class="dash-top">
-      <nav class="dash-nav" aria-label="Pages">
-        <a href="/" id="nav-monitor" class="is-here">Monitor</a>
-        <a href="/history">History</a>
-        <a href="/key">Info</a>
-        <a href="/owner" id="owner-link">Playlists</a>
-        <a href="/" id="public-link" hidden>Public</a>
-        <a href="/watch" id="watch-link">Watch</a>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="brand-mark">TV</span>
+        <span class="brand-text"><strong>Portal Monitor</strong><span>IPTV DNS failover</span></span>
+      </a>
+      <nav class="nav" aria-label="Pages">
+        <span class="nav-label">Dashboard</span>
+        <a href="/" id="nav-monitor" class="is-here">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+          Monitor
+        </a>
+        <a href="/owner" id="owner-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>
+          Playlists
+        </a>
+        <div class="subnav" id="owner-subnav" hidden>
+          <a href="#playlists-section">Playlists</a>
+          <a href="#live-section">Current DNS</a>
+          <a href="#watchers-section">Watch sessions</a>
+          <a href="#live-groups-section">Live groups</a>
+          <a href="#pool-section">Standby pool</a>
+          <a href="#events-section">Events</a>
+        </div>
+        <a href="/history">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+          History
+        </a>
+        <a href="/key">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
+          Info
+        </a>
+        <span class="nav-label">Apps</span>
+        <a href="/watch" id="watch-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3" /></svg>
+          Watch<span class="ext">↗</span>
+        </a>
       </nav>
-    </div>
+      <div class="side-status" aria-live="polite">
+        <div class="side-status-main"><span id="side-dot" class="dot"></span><span id="side-status-text">Connecting…</span></div>
+        <div class="side-status-meta">Checked <span id="last-cycle">waiting…</span> · next in <span id="next-check">—</span></div>
+      </div>
+    </aside>
 
-    <div class="dash-intro">
-      <div>
-        <h1>DNS Portal Monitor for IPTV</h1>
-        <p class="dash-sub">Standby pool, playlists, and Watch sessions</p>
-      </div>
-      <p class="dash-updated">Updated <span id="last-cycle">waiting…</span></p>
-    </div>
+    <main class="main">
+      <div class="content">
+        <header class="page-head">
+          <div>
+            <h1 id="page-title">Monitor</h1>
+            <p class="page-sub" id="page-sub">Standby pool health and recent events</p>
+          </div>
+          <div class="page-meta">
+            <span id="mode-pill" class="mode-pill" hidden>Dry run</span>
+          </div>
+        </header>
 
-    <div class="dash-stats">
-      <div class="dash-stat" id="stat-live-wrap" hidden>
-        <span class="label">Live</span>
-        <span id="stat-live">—</span>
-      </div>
-      <div class="dash-stat">
-        <span class="label">Standby</span>
-        <span id="stat-avail">—</span>
-      </div>
-      <div class="dash-stat" id="stat-playlists-wrap" hidden>
-        <span class="label">Playlists</span>
-        <span id="stat-playlists">—</span>
-      </div>
-      <div class="dash-stat" id="stat-watch-wrap" hidden>
-        <span class="label">Watch</span>
-        <span id="stat-watch">—</span>
-      </div>
-      <div class="dash-stat">
-        <span class="label">Next check</span>
-        <span id="next-check">—</span>
-      </div>
-      <span id="mode-pill" class="mode-pill dash-stat" hidden>dry run</span>
-    </div>
-
-    <div id="alerts" class="alerts" hidden></div>
-
-    <!-- Down hosts grouped by cause + /24. Filled from down_groups in the API. -->
-    <section id="down-now" class="down-now" aria-live="polite" hidden></section>
-
-    <section class="playlists dash-panel" id="playlists-section" hidden>
-      <div class="section-head">
-        <h2>Playlists</h2>
-        <span id="playlist-count" class="count"></span>
-      </div>
-      <p class="history-note">Strong 8K and Magnum use separate URL pools so credentials never cross. Strong 8K VPN DNS is a separate lane — auto failover never picks those hosts (a player off VPN cannot use them). Switch stays on the current lane. Choose URL can pick a VPN host when the player is on a VPN. Magnum playlists auto-failover via EPGenius like Strong 8K, but only onto Magnum-tagged URLs. After a Magnum swap, Watch DNS on the VPS (<code>player.yaml</code>) follows the new host and /watch refreshes the live list.</p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Playlist ID</th>
-              <th>User</th>
-              <th>Current DNS</th>
-              <th>Nameserver</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="playlist-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="watchers dash-panel" id="watchers-section" hidden>
-      <div class="section-head">
-        <h2>Watch sessions</h2>
-        <span id="watchers-count" class="count"></span>
-      </div>
-      <p class="history-note">Who is signed in on /watch: one row per tab (duplicates from cookie remints are collapsed). Bandwidth is counted on the VPS from bytes already proxied. Buffering stats ride the existing /me and heartbeat calls — no extra stream traffic. Log out signs that Watch user out on every tab and device until they sign in again.</p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Logged in</th>
-              <th>IP</th>
-              <th>Status</th>
-              <th>Quality</th>
-              <th>Watching</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="watchers-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="live-groups dash-panel" id="live-groups-section" hidden>
-      <details class="live-groups-fold" id="live-groups-fold">
-        <summary class="section-head live-groups-summary">
-          <h2>Watch live groups</h2>
-          <span class="live-groups-meta">
-            <span id="live-groups-count" class="count"></span>
-            <span class="live-groups-hint">Show</span>
-          </span>
-        </summary>
-        <p class="history-note">Every Magnum live group. On is what /watch Live TV shows now. Off stays in the playlist but is hidden. Toggles write immediately — no restart. If /watch is already on Live TV, tap Live again to refresh the list.</p>
-        <div class="live-groups-toolbar">
-          <input type="search" id="live-groups-filter" placeholder="Filter groups…" autocomplete="off" />
-          <div class="live-groups-chips" role="tablist">
-            <button type="button" class="sort-btn is-here" data-groups-view="all">All</button>
-            <button type="button" class="sort-btn" data-groups-view="on">On</button>
-            <button type="button" class="sort-btn" data-groups-view="off">Off</button>
+        <div class="stats">
+          <div class="stat" id="stat-live-wrap" hidden>
+            <span class="label">Live DNS</span>
+            <span class="value" id="stat-live">—</span>
+          </div>
+          <div class="stat">
+            <span class="label">Standby pool</span>
+            <span class="value" id="stat-avail">—</span>
+          </div>
+          <div class="stat neutral" id="stat-playlists-wrap" hidden>
+            <span class="label">Playlists</span>
+            <span class="value" id="stat-playlists">—</span>
+          </div>
+          <div class="stat neutral" id="stat-watch-wrap" hidden>
+            <span class="label">Watch</span>
+            <span class="value" id="stat-watch">—</span>
           </div>
         </div>
-        <div id="live-groups-list" class="live-groups-list"></div>
-      </details>
-    </section>
 
-    <section class="current dash-panel" id="live-section" hidden>
-      <div class="section-head">
-        <h2>Current DNS</h2>
-        <span id="live-count" class="count"></span>
-      </div>
-      <div id="live-list"></div>
-    </section>
+        <div id="alerts" class="alerts" hidden></div>
 
-    <section class="pool dash-panel">
-      <div class="section-head">
-        <h2>Available URL pool</h2>
-        <span id="avail-count" class="count"></span>
-      </div>
-      <div id="avail-list"></div>
-    </section>
+        <!-- Down hosts grouped by cause + /24. Filled from down_groups in the API. -->
+        <section id="down-now" class="down-now" aria-live="polite" hidden></section>
 
-    <section class="events dash-panel">
-      <div class="section-head">
-        <h2>Recent events</h2>
-        <span id="event-count" class="count"></span>
+        <section class="panel" id="playlists-section" hidden>
+          <div class="section-head">
+            <h2>Playlists</h2>
+            <span id="playlist-count" class="count"></span>
+          </div>
+          <details class="help">
+            <summary>How switching works</summary>
+            <p>Strong 8K and Magnum use separate URL pools so credentials never cross. Strong 8K VPN DNS is a separate lane — auto failover never picks those hosts (a player off VPN cannot use them). Switch stays on the current lane. Choose URL can pick a VPN host when the player is on a VPN. Magnum playlists auto-failover via EPGenius like Strong 8K, but only onto Magnum-tagged URLs. After a Magnum swap, Watch DNS on the VPS (<code>player.yaml</code>) follows the new host and /watch refreshes the live list.</p>
+          </details>
+          <div class="table-wrap">
+            <table class="playlist-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Playlist ID</th>
+                  <th>User</th>
+                  <th>Current DNS</th>
+                  <th>Nameserver</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="playlist-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel" id="live-section" hidden>
+          <div class="section-head">
+            <h2>Current DNS</h2>
+            <span id="live-count" class="count"></span>
+          </div>
+          <div id="live-list"></div>
+        </section>
+
+        <section class="panel" id="watchers-section" hidden>
+          <div class="section-head">
+            <h2>Watch sessions</h2>
+            <span id="watchers-count" class="count"></span>
+          </div>
+          <details class="help">
+            <summary>About sessions</summary>
+            <p>Who is signed in on /watch: one row per tab (duplicates from cookie remints are collapsed). Bandwidth is counted on the VPS from bytes already proxied. Buffering stats ride the existing /me and heartbeat calls — no extra stream traffic. Log out signs that Watch user out on every tab and device until they sign in again.</p>
+          </details>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Logged in</th>
+                  <th>IP</th>
+                  <th>Status</th>
+                  <th>Quality</th>
+                  <th>Watching</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="watchers-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel" id="live-groups-section" hidden>
+          <details class="live-groups-fold" id="live-groups-fold">
+            <summary class="section-head">
+              <h2>Watch live groups</h2>
+              <span class="live-groups-meta">
+                <span id="live-groups-count" class="count"></span>
+                <span class="live-groups-hint">Show</span>
+              </span>
+            </summary>
+            <details class="help">
+              <summary>About live groups</summary>
+              <p>Every Magnum live group. On is what /watch Live TV shows now. Off stays in the playlist but is hidden. Toggles write immediately — no restart. If /watch is already on Live TV, tap Live again to refresh the list.</p>
+            </details>
+            <div class="live-groups-toolbar">
+              <input type="search" id="live-groups-filter" placeholder="Filter groups…" autocomplete="off" />
+              <div class="live-groups-chips" role="tablist">
+                <button type="button" class="sort-btn is-here" data-groups-view="all">All</button>
+                <button type="button" class="sort-btn" data-groups-view="on">On</button>
+                <button type="button" class="sort-btn" data-groups-view="off">Off</button>
+              </div>
+            </div>
+            <div id="live-groups-list" class="live-groups-list"></div>
+          </details>
+        </section>
+
+        <section class="panel" id="pool-section">
+          <div class="section-head">
+            <h2>Standby pool</h2>
+            <span id="avail-count" class="count"></span>
+          </div>
+          <div id="avail-list"></div>
+        </section>
+
+        <section class="panel" id="events-section">
+          <div class="section-head">
+            <h2>Recent events</h2>
+            <span id="event-count" class="count"></span>
+          </div>
+          <ol id="event-list" class="event-list"></ol>
+        </section>
       </div>
-      <ol id="event-list" class="event-list"></ol>
-    </section>
+    </main>
   </div>
-  <script src="/static/app.js?v=52"></script>
+  <script src="/static/app.js?v=53"></script>
 </body>
 </html>

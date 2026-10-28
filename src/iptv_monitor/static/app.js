@@ -34,6 +34,33 @@ const liveGroupsFilter = document.getElementById("live-groups-filter");
 const ownerLink = document.getElementById("owner-link");
 const publicLink = document.getElementById("public-link");
 const watchLink = document.getElementById("watch-link");
+const ownerSubnav = document.getElementById("owner-subnav");
+const sideDot = document.getElementById("side-dot");
+const sideStatusText = document.getElementById("side-status-text");
+
+// Sidebar status: red if live DNS is down, amber if only standbys are, green otherwise.
+function setSideStatus(level, text) {
+  if (sideDot) {
+    sideDot.className = `dot ${level}`;
+  }
+  if (sideStatusText) {
+    sideStatusText.textContent = text;
+  }
+}
+
+function setPageHeading(owner) {
+  const title = document.getElementById("page-title");
+  const sub = document.getElementById("page-sub");
+  if (title) {
+    title.textContent = owner ? "Playlists" : "Monitor";
+  }
+  if (sub) {
+    sub.textContent = owner
+      ? "Playlists, live DNS, Watch sessions and the standby pool"
+      : "Standby pool health and recent events";
+  }
+  document.title = `${owner ? "Playlists" : "Monitor"} · IPTV Portal Monitor`;
+}
 
 function isOwnerView() {
   // Caddy only protects /owner; this path check is what shows playlists in JS.
@@ -210,7 +237,7 @@ function ipRow(ips) {
   const chips = v4
     .map((ip) => `<span class="ip-chip" title="${esc(ip)}">${esc(ip)}</span>`)
     .join("");
-  return `<div class="ip-row"><span class="ip-label">IP'S</span><div class="ip-chips">${chips}</div></div>`;
+  return `<div class="ip-row"><span class="ip-label">IPs</span><div class="ip-chips">${chips}</div></div>`;
 }
 
 function card(item) {
@@ -1207,6 +1234,19 @@ async function refresh() {
     if (watchLink) {
       watchLink.hidden = false;
     }
+    if (ownerSubnav) {
+      ownerSubnav.hidden = !(owner && signedIn);
+    }
+    setPageHeading(owner);
+    const liveDown = (counts.live_up ?? 0) < (counts.live_total ?? 0);
+    const standbyDown = (counts.available_total ?? 0) - (counts.available_up ?? 0);
+    if (liveDown) {
+      setSideStatus("bad", "Live DNS down");
+    } else if (standbyDown > 0) {
+      setSideStatus("warn", `${standbyDown} standby down`);
+    } else {
+      setSideStatus("ok", "All systems up");
+    }
     if (playlistSection) {
       playlistSection.hidden = !signedIn;
     }
@@ -1237,6 +1277,7 @@ async function refresh() {
     modePill.hidden = true;
     latest = null;
     nextCheck.textContent = "—";
+    setSideStatus("bad", "Monitor unreachable");
     renderAlerts([`Dashboard cannot reach the monitor: ${error.message}`]);
   }
 }
