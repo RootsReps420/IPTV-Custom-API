@@ -802,4 +802,5 @@ def register_watch(app: FastAPI, static_dir) -> None:
 
     @app.get("/watch")
     async def watch_page() -> FileResponse:
-        return FileResponse(static_dir / "watch.html")
+        # Revalidate every load (cheap 304) so a deploy never pairs stale HTML with new CSS/JS.
+        return FileResponse(static_dir / "watch.html", headers={"Cache-Control": "no-cache"})
