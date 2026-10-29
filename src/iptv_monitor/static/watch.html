@@ -8,25 +8,38 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>R</title>
+  <title>Portal Watch</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="stylesheet" href="/static/styles.css?v=72" />
   <link rel="stylesheet" href="/static/dash.css?v=8" />
+  <!-- Control-room theme + layout on top of styles.css (video / VOD chrome mechanics stay there). -->
+  <link rel="stylesheet" href="/static/watch.css?v=1" />
 </head>
 <body class="watch-body">
-  <div class="dash-sky is-static" aria-hidden="true">
-    <div class="dash-nebula"></div>
-    <div class="dash-dust"></div>
-    <div class="dash-stars dash-stars-a"></div>
-    <div class="dash-stars dash-stars-b"></div>
-  </div>
+  <div class="watch-bg" aria-hidden="true"></div>
 
   <section id="login-panel" class="watch-login">
-    <p class="eyebrow watch-mark">R</p>
+      <div class="watch-mark watch-brandmark">
+        <svg class="watch-logo" viewBox="0 0 36 36" aria-hidden="true">
+          <defs>
+            <linearGradient id="wl-login" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8b7cff" />
+              <stop offset="0.55" stop-color="#6f8cff" />
+              <stop offset="1" stop-color="#3dd6f5" />
+            </linearGradient>
+          </defs>
+          <rect x="1" y="1" width="34" height="34" rx="10" fill="url(#wl-login)" />
+          <path d="M14 8.5l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="8" y="12.5" width="20" height="14.5" rx="4" fill="rgba(255,255,255,0.16)" stroke="#fff" stroke-width="1.8" />
+          <path d="M16 16.6v6.3l5.2-3.15z" fill="#fff" />
+        </svg>
+        <span class="watch-brand-text"><strong>Portal Watch</strong><span>Live TV · Movies · Shows</span></span>
+      </div>
     <h1>Sign in</h1>
-    <p class="history-note">Friend logins only. This is not the Playlists / Switch page.</p>
+    <p class="history-note">Friend logins only. This is not the dashboard sign-in.</p>
     <form id="login-form" class="watch-login-form">
       <label>
         Username
@@ -43,7 +56,22 @@
 
   <section id="password-panel" class="watch-terms" hidden>
     <div class="watch-terms-card">
-      <p class="eyebrow watch-mark">R</p>
+      <div class="watch-mark watch-brandmark">
+        <svg class="watch-logo" viewBox="0 0 36 36" aria-hidden="true">
+          <defs>
+            <linearGradient id="wl-pw" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8b7cff" />
+              <stop offset="0.55" stop-color="#6f8cff" />
+              <stop offset="1" stop-color="#3dd6f5" />
+            </linearGradient>
+          </defs>
+          <rect x="1" y="1" width="34" height="34" rx="10" fill="url(#wl-pw)" />
+          <path d="M14 8.5l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="8" y="12.5" width="20" height="14.5" rx="4" fill="rgba(255,255,255,0.16)" stroke="#fff" stroke-width="1.8" />
+          <path d="M16 16.6v6.3l5.2-3.15z" fill="#fff" />
+        </svg>
+        <span class="watch-brand-text"><strong>Portal Watch</strong><span>Live TV · Movies · Shows</span></span>
+      </div>
       <h1>Set a new password</h1>
       <p class="history-note">Everyone must choose their own password. It is stored as a hash — we never keep the password itself.</p>
       <ul class="watch-pw-rules">
@@ -75,7 +103,22 @@
 
   <section id="terms-panel" class="watch-terms" hidden>
     <div class="watch-terms-card">
-      <p class="eyebrow watch-mark">R</p>
+      <div class="watch-mark watch-brandmark">
+        <svg class="watch-logo" viewBox="0 0 36 36" aria-hidden="true">
+          <defs>
+            <linearGradient id="wl-terms" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8b7cff" />
+              <stop offset="0.55" stop-color="#6f8cff" />
+              <stop offset="1" stop-color="#3dd6f5" />
+            </linearGradient>
+          </defs>
+          <rect x="1" y="1" width="34" height="34" rx="10" fill="url(#wl-terms)" />
+          <path d="M14 8.5l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="8" y="12.5" width="20" height="14.5" rx="4" fill="rgba(255,255,255,0.16)" stroke="#fff" stroke-width="1.8" />
+          <path d="M16 16.6v6.3l5.2-3.15z" fill="#fff" />
+        </svg>
+        <span class="watch-brand-text"><strong>Portal Watch</strong><span>Live TV · Movies · Shows</span></span>
+      </div>
       <h1>Terms of use</h1>
       <div class="watch-terms-copy">
         <!-- Edit this block any time. Friends see it after every login. -->
@@ -103,27 +146,46 @@
     </div>
     <div class="watch-shell" id="watch-shell">
       <nav class="watch-rail" aria-label="Library">
-        <p class="watch-brand" aria-label="Home">R</p>
+        <a class="watch-brand" href="/watch" aria-label="Portal Watch home">
+          <svg class="watch-logo" viewBox="0 0 36 36" aria-hidden="true">
+          <defs>
+            <linearGradient id="wl-rail" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8b7cff" />
+              <stop offset="0.55" stop-color="#6f8cff" />
+              <stop offset="1" stop-color="#3dd6f5" />
+            </linearGradient>
+          </defs>
+          <rect x="1" y="1" width="34" height="34" rx="10" fill="url(#wl-rail)" />
+          <path d="M14 8.5l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="8" y="12.5" width="20" height="14.5" rx="4" fill="rgba(255,255,255,0.16)" stroke="#fff" stroke-width="1.8" />
+          <path d="M16 16.6v6.3l5.2-3.15z" fill="#fff" />
+        </svg>
+          <span class="watch-brand-text"><strong>Portal Watch</strong><span>Live TV · Movies · Shows</span></span>
+        </a>
         <div class="watch-rail-nav">
-          <button type="button" class="watch-rail-btn is-here" data-tab="live">TV</button>
-          <button type="button" class="watch-rail-btn" data-tab="movies">Movies</button>
-          <button type="button" class="watch-rail-btn" data-tab="series">Shows</button>
-          <button type="button" class="watch-rail-btn" id="search-btn" data-tab="search">Search</button>
-          <div class="watch-slots" title="How many streams are playing out of the shared cap">
-            <span>Slots</span>
+          <span class="watch-rail-label">Browse</span>
+          <button type="button" class="watch-rail-btn is-here" data-tab="live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="3" /><path d="m17 2-5 5-5-5" /></svg><span>Live TV</span></button>
+          <button type="button" class="watch-rail-btn" data-tab="movies"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="18" rx="3" /><path d="M7 3v18M17 3v18M2 9h5M2 15h5M17 9h5M17 15h5" /></svg><span>Movies</span></button>
+          <button type="button" class="watch-rail-btn" data-tab="series"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" /><circle cx="19" cy="18" r="2" /></svg><span>Shows</span></button>
+          <button type="button" class="watch-rail-btn" id="search-btn" data-tab="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg><span>Search</span></button>
+          <div class="watch-slots" title="Streams playing right now, out of the shared limit">
+            <span>Streams in use</span>
             <strong id="slot-stat">—</strong>
           </div>
         </div>
         <div class="watch-rail-foot">
           <div class="watch-rail-meta">
             <span>Guide <strong id="guide-stat">—</strong></span>
-            <span id="user-stat">—</span>
           </div>
           <div class="watch-refresh">
             <button type="button" class="watch-refresh-btn" id="refresh-playlist-btn" title="Re-download live, movies, and shows">Refresh list</button>
             <button type="button" class="watch-refresh-btn" id="refresh-epg-btn" title="Re-download programme times and titles">Refresh EPG</button>
           </div>
-          <button type="button" class="watch-rail-btn" id="logout-btn">Log out</button>
+          <div class="watch-user">
+            <span class="watch-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg></span>
+            <span class="watch-user-name" id="user-stat">—</span>
+            <button type="button" class="watch-rail-btn watch-logout" id="logout-btn" title="Log out" aria-label="Log out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></svg></button>
+          </div>
         </div>
       </nav>
       <aside id="category-list" class="watch-cats" aria-label="Groups"></aside>
@@ -228,6 +290,6 @@
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
   <script src="/static/watch-cast.js?v=1"></script>
-  <script src="/static/watch.js?v=85"></script>
+  <script src="/static/watch.js?v=86"></script>
 </body>
 </html>

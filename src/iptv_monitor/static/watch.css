@@ -1,0 +1,1220 @@
+/* /watch control-room theme. Loads after styles.css + dash.css and only restyles:
+ * the video / VOD chrome mechanics (fullscreen, dock, up-next, cast) stay in styles.css.
+ * Overview: palette via the shared CSS variables, aurora backdrop, app sidebar (brand, icon tabs,
+ * streams-in-use, guide, refresh, user), groups list, channel list + TV guide, player card,
+ * movie / show home, detail page, sign-in cards, and the phone layout.
+ */
+
+.watch-body {
+  --bg: #05070d;
+  --panel: #121625;
+  --panel-2: #1a1f30;
+  --line: #262d40;
+  --line-2: #323a52;
+  --text: #edf0f7;
+  --text-2: #c3cad9;
+  --muted: #a2abbf;
+  --faint: #6f7a91;
+  --up: #b3a9ff;
+  --down: #f0606a;
+  --warn: #f2b43a;
+  --accent: #8b7cff;
+  --accent-2: #3dd6f5;
+  --accent-soft: rgba(139, 124, 255, 0.16);
+  --accent-grad: linear-gradient(135deg, #8b7cff 0%, #6f8cff 50%, #3dd6f5 100%);
+  --button-grad: linear-gradient(135deg, #6b5cf6 0%, #5468f4 100%);
+  --glass: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)), rgba(16, 20, 33, 0.8);
+  --font: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Backdrop ---------- */
+
+.watch-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 36rem at 8% -14%, rgba(139, 124, 255, 0.22), transparent 62%),
+    radial-gradient(48rem 30rem at 96% -10%, rgba(61, 214, 245, 0.13), transparent 60%),
+    var(--bg);
+}
+
+.watch-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(148, 163, 196, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 196, 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 85% 60% at 50% 0%, #000 25%, transparent 75%);
+  mask-image: radial-gradient(ellipse 85% 60% at 50% 0%, #000 25%, transparent 75%);
+}
+
+/* ---------- Shared buttons ---------- */
+
+.watch-body .switch-btn {
+  padding: 10px 20px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--button-grad);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 10px 24px -10px rgba(107, 92, 246, 0.95);
+  color: #fff;
+  font-family: var(--font);
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.watch-body .switch-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--button-grad);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 14px 28px -10px rgba(107, 92, 246, 1);
+  color: #fff;
+}
+
+.watch-refresh-btn {
+  padding: 9px 16px;
+  border: 1px solid var(--line-2);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 700;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.watch-refresh-btn:hover:not(:disabled) {
+  border-color: rgba(139, 124, 255, 0.5);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* ---------- Sign-in, password and terms cards ---------- */
+
+.watch-login,
+.watch-terms-card {
+  padding: 30px 28px 26px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--glass);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 40px 90px -40px rgba(139, 124, 255, 0.55);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.watch-login {
+  margin: 12vh auto 60px;
+}
+
+/* styles.css gives .watch-app display:flex, which beat the hidden attribute: signed-out
+   visitors saw an empty app shell under the sign-in card. */
+.watch-app[hidden] {
+  display: none;
+}
+
+/* Terms + password change: a centred overlay over the (dimmed) app, not a block above it. */
+.watch-terms:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  width: auto;
+  margin: 0;
+  padding: 20px;
+  overflow-y: auto;
+  background: rgba(5, 7, 13, 0.72);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.watch-terms-card {
+  width: min(520px, 100%);
+}
+
+.watch-brandmark,
+.watch-login .watch-mark,
+.watch-terms .watch-mark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 24px;
+  color: var(--text);
+  font-size: inherit;
+  white-space: normal;
+}
+
+.watch-logo {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  filter: drop-shadow(0 6px 14px rgba(139, 124, 255, 0.45));
+}
+
+.watch-brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.watch-brand-text strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.watch-brand-text span {
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.watch-login h1,
+.watch-terms-card h1 {
+  margin: 0 0 6px;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+
+.watch-body .history-note {
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.watch-login-form label {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.watch-login-form input {
+  padding: 12px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  outline: none;
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--text);
+  font-size: 14.5px;
+  font-weight: 600;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.watch-login-form input:focus,
+.watch-browse-tools input:focus {
+  border-color: rgba(139, 124, 255, 0.75);
+  box-shadow: 0 0 0 4px rgba(139, 124, 255, 0.16);
+}
+
+.watch-login-form .switch-btn {
+  margin-top: 4px;
+  padding: 13px 18px;
+  font-size: 14.5px;
+}
+
+.watch-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(240, 96, 106, 0.4);
+  border-radius: 10px;
+  background: rgba(240, 96, 106, 0.14);
+  color: #ffd0d4;
+  font-weight: 600;
+}
+
+.watch-error[hidden] {
+  display: none;
+}
+
+.watch-terms-copy {
+  color: var(--text-2);
+  line-height: 1.65;
+}
+
+.watch-terms-agree {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.watch-terms-agree input,
+.watch-body input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.watch-pw-rules {
+  color: var(--text-2);
+}
+
+/* ---------- Banner + guide sync strip ---------- */
+
+.watch-banner {
+  border-bottom: 1px solid var(--line);
+  background: rgba(16, 20, 33, 0.92);
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.watch-sync {
+  border-bottom: 1px solid var(--line);
+  background: rgba(139, 124, 255, 0.08);
+}
+
+.watch-sync-row strong {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.watch-sync-bar {
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(139, 124, 255, 0.18);
+}
+
+.watch-sync-bar span {
+  border-radius: 4px;
+  background: var(--accent-grad);
+}
+
+/* ---------- Sidebar ---------- */
+
+.watch-shell {
+  grid-template-columns: 236px minmax(200px, 248px) minmax(0, 1fr);
+}
+
+/* Movies / Shows home: same sidebar width as Live TV so nothing jumps between tabs. */
+.watch-app.is-vod-home .watch-shell {
+  grid-template-columns: 236px minmax(0, 1fr);
+}
+
+.watch-rail {
+  gap: 18px;
+  padding: 20px 14px 14px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(16, 20, 33, 0.86), rgba(10, 13, 22, 0.86));
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.watch-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 0 4px;
+  color: var(--text);
+  font-size: inherit;
+  text-decoration: none;
+}
+
+.watch-rail-nav {
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.watch-rail-label {
+  margin: 6px 0 6px;
+  padding: 0 12px;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.watch-rail-btn svg {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  color: var(--faint);
+  transition: color 0.15s;
+}
+
+.watch-rail-nav .watch-rail-btn {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 0;
+  padding: 10px 12px;
+  border-radius: 11px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.watch-rail-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.watch-rail-btn:hover svg {
+  color: var(--text-2);
+}
+
+.watch-rail-btn.is-here {
+  background: linear-gradient(90deg, rgba(139, 124, 255, 0.22), rgba(139, 124, 255, 0.04));
+  box-shadow: inset 0 0 0 1px rgba(139, 124, 255, 0.24);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.watch-rail-btn.is-here svg {
+  color: var(--accent);
+}
+
+.watch-rail-nav .watch-rail-btn.is-here::before {
+  content: "";
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: -14px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent-grad);
+  box-shadow: 0 0 14px rgba(139, 124, 255, 0.9);
+}
+
+.watch-slots {
+  margin: 16px 0 0;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.watch-slots span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.watch-slots strong {
+  margin-top: 6px;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.watch-rail-foot {
+  gap: 12px;
+}
+
+.watch-rail-meta {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.watch-rail-meta strong {
+  margin-top: 3px;
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.watch-refresh {
+  flex-direction: row;
+  gap: 6px;
+}
+
+.watch-refresh .watch-refresh-btn {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.watch-refresh .watch-refresh-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.watch-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.watch-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--accent-grad);
+  color: #fff;
+}
+
+.watch-avatar svg {
+  width: 16px;
+  height: 16px;
+}
+
+.watch-user-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-rail-btn.watch-logout {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.watch-rail-btn.watch-logout svg {
+  width: 16px;
+  height: 16px;
+  color: currentColor;
+}
+
+.watch-rail-btn.watch-logout:hover,
+.watch-rail-btn.watch-logout:focus-visible {
+  outline: none;
+  border-color: rgba(240, 96, 106, 0.5);
+  background: rgba(240, 96, 106, 0.15);
+  color: #ffd0d4;
+}
+
+/* ---------- Groups column ---------- */
+
+.watch-cats {
+  gap: 2px;
+  padding: 16px 10px;
+  border-right: 1px solid var(--line);
+  background: rgba(12, 15, 25, 0.66);
+}
+
+.watch-cat {
+  position: relative;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s;
+}
+
+/* Two-letter marks read as noise ("U|" for "UK | Sport"); the name is enough. */
+.watch-cat-mark {
+  display: none;
+}
+
+.watch-cat:hover {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.watch-cat:hover .watch-cat-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.watch-cat.is-here {
+  border-color: transparent;
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.watch-cat.is-here .watch-cat-label {
+  color: var(--text);
+  font-weight: 700;
+}
+
+/* ---------- Stage: channel list + player ---------- */
+
+.watch-stage {
+  background: transparent;
+}
+
+.watch-channel-col {
+  padding: 16px 18px 16px 22px;
+}
+
+.watch-browse-tools {
+  margin-bottom: 12px;
+}
+
+.watch-browse-tools input {
+  padding: 11px 14px 11px 40px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  outline: none;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23727d94' stroke-width='2' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='m20 20-3.5-3.5'/></svg>") 14px 50% no-repeat,
+    rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 500;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.watch-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.watch-item:hover {
+  border-color: rgba(139, 124, 255, 0.4);
+  background: rgba(139, 124, 255, 0.08);
+  color: var(--text);
+}
+
+.watch-item.is-here {
+  border-color: rgba(139, 124, 255, 0.55);
+  background: rgba(139, 124, 255, 0.14);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text);
+}
+
+.watch-item.is-here .watch-item-name,
+.watch-item:hover .watch-item-name {
+  color: var(--text);
+}
+
+.watch-item.is-here .watch-item-epg,
+.watch-item:hover .watch-item-epg {
+  color: var(--text-2);
+}
+
+.watch-num {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.watch-item.is-here .watch-num,
+.watch-item:hover .watch-num {
+  color: var(--up);
+}
+
+/* TV guide grid */
+.watch-epg-prog {
+  border-color: var(--line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.watch-epg-prog.is-now {
+  border-color: rgba(139, 124, 255, 0.35);
+  background: rgba(139, 124, 255, 0.12);
+  color: var(--text);
+}
+
+.watch-epg-prog.is-here,
+.watch-epg-prog:hover {
+  border-color: var(--accent);
+  background: rgba(139, 124, 255, 0.24);
+  color: #fff;
+}
+
+.watch-epg-now,
+.watch-epg-needle,
+.watch-epg-needle::after {
+  background: var(--accent-2);
+  box-shadow: 0 0 10px rgba(61, 214, 245, 0.7);
+}
+
+.watch-epg-row.is-here .watch-epg-ch::after {
+  border-left-color: var(--accent);
+}
+
+.watch-epg-ch {
+  color: var(--text-2);
+}
+
+.watch-epg-ch .watch-item-name {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.watch-epg-times,
+.watch-epg-tick,
+.watch-epg-clock {
+  font-family: var(--mono);
+}
+
+/* Player card */
+.watch-preview-card {
+  padding: 16px 18px 18px 14px;
+  border-left: 1px solid var(--line);
+  background: rgba(8, 10, 17, 0.72);
+}
+
+.watch-video-wrap {
+  overflow: hidden;
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px var(--line), 0 24px 48px -24px rgba(0, 0, 0, 0.9);
+}
+
+.watch-video-wrap:fullscreen,
+.watch-video-wrap:-webkit-full-screen {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.watch-preview-card video {
+  border: 0;
+}
+
+.watch-live-badge {
+  border-radius: 6px;
+  background: rgba(240, 96, 106, 0.92);
+  font-family: var(--font);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.watch-stream-stat {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+.watch-buffer {
+  width: fit-content;
+  gap: 2px;
+  margin-top: 12px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.watch-buffer > span {
+  padding: 0 8px 0 6px;
+  color: var(--muted);
+}
+
+.watch-buffer button {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.watch-buffer button:hover {
+  color: var(--text);
+}
+
+.watch-buffer button.is-here {
+  border-color: transparent;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 6px 14px -6px rgba(0, 0, 0, 0.7);
+  color: var(--text);
+}
+
+.watch-now {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--glass);
+}
+
+.watch-clock {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.watch-now .hist-host {
+  margin-top: 4px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.watch-now .hist-url {
+  margin-top: 6px;
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.watch-next {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.watch-progress {
+  height: 4px;
+  margin-top: 12px;
+  border-radius: 4px;
+  background: rgba(139, 124, 255, 0.18);
+}
+
+.watch-progress span {
+  border-radius: 4px;
+  background: var(--accent-grad);
+}
+
+/* VOD dock: colours only, layout stays in styles.css */
+.watch-vod-btn {
+  border-radius: 9px;
+  font-family: var(--font);
+  font-weight: 700;
+}
+
+.watch-vod-range,
+.watch-vod-vol {
+  accent-color: var(--accent);
+}
+
+.watch-vod-player-close,
+.watch-vod-skip {
+  border-radius: 10px;
+  font-family: var(--font);
+  font-weight: 700;
+}
+
+.watch-upnext {
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  background: rgba(12, 15, 25, 0.94);
+}
+
+/* ---------- Movies / Shows home ---------- */
+
+.watch-hero-kicker,
+.watch-vod-detail-meta {
+  color: var(--up);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.watch-hero h2,
+.watch-vod-detail-copy h2 {
+  font-family: var(--font);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+
+.watch-hero-plot,
+#vod-detail-plot {
+  color: var(--text-2);
+}
+
+.watch-hero-actions {
+  gap: 10px;
+}
+
+.watch-hero-actions .watch-refresh-btn {
+  padding: 10px 20px;
+  background: rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  font-size: 13.5px;
+}
+
+.watch-row-head {
+  max-width: none;
+  margin: 0;
+  padding: 0 20px 4px;
+  border-bottom: 0;
+}
+
+.watch-row-head h3 {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+}
+
+.watch-row-all {
+  border-color: rgba(139, 124, 255, 0.4);
+  background: var(--accent-soft);
+  color: var(--up);
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.watch-row-all:hover,
+.watch-row-all:focus-visible {
+  border-color: var(--accent);
+  background: rgba(139, 124, 255, 0.28);
+}
+
+.watch-row-count {
+  color: var(--faint);
+  font-family: var(--mono);
+}
+
+.watch-poster-art {
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 16px 30px -18px rgba(0, 0, 0, 0.9);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.watch-poster:hover .watch-poster-art,
+.watch-poster:focus-visible .watch-poster-art {
+  transform: translateY(-4px);
+  box-shadow: 0 0 0 2px var(--accent), 0 22px 40px -18px rgba(139, 124, 255, 0.6);
+}
+
+.watch-poster:focus-visible {
+  outline: none;
+}
+
+.watch-poster-name {
+  color: var(--text);
+  font-family: var(--font);
+  font-weight: 700;
+}
+
+.watch-poster-year {
+  color: var(--faint);
+  font-family: var(--mono);
+}
+
+.watch-row-arrow:hover {
+  color: var(--up);
+}
+
+/* Leftover greens from the old theme (hard-coded in styles.css). */
+.watch-epg-row.is-here {
+  background: rgba(139, 124, 255, 0.06);
+}
+
+.watch-epg-ch:hover,
+.watch-epg-ch.is-here {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text);
+}
+
+.watch-epg-ch:hover .watch-item-name,
+.watch-epg-ch.is-here .watch-item-name {
+  color: var(--text);
+}
+
+.watch-vod-skip:focus-visible,
+.watch-vod-player-close:hover {
+  border-color: rgba(139, 124, 255, 0.5);
+}
+
+.watch-hero-bg::after {
+  background: linear-gradient(180deg, transparent 48%, var(--bg) 100%);
+}
+
+.watch-vod-detail-backdrop::after {
+  background:
+    linear-gradient(90deg, var(--bg) 16%, rgba(5, 7, 13, 0.55) 52%, rgba(5, 7, 13, 0.18)),
+    linear-gradient(180deg, transparent 42%, var(--bg) 100%);
+}
+
+.watch-ep-tick.is-done {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ---------- Detail page, seasons, episodes ---------- */
+
+.watch-vod-detail {
+  background: var(--bg);
+}
+
+.watch-vod-detail-back {
+  padding: 9px 16px;
+  border: 1px solid var(--line-2);
+  border-radius: 11px;
+  background: rgba(12, 15, 25, 0.72);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: var(--text);
+  font-family: var(--font);
+  font-weight: 700;
+}
+
+.watch-vod-detail-back:hover {
+  border-color: rgba(139, 124, 255, 0.5);
+  background: var(--accent-soft);
+}
+
+.watch-season-pills {
+  gap: 4px;
+}
+
+.watch-season-pill {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-family: var(--font);
+  font-weight: 700;
+}
+
+.watch-season-pill.is-here,
+.watch-season-pill:hover {
+  border-color: var(--accent);
+  background: var(--button-grad);
+  color: #fff;
+}
+
+.watch-ep-card {
+  border-radius: 14px;
+  transition: transform 0.2s;
+}
+
+.watch-ep-card:hover {
+  transform: translateY(-2px);
+}
+
+.watch-ep-still {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.watch-ep-kicker {
+  color: var(--up);
+}
+
+.watch-cast-photo {
+  border-radius: 50%;
+}
+
+/* ---------- Spinner + empty states ---------- */
+
+.watch-body .empty-events {
+  color: var(--muted);
+}
+
+/* ---------- Tablet / phone ---------- */
+
+@media (max-width: 980px) {
+  /* Restate styles.css phone layout values that the desktop rules above would otherwise win. */
+  .watch-shell,
+  .watch-app.is-vod-home .watch-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .watch-cats {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .watch-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 10px 12px;
+    overflow: visible;
+  }
+
+  .watch-brand {
+    margin: 0;
+  }
+
+  .watch-brand .watch-logo {
+    width: 30px;
+    height: 30px;
+  }
+
+  .watch-rail-label,
+  .watch-rail-meta,
+  .watch-slots span,
+  .watch-avatar,
+  .watch-user-name {
+    display: none;
+  }
+
+  .watch-rail-nav {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    gap: 2px;
+  }
+
+  .watch-rail-nav .watch-rail-btn {
+    flex: 0 0 auto;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .watch-rail-nav .watch-rail-btn.is-here::before {
+    display: none;
+  }
+
+  .watch-slots {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    margin: 0 0 0 auto;
+    padding: 6px 10px;
+  }
+
+  .watch-slots::before {
+    content: "Streams";
+    margin-right: 8px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .watch-slots strong {
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .watch-rail-foot {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .watch-refresh .watch-refresh-btn {
+    flex: none;
+  }
+
+  .watch-user {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .watch-cats {
+    gap: 6px;
+    padding: 10px 12px;
+    background: rgba(12, 15, 25, 0.8);
+  }
+
+  .watch-cat {
+    flex: 0 0 auto;
+    padding: 8px 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .watch-cat.is-here {
+    border-color: rgba(139, 124, 255, 0.55);
+    box-shadow: none;
+  }
+
+  .watch-preview-card {
+    padding: 12px;
+    border-left: 0;
+  }
+}
+
+/* Phones: brand + streams + actions on the first row, the four tabs full width below. */
+@media (max-width: 640px) {
+  /* Refresh buttons stay text: watch.js rewrites them with cooldowns ("Wait 3:59"). */
+  .watch-rail .watch-brand-text {
+    display: none;
+  }
+
+  .watch-rail-nav {
+    order: 3;
+    flex: 1 0 100%;
+  }
+
+  .watch-rail-nav .watch-rail-btn {
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 4px;
+    font-size: 11.5px;
+    text-align: center;
+  }
+
+  .watch-rail-nav .watch-slots {
+    display: none;
+  }
+
+  .watch-rail-foot {
+    margin-left: auto;
+  }
+
+  .watch-login,
+  .watch-terms-card {
+    padding: 24px 20px 22px;
+  }
+
+  .watch-login {
+    margin-top: 6vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .watch-body *,
+  .watch-body *::before,
+  .watch-body *::after {
+    transition: none !important;
+  }
+}

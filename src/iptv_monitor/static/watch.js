@@ -4061,7 +4061,14 @@ async function loadCategories() {
     }
     return;
   }
-    itemList.innerHTML = `<div class="empty-events">Pick a group. The TV guide shows what’s on now and what’s next; click a channel or a programme to play.</div>`;
+  // Open the group used last on this tab (else the first) instead of an empty "pick a group" screen.
+  // Only lists channels; nothing plays until a channel or programme is clicked.
+  const remembered = localStorage.getItem(`watch_last_cat_${kind}`) || "";
+  const start =
+    state.categories.find((cat) => String(cat.category_id) === remembered) || state.categories[0];
+  state.categoryId = String(start.category_id || "");
+  renderCategories();
+  await loadItems();
 }
 
 async function loadItems(opts) {
@@ -4358,6 +4365,8 @@ categoryList.addEventListener("click", async (event) => {
     return;
   }
   state.categoryId = button.getAttribute("data-cat") || "";
+  const catKind = state.tab === "movies" ? "vod" : state.tab === "series" ? "series" : "live";
+  localStorage.setItem(`watch_last_cat_${catKind}`, state.categoryId);
   renderCategories();
   try {
     await loadItems();
