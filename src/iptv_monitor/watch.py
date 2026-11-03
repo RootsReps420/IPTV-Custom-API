@@ -41,6 +41,7 @@ from iptv_monitor.player_auth import (
     set_session,
 )
 from iptv_monitor.player_proxy import (
+    ffmpeg_bin,
     load_fetch_url,
     panel_media_url,
     proxy_url,
@@ -48,6 +49,7 @@ from iptv_monitor.player_proxy import (
     vod_hls_wrapper,
 )
 from iptv_monitor.player_hls import hls_file, vod_duration, vod_playlist
+from iptv_monitor.player_live_hls import live_playlist, live_segment, stop_live_hls
 from iptv_monitor.player_m3u import with_live_ext
 from iptv_monitor.player_guide import WatchGuide
 from iptv_monitor.player_presence import PresenceTracker
@@ -328,6 +330,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
         session = read_session(request, _root(request))
         play_id = (body.play_id if body else "") or ""
         if play_id:
+            await stop_live_hls(play_id)
             await _svc(request).slots.release(play_id)
         await _svc(request).presence.drop(
             session_id=session.session_id if session else "",
@@ -457,6 +460,7 @@ def register_watch(app: FastAPI, static_dir) -> None:
     @app.post("/api/player/slot/release")
     async def slot_release(request: Request, body: SlotBody) -> dict[str, Any]:
         require_username(request, _root(request))
+        await stop_live_hls(body.play_id)
         snap = await _svc(request).slots.release(body.play_id)
         await _touch_presence(request, play_id=body.play_id, playing=False)
         return {"ok": True, "slots": snap}
@@ -667,7 +671,11 @@ def register_watch(app: FastAPI, static_dir) -> None:
         url = ""
         vod_ext = ext.lstrip(".").lower()
         live_cast = cast and kind == "live" and vod_ext == "mp4"
-        upstream_ext = "ts" if live_cast else ext
+        # Magnum answers live .m3u8 with raw TS, which iOS cannot play as live: segment it here.
+        live_hls = kind == "live" and vod_ext == "m3u8" and not cast and bool(ffmpeg_bin())
+        if not live_hls:
+            await stop_live_hls(sid)
+        upstream_ext = "ts" if live_cast or live_hls else ext
         if kind == "live":
             playback = svc.guide.live_playback_url(stream_id)
             if playback:
@@ -680,6 +688,13 @@ def register_watch(app: FastAPI, static_dir) -> None:
             presence = svc.presence
             return await remux_live_to_cast_mp4(
                 url, on_bytes=lambda n, pid=sid: presence.add_bytes(pid, n)
+            )
+        if live_hls:
+            return await live_playlist(
+                sid=sid,
+                stream_id=stream_id,
+                url=url,
+                access_token=mint_media_token(_root(request), user, sid),
             )
         live_ts = kind == "live" and vod_ext == "ts"
         kind_vod = kind in {"movie", "series"}
@@ -777,6 +792,28 @@ def register_watch(app: FastAPI, static_dir) -> None:
         return FileResponse(
             path,
             media_type="video/mp4",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/player/live-hls/{stream_id}/{name}")
+    async def player_live_hls(
+        request: Request,
+        stream_id: str,
+        name: str,
+        sid: str = Query(default=""),
+    ) -> Response:
+        """Segment of the tab's live HLS window (Safari, iPhone, AirPlay)."""
+        require_player_user(request, _root(request))
+        if not sid or len(sid) < 8:
+            raise HTTPException(status_code=400, detail="Missing sid.")
+        path = live_segment(sid=sid, stream_id=stream_id, name=name)
+        try:
+            _svc(request).presence.add_bytes(sid, path.stat().st_size)
+        except OSError:
+            pass
+        return FileResponse(
+            path,
+            media_type="video/mp2t",
             headers={"Cache-Control": "no-store"},
         )
 

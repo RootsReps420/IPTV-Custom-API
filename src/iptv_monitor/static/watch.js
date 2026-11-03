@@ -2,7 +2,8 @@
  *
  * Site login cookie, then Live / Movies / Series lists from proxied player_api.
  * Playback: live is MPEG-TS (mpegts.js) on Chrome/Edge/Android. Safari and
- * every iOS browser use native HLS. Live TS: play() in the same click as
+ * every iOS browser use native HLS (live HLS is cut from the panel's TS on the
+ * server, player_live_hls.py). Live TS: play() in the same click as
  * the channel (Chrome autoplay). Never pause to "fill" — that blocks the
  * later play() and drops the panel socket. Keep rate at 1×. Reconnect only
  * when the HTTP pipe is dead (error / EOF), not on ordinary buffer waits.
@@ -4640,6 +4641,11 @@ video.addEventListener("stalled", () => {
   }
 });
 video.addEventListener("error", () => {
+  if (playing && state.playingLiveId && !liveMpeg && /\/api\/player\/media\/live\//.test(video.currentSrc || "")) {
+    // iOS native live HLS: the server could not start or keep the channel.
+    showBanner("Live stream dropped. Click the channel again.", "bad");
+    return;
+  }
   if (vodSeeking || state.playingLiveId || !playing) {
     return;
   }
